@@ -29,40 +29,39 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 
 
 const navItems = [
-  { href: '/', label: 'Dashboard', icon: Home },
+  { href: '/', label: 'Painel', icon: Home },
   {
-    label: 'Catalog',
+    label: 'Catálogo',
     icon: Package,
     subItems: [
-      { href: '/items', label: 'View Items', icon: Archive },
-      { href: '/items/add', label: 'Add Item', icon: PlusCircle },
+      { href: '/items', label: 'Ver Itens', icon: Archive },
+      { href: '/items/add', label: 'Adicionar Item', icon: PlusCircle },
     ],
   },
   {
-    label: 'Stock',
+    label: 'Estoque',
     icon: Warehouse,
     subItems: [
-      { href: '/stock', label: 'Current Stock', icon: ClipboardList },
-      { href: '/stock/movements', label: 'Record Movement', icon: ArrowRightLeft },
+      { href: '/stock', label: 'Estoque Atual', icon: ClipboardList },
+      { href: '/stock/movements', label: 'Registrar Movimentação', icon: ArrowRightLeft },
     ],
   },
   {
-    label: 'Served Units',
+    label: 'Unidades Servidas',
     icon: Users,
     subItems: [
-      { href: '/served-units', label: 'View Units', icon: Users },
-      { href: '/served-units/add', label: 'Add Unit', icon: PlusCircle },
-      // Consumption link might be per unit, not general
+      { href: '/served-units', label: 'Ver Unidades', icon: Users },
+      { href: '/served-units/add', label: 'Adicionar Unidade', icon: PlusCircle },
     ],
   },
   {
-    label: 'Configuration',
+    label: 'Configuração',
     icon: Settings2,
     subItems: [
-      { href: '/config/stock-levels', label: 'Strategic Levels', icon: ShoppingCart },
+      { href: '/config/stock-levels', label: 'Níveis Estratégicos', icon: ShoppingCart },
     ],
   },
-  { href: '/trends', label: 'Consumption Trends', icon: TrendingUp },
+  { href: '/trends', label: 'Tendências de Consumo', icon: TrendingUp },
 ];
 
 export default function AppNavigation() {

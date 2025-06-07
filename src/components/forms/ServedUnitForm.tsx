@@ -12,8 +12,8 @@ import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 
 const servedUnitSchema = z.object({
-  name: z.string().min(2, { message: "Unit name must be at least 2 characters." }),
-  location: z.string().min(2, { message: "Location is required." }),
+  name: z.string().min(2, { message: "O nome da unidade deve ter pelo menos 2 caracteres." }),
+  location: z.string().min(2, { message: "A localização é obrigatória." }),
 });
 
 type ServedUnitFormData = z.infer<typeof servedUnitSchema>;
@@ -36,7 +36,7 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
   });
 
   const onSubmit = (data: ServedUnitFormData) => {
-    console.log('Served unit form submitted:', data);
+    console.log('Formulário de unidade servida submetido:', data);
     const unitId = initialData?.id || Math.random().toString(36).substring(2, 15);
     const submittedUnit: ServedUnit = { ...data, id: unitId };
     
@@ -44,8 +44,8 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
       onSubmitSuccess(submittedUnit);
     } else {
       toast({
-        title: initialData ? "Served Unit Updated" : "Served Unit Added",
-        description: `${data.name} has been successfully ${initialData ? 'updated' : 'added'}.`,
+        title: initialData ? "Unidade Servida Atualizada" : "Unidade Servida Adicionada",
+        description: `${data.name} foi ${initialData ? 'atualizada' : 'adicionada'} com sucesso.`,
       });
       router.push('/served-units');
     }
@@ -54,7 +54,7 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
   return (
     <Card className="max-w-lg mx-auto shadow-lg">
       <CardHeader>
-        <CardTitle className="font-headline">{initialData ? 'Edit Served Unit' : 'Add New Served Unit'}</CardTitle>
+        <CardTitle className="font-headline">{initialData ? 'Editar Unidade Servida' : 'Adicionar Nova Unidade Servida'}</CardTitle>
       </CardHeader>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -64,9 +64,9 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Unit Name</FormLabel>
+                  <FormLabel>Nome da Unidade</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g., Emergency Room, Pediatrics Ward" {...field} />
+                    <Input placeholder="ex: Sala de Emergência, Ala Pediátrica" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -77,9 +77,9 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
               name="location"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Location</FormLabel>
+                  <FormLabel>Localização</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g., Floor 1, Wing A" {...field} />
+                    <Input placeholder="ex: Piso 1, Ala A" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -88,10 +88,10 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
           </CardContent>
           <CardFooter className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => router.back()}>
-              Cancel
+              Cancelar
             </Button>
             <Button type="submit">
-              {initialData ? 'Save Changes' : 'Add Unit'}
+              {initialData ? 'Salvar Alterações' : 'Adicionar Unidade'}
             </Button>
           </CardFooter>
         </form>

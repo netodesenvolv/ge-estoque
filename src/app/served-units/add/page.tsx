@@ -5,7 +5,7 @@ import { UsersRound } from 'lucide-react';
 export default function AddServedUnitPage() {
   return (
     <div>
-      <PageHeader title="Add New Served Unit" description="Register a new location or department that consumes stock." icon={UsersRound} />
+      <PageHeader title="Adicionar Nova Unidade Servida" description="Cadastre um novo local ou departamento que consome estoque." icon={UsersRound} />
       <ServedUnitForm />
     </div>
   );

@@ -14,46 +14,44 @@ export default function ServedUnitsPage() {
   const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
 
   useEffect(() => {
-    // Simulate API call
     setServedUnits(mockServedUnits);
   }, []);
 
   const handleEdit = (id: string) => {
-    console.log('Edit served unit:', id);
-    // router.push(`/served-units/${id}/edit`);
+    console.log('Editar unidade servida:', id);
   };
 
   const handleDelete = (id: string) => {
-    console.log('Delete served unit:', id);
+    console.log('Excluir unidade servida:', id);
     setServedUnits(prevUnits => prevUnits.filter(unit => unit.id !== id));
   };
 
   return (
     <div>
       <PageHeader
-        title="Served Units"
-        description="Manage locations or departments that consume stock."
+        title="Unidades Servidas"
+        description="Gerencie locais ou departamentos que consomem estoque."
         icon={Users}
         actions={
           <Button asChild>
             <Link href="/served-units/add">
-              <PlusCircle className="mr-2 h-4 w-4" /> Add New Unit
+              <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Nova Unidade
             </Link>
           </Button>
         }
       />
       <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle className="font-headline">All Served Units</CardTitle>
+          <CardTitle className="font-headline">Todas as Unidades Servidas</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead className="text-center">Actions</TableHead>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>Localização</TableHead>
+                  <TableHead className="text-center">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -65,7 +63,7 @@ export default function ServedUnitsPage() {
                       <TableCell className="text-center space-x-2">
                         <Button variant="outline" size="sm" asChild>
                           <Link href={`/served-units/${unit.id}/consumption`}>
-                            <TrendingUp className="mr-1 h-4 w-4" /> Record Consumption
+                            <TrendingUp className="mr-1 h-4 w-4" /> Registrar Consumo
                           </Link>
                         </Button>
                         <Button variant="ghost" size="icon" onClick={() => handleEdit(unit.id)} className="hover:text-primary">
@@ -80,7 +78,7 @@ export default function ServedUnitsPage() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={3} className="text-center h-24">
-                      No served units found.
+                      Nenhuma unidade servida encontrada.
                     </TableCell>
                   </TableRow>
                 )}

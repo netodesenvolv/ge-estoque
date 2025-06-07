@@ -18,26 +18,21 @@ export default function StockLevelsConfigPage() {
   const { toast } = useToast();
 
   useEffect(() => {
-    // Simulate fetching data
-    // In a real app, you'd fetch items and their current configs, or create new ones
     setAllItems(mockItems);
     setAllServedUnits(mockServedUnits);
     
-    // Create a comprehensive list of configurations to manage
     const combinedConfigs: StockItemConfig[] = [];
     mockItems.forEach(item => {
-      // Central warehouse config
       const centralConfig = mockStockConfigs.find(c => c.itemId === item.id && !c.unitId);
       combinedConfigs.push(centralConfig || {
         id: `cfg-central-${item.id}`,
         itemId: item.id,
         itemName: item.name,
-        unitName: 'Central Warehouse',
+        unitName: 'Armazém Central',
         strategicStockLevel: 0,
-        minQuantity: item.minQuantity, // Default to item's general min quantity
+        minQuantity: item.minQuantity,
       });
 
-      // Served units configs
       mockServedUnits.forEach(unit => {
         const unitConfig = mockStockConfigs.find(c => c.itemId === item.id && c.unitId === unit.id);
         combinedConfigs.push(unitConfig || {
@@ -47,7 +42,7 @@ export default function StockLevelsConfigPage() {
           unitId: unit.id,
           unitName: unit.name,
           strategicStockLevel: 0,
-          minQuantity: 0, // Min quantity per unit might be different
+          minQuantity: 0, 
         });
       });
     });
@@ -64,32 +59,31 @@ export default function StockLevelsConfigPage() {
   };
 
   const handleSaveAll = () => {
-    console.log('Saving all stock level configurations:', stockConfigs);
-    // Simulate API call
+    console.log('Salvando todas as configurações de nível de estoque:', stockConfigs);
     toast({
-      title: "Configurations Saved",
-      description: "All strategic stock levels have been updated.",
+      title: "Configurações Salvas",
+      description: "Todos os níveis estratégicos de estoque foram atualizados.",
     });
   };
 
   return (
     <div>
       <PageHeader
-        title="Strategic Stock Levels"
-        description="Configure strategic and minimum stock levels for items in the central warehouse and served units."
+        title="Níveis Estratégicos de Estoque"
+        description="Configure os níveis estratégicos e mínimos de estoque para itens no armazém central e unidades servidas."
         icon={Settings2}
         actions={
           <Button onClick={handleSaveAll}>
-            <Save className="mr-2 h-4 w-4" /> Save All Changes
+            <Save className="mr-2 h-4 w-4" /> Salvar Todas as Alterações
           </Button>
         }
       />
       <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle className="font-headline">Configure Levels</CardTitle>
+          <CardTitle className="font-headline">Configurar Níveis</CardTitle>
           <CardDescription>
-            Set the desired stock levels. Alerts will be triggered if current stock falls below these strategic levels.
-            Minimum quantity is the absolute lowest an item should reach before critical alert.
+            Defina os níveis de estoque desejados. Alertas serão acionados se o estoque atual cair abaixo desses níveis estratégicos.
+            Quantidade mínima é o menor nível absoluto que um item deve atingir antes de um alerta crítico.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -97,10 +91,10 @@ export default function StockLevelsConfigPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Item Name</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead className="text-right">Min. Quantity</TableHead>
-                  <TableHead className="text-right">Strategic Level</TableHead>
+                  <TableHead>Nome do Item</TableHead>
+                  <TableHead>Localização</TableHead>
+                  <TableHead className="text-right">Qtde. Mínima</TableHead>
+                  <TableHead className="text-right">Nível Estratégico</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -132,7 +126,7 @@ export default function StockLevelsConfigPage() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={4} className="text-center h-24">
-                      No items or units found to configure. Add items and served units first.
+                      Nenhum item ou unidade encontrada para configurar. Adicione itens e unidades servidas primeiro.
                     </TableCell>
                   </TableRow>
                 )}
@@ -145,11 +139,11 @@ export default function StockLevelsConfigPage() {
         <CardHeader className="flex flex-row items-start gap-3">
           <AlertCircle className="h-6 w-6 text-accent-foreground mt-1" />
           <div>
-            <CardTitle className="font-headline text-accent-foreground">Understanding Levels</CardTitle>
+            <CardTitle className="font-headline text-accent-foreground">Entendendo os Níveis</CardTitle>
             <CardDescription className="text-accent-foreground/80">
-              <strong>Minimum Quantity:</strong> The lowest acceptable stock level. Falling below this triggers critical alerts and indicates an urgent need for reordering.
+              <strong>Quantidade Mínima:</strong> O nível de estoque aceitável mais baixo. Ficar abaixo disso aciona alertas críticos e indica uma necessidade urgente de reabastecimento.
               <br />
-              <strong>Strategic Stock Level:</strong> The desired optimal stock level. Falling below this triggers a warning, prompting a review and potential reorder to maintain smooth operations and buffer against demand fluctuations.
+              <strong>Nível Estratégico de Estoque:</strong> O nível de estoque ótimo desejado. Ficar abaixo disso aciona um aviso, solicitando uma revisão e potencial reabastecimento para manter as operações tranquilas e proteger contra flutuações de demanda.
             </CardDescription>
           </div>
         </CardHeader>

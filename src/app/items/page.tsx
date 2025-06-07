@@ -16,7 +16,6 @@ export default function ItemsPage() {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    // Simulate API call
     setItems(mockItems);
   }, []);
 
@@ -27,38 +26,36 @@ export default function ItemsPage() {
   );
 
   const handleEdit = (id: string) => {
-    // Placeholder for edit functionality
-    console.log('Edit item:', id);
+    console.log('Editar item:', id);
   };
 
   const handleDelete = (id: string) => {
-    // Placeholder for delete functionality
-    console.log('Delete item:', id);
+    console.log('Excluir item:', id);
     setItems(prevItems => prevItems.filter(item => item.id !== id));
   };
 
   return (
     <div>
       <PageHeader
-        title="Item Catalog"
-        description="Manage your inventory items."
+        title="Catálogo de Itens"
+        description="Gerencie seus itens de inventário."
         icon={Package}
         actions={
           <Button asChild>
             <Link href="/items/add">
-              <PlusCircle className="mr-2 h-4 w-4" /> Add New Item
+              <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Novo Item
             </Link>
           </Button>
         }
       />
       <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle className="font-headline">All Items</CardTitle>
+          <CardTitle className="font-headline">Todos os Itens</CardTitle>
           <div className="relative mt-4">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search items by name, code, or category..."
+              placeholder="Buscar itens por nome, código ou categoria..."
               className="pl-10 w-full md:w-1/3"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -70,14 +67,14 @@ export default function ItemsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Unit</TableHead>
-                  <TableHead className="text-right">Min. Qty</TableHead>
-                  <TableHead className="text-right">Current Qty</TableHead>
-                  <TableHead>Supplier</TableHead>
-                  <TableHead className="text-center">Actions</TableHead>
+                  <TableHead>Nome</TableHead>
+                  <TableHead>Código</TableHead>
+                  <TableHead>Categoria</TableHead>
+                  <TableHead>Unidade</TableHead>
+                  <TableHead className="text-right">Qtde. Mín.</TableHead>
+                  <TableHead className="text-right">Qtde. Atual</TableHead>
+                  <TableHead>Fornecedor</TableHead>
+                  <TableHead className="text-center">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -104,7 +101,7 @@ export default function ItemsPage() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={8} className="text-center h-24">
-                      No items found.
+                      Nenhum item encontrado.
                     </TableCell>
                   </TableRow>
                 )}

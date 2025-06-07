@@ -16,7 +16,6 @@ export default function DashboardPage() {
   const [alerts, setAlerts] = useState<StockItemConfig[]>([]);
 
   useEffect(() => {
-    // Simulate data fetching
     setItems(mockItems);
     setServedUnits(mockServedUnits);
     setStockConfigs(mockStockConfigs);
@@ -32,14 +31,14 @@ export default function DashboardPage() {
   }, [items, stockConfigs]);
 
   const summaryStats = [
-    { title: 'Total Items', value: items.length, icon: Package, color: 'text-blue-500', href: '/items' },
-    { title: 'Served Units', value: servedUnits.length, icon: Users, color: 'text-green-500', href: '/served-units' },
-    { title: 'Stock Alerts', value: alerts.length, icon: AlertTriangle, color: alerts.length > 0 ? 'text-red-500' : 'text-green-500', href: '#alerts' },
+    { title: 'Total de Itens', value: items.length, icon: Package, color: 'text-blue-500', href: '/items' },
+    { title: 'Unidades Servidas', value: servedUnits.length, icon: Users, color: 'text-green-500', href: '/served-units' },
+    { title: 'Alertas de Estoque', value: alerts.length, icon: AlertTriangle, color: alerts.length > 0 ? 'text-red-500' : 'text-green-500', href: '#alerts' },
   ];
 
   return (
     <div className="container mx-auto py-2">
-      <PageHeader title="Dashboard" description="Overview of your stock management system." icon={HomeIcon} />
+      <PageHeader title="Painel" description="Visão geral do seu sistema de gestão de estoque." icon={HomeIcon} />
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 mb-8">
         {summaryStats.map((stat) => (
@@ -51,7 +50,7 @@ export default function DashboardPage() {
             <CardContent>
               <div className="text-3xl font-bold font-headline">{stat.value}</div>
               <Link href={stat.href || '#'} className="text-xs text-muted-foreground hover:text-primary transition-colors">
-                View details
+                Ver detalhes
               </Link>
             </CardContent>
           </Card>
@@ -63,9 +62,9 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle className="font-headline flex items-center gap-2">
               <AlertTriangle className="h-6 w-6 text-destructive" />
-              Strategic Stock Alerts
+              Alertas de Estoque Estratégico
             </CardTitle>
-            <CardDescription>Items that have reached or fallen below their strategic stock levels.</CardDescription>
+            <CardDescription>Itens que atingiram ou caíram abaixo de seus níveis estratégicos de estoque.</CardDescription>
           </CardHeader>
           <CardContent>
             {alerts.length > 0 ? (
@@ -78,11 +77,11 @@ export default function DashboardPage() {
                       <div>
                         <p className="font-semibold">{alert.itemName || item?.name}</p>
                         <p className="text-sm text-muted-foreground">
-                          {alert.unitName || 'Central Warehouse'}: Current {currentQty}, Strategic {alert.strategicStockLevel}
+                          {alert.unitName || 'Armazém Central'}: Atual {currentQty}, Estratégico {alert.strategicStockLevel}
                         </p>
                       </div>
                       <Button variant="outline" size="sm" asChild>
-                        <Link href="/stock/movements">Reorder</Link>
+                        <Link href="/stock/movements">Reabastecer</Link>
                       </Button>
                     </li>
                   );
@@ -91,8 +90,8 @@ export default function DashboardPage() {
             ) : (
               <div className="flex flex-col items-center justify-center py-8 text-center">
                 <CheckCircle className="h-12 w-12 text-green-500 mb-3" />
-                <p className="font-semibold">All stock levels are optimal.</p>
-                <p className="text-sm text-muted-foreground">No items are currently below strategic levels.</p>
+                <p className="font-semibold">Todos os níveis de estoque estão ótimos.</p>
+                <p className="text-sm text-muted-foreground">Nenhum item está atualmente abaixo dos níveis estratégicos.</p>
               </div>
             )}
           </CardContent>
@@ -102,22 +101,22 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle className="font-headline flex items-center gap-2">
               <TrendingUpIcon className="h-6 w-6 text-primary" />
-              Quick Actions
+              Ações Rápidas
             </CardTitle>
-             <CardDescription>Access common tasks quickly.</CardDescription>
+             <CardDescription>Acesse tarefas comuns rapidamente.</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Button asChild variant="outline" className="w-full justify-center py-6 text-base">
-              <Link href="/items/add"><Package className="mr-2 h-5 w-5" />Add New Item</Link>
+              <Link href="/items/add"><Package className="mr-2 h-5 w-5" />Adicionar Novo Item</Link>
             </Button>
             <Button asChild variant="outline" className="w-full justify-center py-6 text-base">
-              <Link href="/stock/movements"><Warehouse className="mr-2 h-5 w-5" />Record Stock Movement</Link>
+              <Link href="/stock/movements"><Warehouse className="mr-2 h-5 w-5" />Registrar Movimentação de Estoque</Link>
             </Button>
             <Button asChild variant="outline" className="w-full justify-center py-6 text-base">
-              <Link href="/served-units/add"><Users className="mr-2 h-5 w-5" />Register Served Unit</Link>
+              <Link href="/served-units/add"><Users className="mr-2 h-5 w-5" />Cadastrar Unidade Servida</Link>
             </Button>
              <Button asChild variant="outline" className="w-full justify-center py-6 text-base">
-              <Link href="/trends"><TrendingUpIcon className="mr-2 h-5 w-5" />Analyze Trends</Link>
+              <Link href="/trends"><TrendingUpIcon className="mr-2 h-5 w-5" />Analisar Tendências</Link>
             </Button>
           </CardContent>
         </Card>

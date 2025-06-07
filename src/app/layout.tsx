@@ -11,7 +11,7 @@ import { Settings, UserCircle } from 'lucide-react';
 
 export const metadata: Metadata = {
   title: 'GE-Gestão de Estoque',
-  description: 'Stock Management Application',
+  description: 'Aplicativo de Gestão de Estoque',
 };
 
 export default function RootLayout({
@@ -20,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="pt" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
@@ -41,10 +41,10 @@ export default function RootLayout({
             </SidebarContent>
             <SidebarFooter className="p-4">
               <Button variant="ghost" className="w-full justify-start gap-2">
-                <UserCircle size={20} /> Profile
+                <UserCircle size={20} /> Perfil
               </Button>
               <Button variant="ghost" className="w-full justify-start gap-2">
-                <Settings size={20} /> Settings
+                <Settings size={20} /> Configurações
               </Button>
             </SidebarFooter>
           </Sidebar>
@@ -54,10 +54,8 @@ export default function RootLayout({
                  <SidebarTrigger />
               </div>
               <div className="flex-1">
-                {/* Breadcrumbs or page title can go here */}
               </div>
               <div>
-                {/* User menu or other actions */}
               </div>
             </header>
             <main className="flex-1 p-4 md:p-6">

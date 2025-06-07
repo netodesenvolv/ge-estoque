@@ -20,11 +20,11 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 
 const movementSchema = z.object({
-  itemId: z.string().min(1, "Item selection is required."),
-  type: z.enum(['entry', 'exit', 'consumption'], { required_error: "Movement type is required." }),
-  quantity: z.coerce.number().positive("Quantity must be a positive number."),
-  unitId: z.string().optional(), // Optional: for central warehouse, this is undefined/null
-  date: z.string().refine((date) => !isNaN(Date.parse(date)), { message: "Invalid date." }),
+  itemId: z.string().min(1, "A seleção do item é obrigatória."),
+  type: z.enum(['entry', 'exit', 'consumption'], { required_error: "O tipo de movimentação é obrigatório." }),
+  quantity: z.coerce.number().positive("A quantidade deve ser um número positivo."),
+  unitId: z.string().optional(), 
+  date: z.string().refine((date) => !isNaN(Date.parse(date)), { message: "Data inválida." }),
   notes: z.string().optional(),
 });
 
@@ -46,7 +46,7 @@ export default function StockMovementsPage() {
     defaultValues: {
       type: 'entry',
       quantity: 1,
-      date: new Date().toISOString().split('T')[0], // Default to today
+      date: new Date().toISOString().split('T')[0], 
       notes: '',
     },
   });
@@ -54,22 +54,20 @@ export default function StockMovementsPage() {
   const movementType = form.watch('type');
 
   const onSubmit = (data: MovementFormData) => {
-    console.log('Stock movement submitted:', data);
-    // Simulate API call
+    console.log('Movimentação de estoque submetida:', data);
     toast({
-      title: "Stock Movement Recorded",
-      description: `Movement of ${data.quantity} unit(s) of item ID ${data.itemId} has been recorded as ${data.type}.`,
+      title: "Movimentação de Estoque Registrada",
+      description: `Movimentação de ${data.quantity} unidade(s) do item ID ${data.itemId} foi registrada como ${data.type}.`,
     });
     form.reset();
-    // Potentially redirect or update a list of movements
   };
 
   return (
     <div>
-      <PageHeader title="Record Stock Movement" description="Register entries, exits, or consumptions of stock items." icon={ArrowRightLeft} />
+      <PageHeader title="Registrar Movimentação de Estoque" description="Registre entradas, saídas ou consumos de itens de estoque." icon={ArrowRightLeft} />
       <Card className="max-w-2xl mx-auto shadow-lg">
         <CardHeader>
-          <CardTitle className="font-headline">New Stock Movement</CardTitle>
+          <CardTitle className="font-headline">Nova Movimentação de Estoque</CardTitle>
         </CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -79,7 +77,7 @@ export default function StockMovementsPage() {
                 name="type"
                 render={({ field }) => (
                   <FormItem className="space-y-3">
-                    <FormLabel>Movement Type</FormLabel>
+                    <FormLabel>Tipo de Movimentação</FormLabel>
                     <FormControl>
                       <RadioGroup
                         onValueChange={field.onChange}
@@ -90,19 +88,19 @@ export default function StockMovementsPage() {
                           <FormControl>
                             <RadioGroupItem value="entry" />
                           </FormControl>
-                          <FormLabel className="font-normal">Stock Entry</FormLabel>
+                          <FormLabel className="font-normal">Entrada de Estoque</FormLabel>
                         </FormItem>
                         <FormItem className="flex items-center space-x-3 space-y-0">
                           <FormControl>
                             <RadioGroupItem value="exit" />
                           </FormControl>
-                          <FormLabel className="font-normal">Stock Exit (Transfer)</FormLabel>
+                          <FormLabel className="font-normal">Saída de Estoque (Transferência)</FormLabel>
                         </FormItem>
                         <FormItem className="flex items-center space-x-3 space-y-0">
                           <FormControl>
                             <RadioGroupItem value="consumption" />
                           </FormControl>
-                          <FormLabel className="font-normal">Consumption</FormLabel>
+                          <FormLabel className="font-normal">Consumo</FormLabel>
                         </FormItem>
                       </RadioGroup>
                     </FormControl>
@@ -120,7 +118,7 @@ export default function StockMovementsPage() {
                     <Select onValueChange={field.onChange} defaultValue={field.value}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select an item" />
+                          <SelectValue placeholder="Selecione um item" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -141,24 +139,24 @@ export default function StockMovementsPage() {
                     render={({ field }) => (
                     <FormItem>
                         <FormLabel>
-                        {movementType === 'exit' ? 'Destination Unit (Optional - for Central Warehouse transfer out)' : 'Consumed At (Served Unit)'}
+                        {movementType === 'exit' ? 'Unidade de Destino (Opcional - para saída de transferência do Armazém Central)' : 'Consumido Em (Unidade Servida)'}
                         </FormLabel>
                         <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <FormControl>
                             <SelectTrigger>
-                            <SelectValue placeholder={movementType === 'exit' ? "Select destination or leave for Central exit" : "Select served unit"} />
+                            <SelectValue placeholder={movementType === 'exit' ? "Selecione o destino ou deixe em branco para saída do Armazém Central" : "Selecione a unidade servida"} />
                             </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                            <SelectItem value="">Central Warehouse (if applicable for exit)</SelectItem>
+                            <SelectItem value="">Armazém Central (se aplicável para saída)</SelectItem>
                             {servedUnits.map(unit => (
                             <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>
                             ))}
                         </SelectContent>
                         </Select>
                         <FormDescription>
-                          {movementType === 'exit' && "If transferring from Central Warehouse to a served unit, select the unit. If just reducing Central stock, leave blank."}
-                          {movementType === 'consumption' && "Select the unit where the item was consumed."}
+                          {movementType === 'exit' && "Se estiver transferindo do Armazém Central para uma unidade servida, selecione a unidade. Se for apenas reduzir o estoque Central, deixe em branco."}
+                          {movementType === 'consumption' && "Selecione a unidade onde o item foi consumido."}
                         </FormDescription>
                         <FormMessage />
                     </FormItem>
@@ -171,9 +169,9 @@ export default function StockMovementsPage() {
                 name="quantity"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Quantity</FormLabel>
+                    <FormLabel>Quantidade</FormLabel>
                     <FormControl>
-                      <Input type="number" placeholder="e.g., 10" {...field} />
+                      <Input type="number" placeholder="ex: 10" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -184,7 +182,7 @@ export default function StockMovementsPage() {
                 name="date"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Date of Movement</FormLabel>
+                    <FormLabel>Data da Movimentação</FormLabel>
                     <FormControl>
                       <Input type="date" {...field} />
                     </FormControl>
@@ -197,9 +195,9 @@ export default function StockMovementsPage() {
                 name="notes"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Notes (Optional)</FormLabel>
+                    <FormLabel>Observações (Opcional)</FormLabel>
                     <FormControl>
-                      <Textarea placeholder="e.g., Reason for movement, batch number" {...field} />
+                      <Textarea placeholder="ex: Motivo da movimentação, número do lote" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -207,7 +205,7 @@ export default function StockMovementsPage() {
               />
             </CardContent>
             <CardFooter className="flex justify-end">
-              <Button type="submit">Record Movement</Button>
+              <Button type="submit">Registrar Movimentação</Button>
             </CardFooter>
           </form>
         </Form>

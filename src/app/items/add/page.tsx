@@ -5,7 +5,7 @@ import { PackagePlus } from 'lucide-react';
 export default function AddItemPage() {
   return (
     <div>
-      <PageHeader title="Add New Item" description="Enter the details for the new inventory item." icon={PackagePlus} />
+      <PageHeader title="Adicionar Novo Item" description="Insira os detalhes do novo item de inventário." icon={PackagePlus} />
       <ItemForm />
     </div>
   );

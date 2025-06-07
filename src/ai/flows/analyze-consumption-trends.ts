@@ -2,11 +2,11 @@
 'use server';
 
 /**
- * @fileOverview Analyzes historical consumption data to visualize trends and generate stock reorder recommendations.
+ * @fileOverview Analisa dados históricos de consumo para visualizar tendências e gerar recomendações de reposição de estoque.
  *
- * - analyzeConsumptionTrends - A function that analyzes consumption trends and provides reorder recommendations.
- * - AnalyzeConsumptionTrendsInput - The input type for the analyzeConsumptionTrends function.
- * - AnalyzeConsumptionTrendsOutput - The return type for the analyzeConsumptionTrends function.
+ * - analyzeConsumptionTrends - Uma função que analisa tendências de consumo e fornece recomendações de reposição.
+ * - AnalyzeConsumptionTrendsInput - O tipo de entrada para a função analyzeConsumptionTrends.
+ * - AnalyzeConsumptionTrendsOutput - O tipo de retorno para a função analyzeConsumptionTrends.
  */
 
 import {ai} from '@/ai/genkit';
@@ -16,17 +16,17 @@ const AnalyzeConsumptionTrendsInputSchema = z.object({
   historicalData: z
     .string()
     .describe(
-      'Historical consumption data, including item, date, quantity consumed, and served unit.'
+      'Dados históricos de consumo, incluindo item, data, quantidade consumida e unidade servida.'
     ),
   seasonalPatterns: z
     .string()
     .describe(
-      'Description of any seasonal patterns affecting consumption of items.'
+      'Descrição de quaisquer padrões sazonais que afetam o consumo de itens.'
     ),
   strategicStockLevels: z
     .string()
     .describe(
-      'The strategic stock levels for each item in central warehouse and served units.'
+      'Os níveis estratégicos de estoque para cada item no armazém central e unidades servidas.'
     ),
 });
 
@@ -38,12 +38,12 @@ const AnalyzeConsumptionTrendsOutputSchema = z.object({
   trendVisualizations: z
     .string()
     .describe(
-      'A description of key trends in consumption, potentially including seasonal variations.'
+      'Uma descrição das principais tendências de consumo, incluindo possivelmente variações sazonais.'
     ),
   reorderRecommendations: z
     .string()
     .describe(
-      'Specific reorder recommendations for each item, considering current stock levels, strategic levels, and predicted consumption.'
+      'Recomendações específicas de reposição para cada item, considerando os níveis de estoque atuais, níveis estratégicos e consumo previsto.'
     ),
 });
 
@@ -61,20 +61,20 @@ const prompt = ai.definePrompt({
   name: 'analyzeConsumptionTrendsPrompt',
   input: {schema: AnalyzeConsumptionTrendsInputSchema},
   output: {schema: AnalyzeConsumptionTrendsOutputSchema},
-  prompt: `You are an expert supply chain analyst.
+  prompt: `Você é um analista especialista em cadeia de suprimentos.
 
-You are provided with historical consumption data, descriptions of seasonal patterns, and strategic stock levels.
+Você recebe dados históricos de consumo, descrições de padrões sazonais e níveis estratégicos de estoque.
 
-Analyze the data and generate visualizations of trends and stock reorder recommendations.
+Analise os dados e gere visualizações de tendências e recomendações de reposição de estoque.
 
-Historical Data: {{{historicalData}}}
-Seasonal Patterns: {{{seasonalPatterns}}}
-Strategic Stock Levels: {{{strategicStockLevels}}}
+Dados Históricos: {{{historicalData}}}
+Padrões Sazonais: {{{seasonalPatterns}}}
+Níveis Estratégicos de Estoque: {{{strategicStockLevels}}}
 
-Based on this information, provide the following:
+Com base nessas informações, forneça o seguinte EM PORTUGUÊS:
 
-Trend Visualizations: A description of key trends in consumption, potentially including seasonal variations.
-Reorder Recommendations: Specific reorder recommendations for each item, considering current stock levels, strategic levels, and predicted consumption.`,
+Visualizações de Tendências: Uma descrição das principais tendências de consumo, incluindo possivelmente variações sazonais.
+Recomendações de Reposição: Recomendações específicas de reposição para cada item, considerando os níveis de estoque atuais, níveis estratégicos e consumo previsto.`,
 });
 
 const analyzeConsumptionTrendsFlow = ai.defineFlow(

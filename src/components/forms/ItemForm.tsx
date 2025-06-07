@@ -13,12 +13,12 @@ import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 
 const itemSchema = z.object({
-  name: z.string().min(2, { message: "Name must be at least 2 characters." }),
-  code: z.string().min(1, { message: "Code is required." }),
-  category: z.string().min(2, { message: "Category is required." }),
-  unitOfMeasure: z.string().min(1, { message: "Unit of measure is required." }),
-  minQuantity: z.coerce.number().min(0, { message: "Minimum quantity must be non-negative." }),
-  currentQuantityCentral: z.coerce.number().min(0, { message: "Current quantity must be non-negative." }),
+  name: z.string().min(2, { message: "O nome deve ter pelo menos 2 caracteres." }),
+  code: z.string().min(1, { message: "O código é obrigatório." }),
+  category: z.string().min(2, { message: "A categoria é obrigatória." }),
+  unitOfMeasure: z.string().min(1, { message: "A unidade de medida é obrigatória." }),
+  minQuantity: z.coerce.number().min(0, { message: "A quantidade mínima não pode ser negativa." }),
+  currentQuantityCentral: z.coerce.number().min(0, { message: "A quantidade atual não pode ser negativa." }),
   supplier: z.string().optional(),
 });
 
@@ -47,9 +47,7 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
   });
 
   const onSubmit = (data: ItemFormData) => {
-    console.log('Item form submitted:', data);
-    // Here you would typically call an API
-    // For demo, we'll just show a toast and redirect
+    console.log('Formulário de item submetido:', data);
     const newItemId = initialData?.id || Math.random().toString(36).substring(2, 15);
     const submittedItem: Item = { ...data, id: newItemId };
     
@@ -57,8 +55,8 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
       onSubmitSuccess(submittedItem);
     } else {
       toast({
-        title: initialData ? "Item Updated" : "Item Added",
-        description: `${data.name} has been successfully ${initialData ? 'updated' : 'added'}.`,
+        title: initialData ? "Item Atualizado" : "Item Adicionado",
+        description: `${data.name} foi ${initialData ? 'atualizado' : 'adicionado'} com sucesso.`,
         variant: "default",
       });
       router.push('/items');
@@ -68,7 +66,7 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
   return (
     <Card className="max-w-2xl mx-auto shadow-lg">
       <CardHeader>
-        <CardTitle className="font-headline">{initialData ? 'Edit Item' : 'Add New Item'}</CardTitle>
+        <CardTitle className="font-headline">{initialData ? 'Editar Item' : 'Adicionar Novo Item'}</CardTitle>
       </CardHeader>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -78,9 +76,9 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Item Name</FormLabel>
+                  <FormLabel>Nome do Item</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g., Paracetamol 500mg" {...field} />
+                    <Input placeholder="ex: Paracetamol 500mg" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -92,9 +90,9 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                 name="code"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Item Code</FormLabel>
+                    <FormLabel>Código do Item</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., PARA500" {...field} />
+                      <Input placeholder="ex: PARA500" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -105,9 +103,9 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                 name="category"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Category</FormLabel>
+                    <FormLabel>Categoria</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., Analgesic" {...field} />
+                      <Input placeholder="ex: Analgésico" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -120,9 +118,9 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                 name="unitOfMeasure"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Unit of Measure</FormLabel>
+                    <FormLabel>Unidade de Medida</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., Tablet, Box, Piece" {...field} />
+                      <Input placeholder="ex: Comprimido, Caixa, Peça" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -133,9 +131,9 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                 name="supplier"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Supplier (Optional)</FormLabel>
+                    <FormLabel>Fornecedor (Opcional)</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., Pharma Inc." {...field} />
+                      <Input placeholder="ex: Pharma Inc." {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -148,9 +146,9 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                 name="minQuantity"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Minimum Quantity (Central)</FormLabel>
+                    <FormLabel>Quantidade Mínima (Central)</FormLabel>
                     <FormControl>
-                      <Input type="number" placeholder="e.g., 100" {...field} />
+                      <Input type="number" placeholder="ex: 100" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -161,9 +159,9 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                 name="currentQuantityCentral"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Current Quantity (Central)</FormLabel>
+                    <FormLabel>Quantidade Atual (Central)</FormLabel>
                     <FormControl>
-                      <Input type="number" placeholder="e.g., 500" {...field} />
+                      <Input type="number" placeholder="ex: 500" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -173,10 +171,10 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
           </CardContent>
           <CardFooter className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => router.back()}>
-              Cancel
+              Cancelar
             </Button>
             <Button type="submit">
-              {initialData ? 'Save Changes' : 'Add Item'}
+              {initialData ? 'Salvar Alterações' : 'Adicionar Item'}
             </Button>
           </CardFooter>
         </form>

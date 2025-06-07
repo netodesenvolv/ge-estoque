@@ -17,9 +17,9 @@ import { useToast } from '@/hooks/use-toast';
 import { useParams, useRouter } from 'next/navigation';
 
 const consumptionSchema = z.object({
-  itemId: z.string().min(1, "Item selection is required."),
-  quantityConsumed: z.coerce.number().positive("Quantity must be a positive number."),
-  date: z.string().refine((date) => !isNaN(Date.parse(date)), { message: "Invalid date." }),
+  itemId: z.string().min(1, "A seleção do item é obrigatória."),
+  quantityConsumed: z.coerce.number().positive("A quantidade deve ser um número positivo."),
+  date: z.string().refine((date) => !isNaN(Date.parse(date)), { message: "Data inválida." }),
 });
 
 type ConsumptionFormData = z.infer<typeof consumptionSchema>;
@@ -47,10 +47,10 @@ export default function RecordConsumptionPage() {
   });
 
   const onSubmit = (data: ConsumptionFormData) => {
-    console.log('Stock consumption submitted:', { ...data, servedUnitId: unitId });
+    console.log('Consumo de estoque submetido:', { ...data, servedUnitId: unitId });
     toast({
-      title: "Consumption Recorded",
-      description: `${data.quantityConsumed} unit(s) of item ID ${data.itemId} consumed at ${servedUnit?.name}.`,
+      title: "Consumo Registrado",
+      description: `${data.quantityConsumed} unidade(s) do item ID ${data.itemId} consumido(s) em ${servedUnit?.name}.`,
       action: <CheckCircle className="text-green-500" />,
     });
     form.reset({ 
@@ -61,19 +61,19 @@ export default function RecordConsumptionPage() {
   };
 
   if (!servedUnit) {
-    return <PageHeader title="Error" description="Served unit not found." />;
+    return <PageHeader title="Erro" description="Unidade servida não encontrada." />;
   }
 
   return (
     <div className="container mx-auto py-2 max-w-md">
       <PageHeader 
-        title={`Record Consumption`} 
-        description={`For ${servedUnit.name} (${servedUnit.location})`} 
+        title={`Registrar Consumo`} 
+        description={`Para ${servedUnit.name} (${servedUnit.location})`} 
         icon={TrendingDown} 
       />
       <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle className="font-headline text-xl">Log Item Consumption</CardTitle>
+          <CardTitle className="font-headline text-xl">Registrar Consumo de Item</CardTitle>
         </CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -83,11 +83,11 @@ export default function RecordConsumptionPage() {
                 name="itemId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Item Consumed</FormLabel>
+                    <FormLabel>Item Consumido</FormLabel>
                     <Select onValueChange={field.onChange} defaultValue={field.value}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select an item" />
+                          <SelectValue placeholder="Selecione um item" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -105,9 +105,9 @@ export default function RecordConsumptionPage() {
                 name="quantityConsumed"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Quantity Consumed</FormLabel>
+                    <FormLabel>Quantidade Consumida</FormLabel>
                     <FormControl>
-                      <Input type="number" placeholder="e.g., 1" {...field} />
+                      <Input type="number" placeholder="ex: 1" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -118,7 +118,7 @@ export default function RecordConsumptionPage() {
                 name="date"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Date of Consumption</FormLabel>
+                    <FormLabel>Data do Consumo</FormLabel>
                     <FormControl>
                       <Input type="date" {...field} />
                     </FormControl>
@@ -128,9 +128,9 @@ export default function RecordConsumptionPage() {
               />
             </CardContent>
             <CardFooter className="flex flex-col gap-3">
-              <Button type="submit" className="w-full">Record Consumption</Button>
+              <Button type="submit" className="w-full">Registrar Consumo</Button>
               <Button type="button" variant="outline" onClick={() => router.back()} className="w-full">
-                Back to Units
+                Voltar para Unidades
             </Button>
             </CardFooter>
           </form>
