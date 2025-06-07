@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState } from 'react';
@@ -8,7 +9,7 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { TrendingUp, Bot, Loader2, Lightbulb } from 'lucide-react';
 import { analyzeConsumptionTrends, type AnalyzeConsumptionTrendsInput, type AnalyzeConsumptionTrendsOutput } from '@/ai/flows/analyze-consumption-trends';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -21,18 +22,18 @@ const trendsSchema = z.object({
 
 type TrendsFormData = z.infer<typeof trendsSchema>;
 
-const exampleHistoricalData = `Item: Paracetamol 500mg, Data: 2024-01-15, Quantidade Consumida: 20, Unidade Servida: Sala de Emergência
-Item: Paracetamol 500mg, Data: 2024-01-22, Quantidade Consumida: 25, Unidade Servida: Sala de Emergência
-Item: Amoxicilina 250mg, Data: 2024-02-10, Quantidade Consumida: 10, Unidade Servida: Farmácia Principal
-Item: Seringa 5ml, Data: 2024-03-05, Quantidade Consumida: 50, Unidade Servida: Ala Pediátrica`;
+const exampleHistoricalData = `Item: Paracetamol 500mg, Data: 2024-01-15, Quantidade Consumida: 20, Unidade Servida: Sala de Emergência, Hospital: Hospital Central da Cidade
+Item: Paracetamol 500mg, Data: 2024-01-22, Quantidade Consumida: 25, Unidade Servida: Sala de Emergência, Hospital: Hospital Central da Cidade
+Item: Amoxicilina 250mg, Data: 2024-02-10, Quantidade Consumida: 10, Unidade Servida: Farmácia Principal, Hospital: Hospital Regional Norte
+Item: Seringa 5ml, Data: 2024-03-05, Quantidade Consumida: 50, Unidade Servida: Ala Pediátrica, Hospital: Hospital Central da Cidade`;
 
 const exampleSeasonalPatterns = `Aumento do consumo de medicamentos para resfriado e gripe (ex: Paracetamol) durante os meses de inverno (Dezembro-Fevereiro).
 Maior demanda por suprimentos de primeiros socorros (ex: Curativos, Gaze) durante o verão e períodos de férias devido ao aumento de atividades ao ar livre.`;
 
-const exampleStrategicStockLevels = `Paracetamol 500mg (Sala de Emergência): Nível Estratégico 50 comprimidos, Quantidade Mínima 20 comprimidos.
+const exampleStrategicStockLevels = `Paracetamol 500mg (Sala de Emergência, Hospital Central da Cidade): Nível Estratégico 50 comprimidos, Quantidade Mínima 20 comprimidos.
 Paracetamol 500mg (Armazém Central): Nível Estratégico 200 comprimidos, Quantidade Mínima 100 comprimidos.
-Amoxicilina 250mg (Farmácia Principal): Nível Estratégico 100 cápsulas, Quantidade Mínima 30 cápsulas.
-Seringa 5ml (Ala Pediátrica): Nível Estratégico 80 peças, Quantidade Mínima 40 peças.`;
+Amoxicilina 250mg (Farmácia Principal, Hospital Regional Norte): Nível Estratégico 100 cápsulas, Quantidade Mínima 30 cápsulas.
+Seringa 5ml (Ala Pediátrica, Hospital Central da Cidade): Nível Estratégico 80 peças, Quantidade Mínima 40 peças.`;
 
 
 export default function TrendsPage() {
@@ -92,9 +93,9 @@ export default function TrendsPage() {
                   <FormItem>
                     <FormLabel>Dados Históricos de Consumo</FormLabel>
                     <FormControl>
-                      <Textarea placeholder="Insira dados históricos: Item, Data, Quantidade Consumida, Unidade Servida..." {...field} rows={6} />
+                      <Textarea placeholder="Insira dados históricos: Item, Data, Quantidade Consumida, Unidade Servida, Hospital..." {...field} rows={6} />
                     </FormControl>
-                    <FormDescription>Formato: Nome do Item, Data (AAAA-MM-DD), Quantidade Consumida, Nome da Unidade Servida (uma entrada por linha).</FormDescription>
+                    <FormDescription>Formato: Nome do Item, Data (AAAA-MM-DD), Quantidade Consumida, Nome da Unidade Servida, Nome do Hospital (uma entrada por linha).</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -122,7 +123,7 @@ export default function TrendsPage() {
                     <FormControl>
                       <Textarea placeholder="Descreva os níveis estratégicos de estoque para itens..." {...field} rows={4} />
                     </FormControl>
-                    <FormDescription>Formato: Nome do Item (Localização): Nível Estratégico X unidades, Quantidade Mínima Y unidades (uma entrada por linha).</FormDescription>
+                    <FormDescription>Formato: Nome do Item (Localização, Hospital): Nível Estratégico X unidades, Quantidade Mínima Y unidades (uma entrada por linha).</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -175,3 +176,4 @@ export default function TrendsPage() {
     </div>
   );
 }
+

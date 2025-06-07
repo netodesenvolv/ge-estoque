@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useForm } from 'react-hook-form';
@@ -10,8 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { TrendingDown, CheckCircle } from 'lucide-react';
-import type { Item, ServedUnit } from '@/types';
-import { mockItems, mockServedUnits } from '@/data/mockData';
+import type { Item, ServedUnit, Hospital } from '@/types';
+import { mockItems, mockServedUnits, mockHospitals } from '@/data/mockData';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useParams, useRouter } from 'next/navigation';
@@ -29,6 +30,7 @@ export default function RecordConsumptionPage() {
   const unitId = params.id as string;
   const [items, setItems] = useState<Item[]>([]);
   const [servedUnit, setServedUnit] = useState<ServedUnit | null>(null);
+  const [hospital, setHospital] = useState<Hospital | null>(null);
   const router = useRouter();
   const { toast } = useToast();
 
@@ -36,6 +38,10 @@ export default function RecordConsumptionPage() {
     setItems(mockItems);
     const unit = mockServedUnits.find(u => u.id === unitId);
     setServedUnit(unit || null);
+    if (unit) {
+      const hosp = mockHospitals.find(h => h.id === unit.hospitalId);
+      setHospital(hosp || null);
+    }
   }, [unitId]);
 
   const form = useForm<ConsumptionFormData>({
@@ -47,10 +53,10 @@ export default function RecordConsumptionPage() {
   });
 
   const onSubmit = (data: ConsumptionFormData) => {
-    console.log('Consumo de estoque submetido:', { ...data, servedUnitId: unitId });
+    console.log('Consumo de estoque submetido:', { ...data, servedUnitId: unitId, hospitalId: servedUnit?.hospitalId });
     toast({
       title: "Consumo Registrado",
-      description: `${data.quantityConsumed} unidade(s) do item ID ${data.itemId} consumido(s) em ${servedUnit?.name}.`,
+      description: `${data.quantityConsumed} unidade(s) do item ID ${data.itemId} consumido(s) em ${servedUnit?.name} (${hospital?.name}).`,
       action: <CheckCircle className="text-green-500" />,
     });
     form.reset({ 
@@ -60,15 +66,15 @@ export default function RecordConsumptionPage() {
     });
   };
 
-  if (!servedUnit) {
-    return <PageHeader title="Erro" description="Unidade servida não encontrada." />;
+  if (!servedUnit || !hospital) {
+    return <PageHeader title="Erro" description="Unidade servida ou hospital não encontrado." />;
   }
 
   return (
     <div className="container mx-auto py-2 max-w-md">
       <PageHeader 
         title={`Registrar Consumo`} 
-        description={`Para ${servedUnit.name} (${servedUnit.location})`} 
+        description={`Unidade: ${servedUnit.name} (${servedUnit.location}) - Hospital: ${hospital.name}`} 
         icon={TrendingDown} 
       />
       <Card className="shadow-lg">
@@ -130,7 +136,7 @@ export default function RecordConsumptionPage() {
             <CardFooter className="flex flex-col gap-3">
               <Button type="submit" className="w-full">Registrar Consumo</Button>
               <Button type="button" variant="outline" onClick={() => router.back()} className="w-full">
-                Voltar para Unidades
+                Voltar
             </Button>
             </CardFooter>
           </form>
@@ -139,3 +145,4 @@ export default function RecordConsumptionPage() {
     </div>
   );
 }
+

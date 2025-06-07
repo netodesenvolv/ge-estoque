@@ -1,3 +1,4 @@
+
 export interface Item {
   id: string;
   name: string;
@@ -9,10 +10,18 @@ export interface Item {
   supplier?: string;
 }
 
+export interface Hospital {
+  id: string;
+  name: string;
+  address?: string;
+}
+
 export interface ServedUnit {
   id: string;
   name: string;
   location: string;
+  hospitalId: string;
+  hospitalName?: string; // For display convenience
 }
 
 export interface StockItemConfig {
@@ -21,9 +30,11 @@ export interface StockItemConfig {
   itemName?: string; // For display purposes
   unitId?: string; // Nullable for central warehouse
   unitName?: string; // For display
+  hospitalId?: string; // Only relevant if unitId is present
+  hospitalName?: string; // Only relevant if unitId is present
   strategicStockLevel: number;
-  minQuantity: number; // This might be redundant if Item.minQuantity is for central, or specific to unit
-  currentQuantity?: number; // Current quantity in this specific unit/warehouse
+  minQuantity: number; 
+  currentQuantity?: number; 
 }
 
 export type StockMovementType = 'entry' | 'exit' | 'consumption';
@@ -32,8 +43,10 @@ export interface StockMovement {
   id: string;
   itemId: string;
   itemName?: string;
-  unitId?: string; // For served units, null for central warehouse
+  unitId?: string; 
   unitName?: string;
+  hospitalId?: string; // Only relevant if unitId is present for exit/consumption
+  hospitalName?: string; // Only relevant if unitId is present for exit/consumption
   type: StockMovementType;
   quantity: number;
   date: string; // ISO date string
@@ -46,6 +59,7 @@ export interface ConsumptionDataPoint {
   date: string; // ISO date string
   quantityConsumed: number;
   servedUnitId: string;
+  hospitalId: string;
 }
 
 // For GenAI input
@@ -54,4 +68,5 @@ export interface HistoricalDataEntry {
   date: string; // YYYY-MM-DD
   quantityConsumed: number;
   servedUnit: string;
+  hospital: string; // Added hospital context
 }

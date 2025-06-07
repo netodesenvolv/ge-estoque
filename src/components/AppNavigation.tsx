@@ -1,3 +1,4 @@
+
 'use client';
 
 import Link from 'next/link';
@@ -14,7 +15,7 @@ import {
   TrendingUp,
   ShoppingCart,
   ClipboardList,
-  Truck
+  Building, // Icon for Hospitals
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -44,6 +45,14 @@ const navItems = [
     subItems: [
       { href: '/stock', label: 'Estoque Atual', icon: ClipboardList },
       { href: '/stock/movements', label: 'Registrar Movimentação', icon: ArrowRightLeft },
+    ],
+  },
+  {
+    label: 'Hospitais',
+    icon: Building,
+    subItems: [
+      { href: '/hospitals', label: 'Ver Hospitais', icon: Building },
+      { href: '/hospitals/add', label: 'Adicionar Hospital', icon: PlusCircle },
     ],
   },
   {
@@ -78,9 +87,9 @@ export default function AppNavigation() {
                     asChild={false}
                     className={cn(
                       "w-full justify-start text-base",
-                      item.subItems.some(sub => pathname.startsWith(sub.href)) && "bg-sidebar-accent text-sidebar-accent-foreground"
+                      item.subItems.some(sub => pathname === sub.href || pathname.startsWith(sub.href + '/')) && "bg-sidebar-accent text-sidebar-accent-foreground"
                     )}
-                    isActive={item.subItems.some(sub => pathname.startsWith(sub.href))}
+                    isActive={item.subItems.some(sub => pathname === sub.href || pathname.startsWith(sub.href + '/'))}
                     tooltip={{ children: item.label, side:'right', align:'center' }}
                   >
                     <item.icon className="h-5 w-5" />

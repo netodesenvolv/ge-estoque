@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -7,22 +8,27 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Settings2, Save, AlertCircle } from 'lucide-react';
-import type { StockItemConfig, Item, ServedUnit } from '@/types';
-import { mockStockConfigs, mockItems, mockServedUnits } from '@/data/mockData';
+import type { StockItemConfig, Item, ServedUnit, Hospital } from '@/types';
+import { mockStockConfigs, mockItems, mockServedUnits, mockHospitals } from '@/data/mockData';
 import { useToast } from '@/hooks/use-toast';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 export default function StockLevelsConfigPage() {
   const [stockConfigs, setStockConfigs] = useState<StockItemConfig[]>([]);
   const [allItems, setAllItems] = useState<Item[]>([]);
   const [allServedUnits, setAllServedUnits] = useState<ServedUnit[]>([]);
+  const [allHospitals, setAllHospitals] = useState<Hospital[]>([]);
+  const [hospitalFilter, setHospitalFilter] = useState<string>('all');
   const { toast } = useToast();
 
   useEffect(() => {
     setAllItems(mockItems);
     setAllServedUnits(mockServedUnits);
+    setAllHospitals(mockHospitals);
     
     const combinedConfigs: StockItemConfig[] = [];
     mockItems.forEach(item => {
+      // Armazém Central
       const centralConfig = mockStockConfigs.find(c => c.itemId === item.id && !c.unitId);
       combinedConfigs.push(centralConfig || {
         id: `cfg-central-${item.id}`,
@@ -33,14 +39,18 @@ export default function StockLevelsConfigPage() {
         minQuantity: item.minQuantity,
       });
 
+      // Unidades Servidas
       mockServedUnits.forEach(unit => {
         const unitConfig = mockStockConfigs.find(c => c.itemId === item.id && c.unitId === unit.id);
+        const hospital = mockHospitals.find(h => h.id === unit.hospitalId);
         combinedConfigs.push(unitConfig || {
           id: `cfg-${item.id}-${unit.id}`,
           itemId: item.id,
           itemName: item.name,
           unitId: unit.id,
           unitName: unit.name,
+          hospitalId: unit.hospitalId,
+          hospitalName: hospital?.name || 'N/A',
           strategicStockLevel: 0,
           minQuantity: 0, 
         });
@@ -66,11 +76,17 @@ export default function StockLevelsConfigPage() {
     });
   };
 
+  const filteredConfigs = stockConfigs.filter(config => {
+    if (hospitalFilter === 'all') return true;
+    if (hospitalFilter === 'central' && !config.unitId) return true; // Armazém Central
+    return config.hospitalId === hospitalFilter;
+  });
+
   return (
     <div>
       <PageHeader
         title="Níveis Estratégicos de Estoque"
-        description="Configure os níveis estratégicos e mínimos de estoque para itens no armazém central e unidades servidas."
+        description="Configure os níveis estratégicos e mínimos para itens no armazém central e unidades servidas por hospital."
         icon={Settings2}
         actions={
           <Button onClick={handleSaveAll}>
@@ -82,9 +98,23 @@ export default function StockLevelsConfigPage() {
         <CardHeader>
           <CardTitle className="font-headline">Configurar Níveis</CardTitle>
           <CardDescription>
-            Defina os níveis de estoque desejados. Alertas serão acionados se o estoque atual cair abaixo desses níveis estratégicos.
-            Quantidade mínima é o menor nível absoluto que um item deve atingir antes de um alerta crítico.
+            Defina os níveis de estoque desejados. Alertas serão acionados se o estoque atual cair abaixo desses níveis.
+            Quantidade mínima é o menor nível absoluto antes de um alerta crítico.
           </CardDescription>
+          <div className="mt-4">
+            <Select value={hospitalFilter} onValueChange={setHospitalFilter}>
+                <SelectTrigger className="w-full md:w-1/3">
+                    <SelectValue placeholder="Filtrar por Hospital/Armazém" />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="all">Todos Hospitais e Armazém Central</SelectItem>
+                    <SelectItem value="central">Apenas Armazém Central</SelectItem>
+                    {allHospitals.map(hospital => (
+                    <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -92,16 +122,18 @@ export default function StockLevelsConfigPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Nome do Item</TableHead>
-                  <TableHead>Localização</TableHead>
+                  <TableHead>Hospital</TableHead>
+                  <TableHead>Unidade/Localização</TableHead>
                   <TableHead className="text-right">Qtde. Mínima</TableHead>
                   <TableHead className="text-right">Nível Estratégico</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {stockConfigs.length > 0 ? (
-                  stockConfigs.map((config) => (
+                {filteredConfigs.length > 0 ? (
+                  filteredConfigs.map((config) => (
                     <TableRow key={config.id}>
                       <TableCell className="font-medium">{config.itemName}</TableCell>
+                      <TableCell>{config.hospitalName || (config.unitId ? 'N/A' : '-')}</TableCell>
                       <TableCell>{config.unitName}</TableCell>
                       <TableCell className="text-right">
                         <Input
@@ -125,8 +157,8 @@ export default function StockLevelsConfigPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center h-24">
-                      Nenhum item ou unidade encontrada para configurar. Adicione itens e unidades servidas primeiro.
+                    <TableCell colSpan={5} className="text-center h-24">
+                      Nenhum item ou unidade encontrada para configurar com o filtro atual.
                     </TableCell>
                   </TableRow>
                 )}

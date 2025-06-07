@@ -1,8 +1,9 @@
+
 // src/ai/flows/analyze-consumption-trends.ts
 'use server';
 
 /**
- * @fileOverview Analisa dados históricos de consumo para visualizar tendências e gerar recomendações de reposição de estoque.
+ * @fileOverview Analisa dados históricos de consumo para visualizar tendências e gerar recomendações de reposição de estoque, considerando hospitais e unidades servidas.
  *
  * - analyzeConsumptionTrends - Uma função que analisa tendências de consumo e fornece recomendações de reposição.
  * - AnalyzeConsumptionTrendsInput - O tipo de entrada para a função analyzeConsumptionTrends.
@@ -16,7 +17,7 @@ const AnalyzeConsumptionTrendsInputSchema = z.object({
   historicalData: z
     .string()
     .describe(
-      'Dados históricos de consumo, incluindo item, data, quantidade consumida e unidade servida.'
+      'Dados históricos de consumo, incluindo item, data, quantidade consumida, unidade servida e hospital.'
     ),
   seasonalPatterns: z
     .string()
@@ -26,7 +27,7 @@ const AnalyzeConsumptionTrendsInputSchema = z.object({
   strategicStockLevels: z
     .string()
     .describe(
-      'Os níveis estratégicos de estoque para cada item no armazém central e unidades servidas.'
+      'Os níveis estratégicos de estoque para cada item no armazém central e unidades servidas (com hospital associado).'
     ),
 });
 
@@ -38,12 +39,12 @@ const AnalyzeConsumptionTrendsOutputSchema = z.object({
   trendVisualizations: z
     .string()
     .describe(
-      'Uma descrição das principais tendências de consumo, incluindo possivelmente variações sazonais.'
+      'Uma descrição das principais tendências de consumo, incluindo possivelmente variações sazonais e diferenças entre hospitais/unidades.'
     ),
   reorderRecommendations: z
     .string()
     .describe(
-      'Recomendações específicas de reposição para cada item, considerando os níveis de estoque atuais, níveis estratégicos e consumo previsto.'
+      'Recomendações específicas de reposição para cada item, considerando os níveis de estoque atuais, níveis estratégicos, consumo previsto e a localização (hospital/unidade ou armazém central).'
     ),
 });
 
@@ -61,11 +62,11 @@ const prompt = ai.definePrompt({
   name: 'analyzeConsumptionTrendsPrompt',
   input: {schema: AnalyzeConsumptionTrendsInputSchema},
   output: {schema: AnalyzeConsumptionTrendsOutputSchema},
-  prompt: `Você é um analista especialista em cadeia de suprimentos.
+  prompt: `Você é um analista especialista em cadeia de suprimentos para uma rede de hospitais.
 
-Você recebe dados históricos de consumo, descrições de padrões sazonais e níveis estratégicos de estoque.
+Você recebe dados históricos de consumo (incluindo hospital e unidade servida), descrições de padrões sazonais e níveis estratégicos de estoque (para armazém central e para cada unidade/hospital).
 
-Analise os dados e gere visualizações de tendências e recomendações de reposição de estoque.
+Analise os dados e gere visualizações de tendências e recomendações de reposição de estoque. Considere as diferenças de consumo entre diferentes hospitais e unidades servidas.
 
 Dados Históricos: {{{historicalData}}}
 Padrões Sazonais: {{{seasonalPatterns}}}
@@ -73,8 +74,8 @@ Níveis Estratégicos de Estoque: {{{strategicStockLevels}}}
 
 Com base nessas informações, forneça o seguinte EM PORTUGUÊS:
 
-Visualizações de Tendências: Uma descrição das principais tendências de consumo, incluindo possivelmente variações sazonais.
-Recomendações de Reposição: Recomendações específicas de reposição para cada item, considerando os níveis de estoque atuais, níveis estratégicos e consumo previsto.`,
+Visualizações de Tendências: Uma descrição das principais tendências de consumo, incluindo variações sazonais e destacando quaisquer diferenças significativas ou padrões específicos por hospital ou unidade servida.
+Recomendações de Reposição: Recomendações específicas de reposição para cada item, detalhando se a reposição é para o Armazém Central ou para uma unidade/hospital específico. Considere os níveis de estoque atuais, níveis estratégicos e consumo previsto para cada local.`,
 });
 
 const analyzeConsumptionTrendsFlow = ai.defineFlow(
@@ -88,3 +89,4 @@ const analyzeConsumptionTrendsFlow = ai.defineFlow(
     return output!;
   }
 );
+

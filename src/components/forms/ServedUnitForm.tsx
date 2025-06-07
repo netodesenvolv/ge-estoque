@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useForm } from 'react-hook-form';
@@ -5,15 +6,19 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
-import type { ServedUnit } from '@/types';
+import type { ServedUnit, Hospital } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
+import { useEffect, useState } from 'react';
+import { mockHospitals } from '@/data/mockData'; // Import mockHospitals
 
 const servedUnitSchema = z.object({
   name: z.string().min(2, { message: "O nome da unidade deve ter pelo menos 2 caracteres." }),
   location: z.string().min(2, { message: "A localização é obrigatória." }),
+  hospitalId: z.string().min(1, { message: "A seleção do hospital é obrigatória." }),
 });
 
 type ServedUnitFormData = z.infer<typeof servedUnitSchema>;
@@ -26,26 +31,37 @@ interface ServedUnitFormProps {
 export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedUnitFormProps) {
   const router = useRouter();
   const { toast } = useToast();
+  const [hospitals, setHospitals] = useState<Hospital[]>([]);
+
+  useEffect(() => {
+    setHospitals(mockHospitals);
+  }, []);
 
   const form = useForm<ServedUnitFormData>({
     resolver: zodResolver(servedUnitSchema),
-    defaultValues: initialData || {
+    defaultValues: initialData ? {
+      name: initialData.name,
+      location: initialData.location,
+      hospitalId: initialData.hospitalId,
+    } : {
       name: '',
       location: '',
+      hospitalId: '',
     },
   });
 
   const onSubmit = (data: ServedUnitFormData) => {
     console.log('Formulário de unidade servida submetido:', data);
     const unitId = initialData?.id || Math.random().toString(36).substring(2, 15);
-    const submittedUnit: ServedUnit = { ...data, id: unitId };
+    const hospitalName = hospitals.find(h => h.id === data.hospitalId)?.name;
+    const submittedUnit: ServedUnit = { ...data, id: unitId, hospitalName };
     
     if (onSubmitSuccess) {
       onSubmitSuccess(submittedUnit);
     } else {
       toast({
         title: initialData ? "Unidade Servida Atualizada" : "Unidade Servida Adicionada",
-        description: `${data.name} foi ${initialData ? 'atualizada' : 'adicionada'} com sucesso.`,
+        description: `${data.name} (${hospitalName}) foi ${initialData ? 'atualizada' : 'adicionada'} com sucesso.`,
       });
       router.push('/served-units');
     }
@@ -61,10 +77,32 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
           <CardContent className="space-y-6">
             <FormField
               control={form.control}
+              name="hospitalId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Hospital</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione um hospital" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {hospitals.map(hospital => (
+                        <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Nome da Unidade</FormLabel>
+                  <FormLabel>Nome da Unidade (Setor)</FormLabel>
                   <FormControl>
                     <Input placeholder="ex: Sala de Emergência, Ala Pediátrica" {...field} />
                   </FormControl>
@@ -77,7 +115,7 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
               name="location"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Localização</FormLabel>
+                  <FormLabel>Localização (dentro do hospital)</FormLabel>
                   <FormControl>
                     <Input placeholder="ex: Piso 1, Ala A" {...field} />
                   </FormControl>
