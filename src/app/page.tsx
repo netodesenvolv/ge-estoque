@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -106,17 +107,17 @@ export default function DashboardPage() {
              <CardDescription>Acesse tarefas comuns rapidamente.</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Button asChild variant="outline" className="w-full justify-center py-6 text-base">
-              <Link href="/items/add"><Package className="mr-2 h-5 w-5" />Adicionar Novo Item</Link>
+            <Button asChild variant="outline" className="w-full justify-center py-6 text-base whitespace-normal h-auto text-center">
+              <Link href="/items/add"><Package className="h-5 w-5" />Adicionar Novo Item</Link>
             </Button>
-            <Button asChild variant="outline" className="w-full justify-center py-6 text-base">
-              <Link href="/stock/movements"><Warehouse className="mr-2 h-5 w-5" />Registrar Movimentação de Estoque</Link>
+            <Button asChild variant="outline" className="w-full justify-center py-6 text-base whitespace-normal h-auto text-center">
+              <Link href="/stock/movements"><Warehouse className="h-5 w-5" />Registrar Movimentação de Estoque</Link>
             </Button>
-            <Button asChild variant="outline" className="w-full justify-center py-6 text-base">
-              <Link href="/served-units/add"><Users className="mr-2 h-5 w-5" />Cadastrar Unidade Servida</Link>
+            <Button asChild variant="outline" className="w-full justify-center py-6 text-base whitespace-normal h-auto text-center">
+              <Link href="/served-units/add"><Users className="h-5 w-5" />Cadastrar Unidade Servida</Link>
             </Button>
-             <Button asChild variant="outline" className="w-full justify-center py-6 text-base">
-              <Link href="/trends"><TrendingUpIcon className="mr-2 h-5 w-5" />Analisar Tendências</Link>
+             <Button asChild variant="outline" className="w-full justify-center py-6 text-base whitespace-normal h-auto text-center">
+              <Link href="/trends"><TrendingUpIcon className="h-5 w-5" />Analisar Tendências</Link>
             </Button>
           </CardContent>
         </Card>
@@ -144,3 +145,4 @@ function HomeIcon(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   )
 }
+
