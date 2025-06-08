@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useForm } from 'react-hook-form';
@@ -20,6 +21,7 @@ const itemSchema = z.object({
   minQuantity: z.coerce.number().min(0, { message: "A quantidade mínima não pode ser negativa." }),
   currentQuantityCentral: z.coerce.number().min(0, { message: "A quantidade atual não pode ser negativa." }),
   supplier: z.string().optional(),
+  expirationDate: z.string().refine((val) => val === "" || !isNaN(Date.parse(val)), { message: "Data de validade inválida. Use o formato AAAA-MM-DD ou deixe em branco." }).optional(),
 });
 
 type ItemFormData = z.infer<typeof itemSchema>;
@@ -43,13 +45,17 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
       minQuantity: 0,
       currentQuantityCentral: 0,
       supplier: '',
+      expirationDate: '',
     },
   });
 
   const onSubmit = (data: ItemFormData) => {
     console.log('Formulário de item submetido:', data);
-    const newItemId = initialData?.id || Math.random().toString(36).substring(2, 15);
-    const submittedItem: Item = { ...data, id: newItemId };
+    const submittedItem: Item = { 
+      ...data, 
+      id: initialData?.id || Math.random().toString(36).substring(2, 15),
+      expirationDate: data.expirationDate || undefined, // Garante que seja undefined se vazio
+    };
     
     if (onSubmitSuccess) {
       onSubmitSuccess(submittedItem);
@@ -140,7 +146,7 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                 )}
               />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <FormField
                 control={form.control}
                 name="minQuantity"
@@ -163,6 +169,20 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                     <FormControl>
                       <Input type="number" placeholder="ex: 500" {...field} />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="expirationDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Data de Validade (Opcional)</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} />
+                    </FormControl>
+                    <FormDescription>Formato: AAAA-MM-DD</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

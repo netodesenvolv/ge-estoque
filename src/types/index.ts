@@ -8,6 +8,7 @@ export interface Item {
   minQuantity: number;
   currentQuantityCentral: number;
   supplier?: string;
+  expirationDate?: string; // ISO date string, e.g., "YYYY-MM-DD"
 }
 
 export interface Hospital {
@@ -70,3 +71,4 @@ export interface HistoricalDataEntry {
   servedUnit: string;
   hospital: string; // Added hospital context
 }
+

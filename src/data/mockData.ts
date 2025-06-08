@@ -1,12 +1,15 @@
 
 import type { Item, ServedUnit, StockItemConfig, StockMovement, Hospital } from '@/types';
+import { addDays, formatISO } from 'date-fns';
+
+const today = new Date();
 
 export const mockItems: Item[] = [
-  { id: '1', name: 'Paracetamol 500mg', code: 'PARA500', category: 'Analgésico', unitOfMeasure: 'Comprimido', minQuantity: 100, currentQuantityCentral: 500, supplier: 'Pharma Inc.' },
-  { id: '2', name: 'Amoxicilina 250mg', code: 'AMOX250', category: 'Antibiótico', unitOfMeasure: 'Cápsula', minQuantity: 50, currentQuantityCentral: 200, supplier: 'MediCorp' },
-  { id: '3', name: 'Curativos Sortidos (Band-Aid)', code: 'BANDAID', category: 'Primeiros Socorros', unitOfMeasure: 'Caixa', minQuantity: 20, currentQuantityCentral: 150, supplier: 'HealthGoods' },
-  { id: '4', name: 'Seringa 5ml', code: 'SYR5ML', category: 'Suprimentos Médicos', unitOfMeasure: 'Peça', minQuantity: 200, currentQuantityCentral: 1000, supplier: 'MediSupply Co.' },
-  { id: '5', name: 'Compressas de Gaze', code: 'GAUZEP', category: 'Primeiros Socorros', unitOfMeasure: 'Pacote', minQuantity: 50, currentQuantityCentral: 300, supplier: 'HealthGoods' },
+  { id: '1', name: 'Paracetamol 500mg', code: 'PARA500', category: 'Analgésico', unitOfMeasure: 'Comprimido', minQuantity: 100, currentQuantityCentral: 500, supplier: 'Pharma Inc.', expirationDate: formatISO(addDays(today, 90), { representation: 'date' }) },
+  { id: '2', name: 'Amoxicilina 250mg', code: 'AMOX250', category: 'Antibiótico', unitOfMeasure: 'Cápsula', minQuantity: 50, currentQuantityCentral: 200, supplier: 'MediCorp', expirationDate: formatISO(addDays(today, 15), { representation: 'date' }) }, // Próximo ao vencimento
+  { id: '3', name: 'Curativos Sortidos (Band-Aid)', code: 'BANDAID', category: 'Primeiros Socorros', unitOfMeasure: 'Caixa', minQuantity: 20, currentQuantityCentral: 150, supplier: 'HealthGoods', expirationDate: formatISO(addDays(today, -10), { representation: 'date' }) }, // Vencido
+  { id: '4', name: 'Seringa 5ml', code: 'SYR5ML', category: 'Suprimentos Médicos', unitOfMeasure: 'Peça', minQuantity: 200, currentQuantityCentral: 1000, supplier: 'MediSupply Co.', expirationDate: formatISO(addDays(today, 365), { representation: 'date' }) },
+  { id: '5', name: 'Compressas de Gaze', code: 'GAUZEP', category: 'Primeiros Socorros', unitOfMeasure: 'Pacote', minQuantity: 50, currentQuantityCentral: 300, supplier: 'HealthGoods' }, // Sem data de validade
 ];
 
 export const mockHospitals: Hospital[] = [
@@ -52,3 +55,4 @@ export const mockStockMovements: StockMovement[] = [
     { id: 'sm3', itemId: '2', itemName: findItemName('2'), type: 'exit', quantity: 50, date: '2024-05-05', notes: 'Transferência para Farmácia', ...getUnitDetails('su3') },
     { id: 'sm4', itemId: '4', itemName: findItemName('4'), type: 'consumption', quantity: 20, date: '2024-05-10', ...getUnitDetails('su1') },
 ];
+
