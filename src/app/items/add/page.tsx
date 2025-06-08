@@ -9,8 +9,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { PackagePlus, Upload } from 'lucide-react';
+import { PackagePlus, Upload, Download } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+
 
 const BatchImportForm = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -49,16 +51,51 @@ const BatchImportForm = () => {
     }
   };
 
+  const handleDownloadTemplate = () => {
+    // Simulação de download. Em uma aplicação real, você forneceria um link para um arquivo.
+    toast({
+      title: "Modelo de Planilha",
+      description: "Em uma aplicação real, o download da planilha modelo iniciaria aqui. Por favor, siga as instruções de colunas abaixo.",
+    });
+  }
+
   return (
     <Card className="shadow-lg">
       <CardHeader>
         <CardTitle className="font-headline">Importar Itens em Lote via Planilha</CardTitle>
         <CardDescription>
           Faça o upload de um arquivo (CSV, XLSX) contendo os dados dos itens.
-          Certifique-se de que a planilha siga o formato esperado. As colunas devem ser: Nome, Código, Categoria, Unidade de Medida, Quantidade Mínima (Central), Quantidade Atual (Central), Fornecedor (Opcional), Data de Validade (AAAA-MM-DD, Opcional).
+          A primeira linha da planilha deve ser o cabeçalho e as colunas devem estar na seguinte ordem:
+          <br />
+          <strong>Nome</strong>, <strong>Código</strong>, <strong>Categoria</strong>, <strong>Unidade de Medida</strong>, <strong>Qtde. Mínima (Armazém Central)</strong>, <strong>Qtde. Atual (Armazém Central)</strong>, <strong>Fornecedor (Opcional)</strong>, <strong>Data de Validade (AAAA-MM-DD, Opcional)</strong>.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <div className="space-y-4">
+          <Alert>
+            <Download className="h-4 w-4" />
+            <AlertTitle>Formato da Planilha</AlertTitle>
+            <AlertDescription>
+              <p className="mb-2">
+                Certifique-se de que sua planilha (CSV ou XLSX) siga o formato especificado. A primeira linha deve conter os seguintes cabeçalhos, nesta ordem:
+              </p>
+              <ul className="list-disc list-inside text-sm space-y-1">
+                <li><code>Nome</code> (Texto, Obrigatório) - Nome do item.</li>
+                <li><code>Código</code> (Texto, Obrigatório) - Código único do item.</li>
+                <li><code>Categoria</code> (Texto, Obrigatório) - Categoria do item.</li>
+                <li><code>Unidade de Medida</code> (Texto, Obrigatório) - Ex: Peça, Caixa, Comprimido.</li>
+                <li><code>Qtde. Mínima (Armazém Central)</code> (Número, Obrigatório) - Nível mínimo de estoque no Armazém Central.</li>
+                <li><code>Qtde. Atual (Armazém Central)</code> (Número, Obrigatório) - Quantidade inicial no Armazém Central.</li>
+                <li><code>Fornecedor</code> (Texto, Opcional) - Nome do fornecedor.</li>
+                <li><code>Data de Validade</code> (Data no formato AAAA-MM-DD, Opcional) - Deixe em branco se não aplicável.</li>
+              </ul>
+              <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="mt-4">
+                <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (Instruções)
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+
         <div className="grid w-full max-w-md items-center gap-2">
           <Label htmlFor="batch-file-input">Arquivo da Planilha</Label>
           <Input
