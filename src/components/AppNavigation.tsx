@@ -100,7 +100,7 @@ export default function AppNavigation() {
                 <SidebarMenuSub className="border-none p-0 m-0">
                   {item.subItems.map((subItem) => (
                     <SidebarMenuSubItem key={subItem.href}>
-                      <Link href={subItem.href} passHref legacyBehavior>
+                      <Link href={subItem.href} asChild>
                         <SidebarMenuSubButton
                           className={cn(
                             "w-full justify-start text-sm",
@@ -119,7 +119,7 @@ export default function AppNavigation() {
             </AccordionItem>
           ) : (
             <SidebarMenuItem key={item.href}>
-              <Link href={item.href} passHref legacyBehavior>
+              <Link href={item.href}>
                 <SidebarMenuButton
                   className={cn(
                     "w-full justify-start text-base",
