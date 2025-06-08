@@ -535,42 +535,42 @@ const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonP
     const {
       asChild: ownAsChild = false,
       isActive = false,
-      variant = "default",
-      size = "default",
+      variant, // Pass variant to cva
+      size,   // Pass size to cva
       tooltip,
-      className,
+      className: incomingClassName, // Use a different name to avoid conflict
       children,
-      ...restOfAllProps
-    } = allProps
+      ...remainingParentProps // Props from parent (e.g., Link)
+    } = allProps;
 
-    const Comp = ownAsChild ? Slot : "button"
-    const { isMobile, state } = useSidebar()
+    const Comp = ownAsChild ? Slot : "button";
 
-    // Strip 'asChild' from restOfAllProps before spreading onto a DOM element
-    const { asChild: _forwardedAsChild, ...propsToSpread } = restOfAllProps
+    // Explicitly remove 'asChild' from remainingParentProps before spreading
+    const { asChild: _forwardedAsChild, ...domProps } = remainingParentProps;
 
-    const button = (
+    const buttonElement = (
       <Comp
         ref={ref}
+        className={cn(sidebarMenuButtonVariants({ variant, size, className: incomingClassName }))}
         data-sidebar="menu-button"
         data-size={size}
         data-active={isActive}
-        className={cn(sidebarMenuButtonVariants({ variant, size, className }))}
-        {...propsToSpread}
+        {...domProps} // Spread cleaned props (href, onClick, etc.)
       >
         {children}
       </Comp>
-    )
+    );
 
     if (!tooltip) {
-      return button
+      return buttonElement;
     }
 
     const tooltipProps = typeof tooltip === "string" ? { children: tooltip } : tooltip;
+    const { state, isMobile } = useSidebar();
 
     return (
       <Tooltip>
-        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipTrigger asChild>{buttonElement}</TooltipTrigger>
         <TooltipContent
           side="right"
           align="center"
@@ -578,9 +578,9 @@ const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonP
           {...tooltipProps}
         />
       </Tooltip>
-    )
+    );
   }
-)
+);
 SidebarMenuButton.displayName = "SidebarMenuButton"
 
 
@@ -708,31 +708,31 @@ const SidebarMenuSubButton = React.forwardRef<HTMLAnchorElement, SidebarMenuSubB
       asChild: ownAsChild = false,
       size = "md",
       isActive,
-      className,
+      className: incomingClassName, // Use a different name
       children,
-      ...restOfAllProps
+      ...remainingParentProps // Props from parent (e.g., Link)
     } = allProps;
 
     const Comp = ownAsChild ? Slot : "a";
     
-    // Strip 'asChild' from restOfAllProps before spreading onto a DOM element
-    const { asChild: _forwardedAsChild, ...propsToSpread } = restOfAllProps;
+    // Explicitly remove 'asChild' from remainingParentProps before spreading
+    const { asChild: _forwardedAsChild, ...domProps } = remainingParentProps;
 
     return (
       <Comp
         ref={ref}
-        data-sidebar="menu-sub-button"
-        data-size={size}
-        data-active={isActive}
         className={cn(
           "flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 text-sidebar-foreground outline-none ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-accent-foreground",
           "data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground",
           size === "sm" && "text-xs",
           size === "md" && "text-sm",
           "group-data-[collapsible=icon]:hidden",
-          className
+          incomingClassName // Use the renamed className prop here
         )}
-        {...propsToSpread}
+        data-sidebar="menu-sub-button"
+        data-size={size}
+        data-active={isActive}
+        {...domProps} // Spread cleaned props
       >
         {children}
       </Comp>
