@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -543,18 +544,21 @@ const SidebarMenuButton = React.forwardRef<
 >(
   (
     {
-      asChild = false,
+      asChild: ownAsChild = false,
       isActive = false,
       variant = "default",
       size = "default",
       tooltip,
       className,
-      ...props
+      ...restProps
     },
     ref
   ) => {
-    const Comp = asChild ? Slot : "button"
+    const Comp = ownAsChild ? Slot : "button"
     const { isMobile, state } = useSidebar()
+
+    // Destructure `asChild` from `restProps` to prevent it from being passed to the DOM element if Comp is a native tag.
+    const { asChild: _forwardedAsChild, ...propsToSpread } = restProps;
 
     const button = (
       <Comp
@@ -563,7 +567,7 @@ const SidebarMenuButton = React.forwardRef<
         data-size={size}
         data-active={isActive}
         className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
-        {...props}
+        {...propsToSpread}
       />
     )
 
@@ -712,8 +716,11 @@ const SidebarMenuSubButton = React.forwardRef<
     size?: "sm" | "md"
     isActive?: boolean
   }
->(({ asChild = false, size = "md", isActive, className, ...props }, ref) => {
-  const Comp = asChild ? Slot : "a"
+>(({ asChild: ownAsChild = false, size = "md", isActive, className, ...restProps }, ref) => {
+  const Comp = ownAsChild ? Slot : "a"
+  // Destructure `asChild` from `restProps` to prevent it from being passed to the DOM element if Comp is a native tag.
+  const { asChild: _forwardedAsChild, ...propsToSpread } = restProps;
+
 
   return (
     <Comp
@@ -729,7 +736,7 @@ const SidebarMenuSubButton = React.forwardRef<
         "group-data-[collapsible=icon]:hidden",
         className
       )}
-      {...props}
+      {...propsToSpread}
     />
   )
 })
