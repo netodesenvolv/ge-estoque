@@ -19,7 +19,6 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
-  SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarMenuSub,
@@ -89,16 +88,14 @@ export default function AppNavigation() {
 
           return item.subItems ? (
             <AccordionItem value={`item-${index}`} key={item.label} className="border-none">
-              <Tooltip>
+               <Tooltip>
                 <TooltipTrigger asChild>
                   <AccordionTrigger
                     className={cn(
-                      // Base styling from SidebarMenuButton, adapted for AccordionTrigger
                       "w-full rounded-md p-2 text-base font-normal text-left",
                       "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                       "focus-visible:ring-2 focus-visible:ring-sidebar-ring outline-none",
                       "data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground",
-                       // Active state:
                       isActive && "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
                     )}
                   >
@@ -106,7 +103,6 @@ export default function AppNavigation() {
                       <item.icon className="h-5 w-5" />
                       <span>{item.label}</span>
                     </div>
-                    {/* ChevronDown is added automatically by AccordionTrigger */}
                   </AccordionTrigger>
                 </TooltipTrigger>
                 <TooltipContent side="right" align="center" hidden={sidebarState === "expanded" || isMobile}>
@@ -117,7 +113,7 @@ export default function AppNavigation() {
                 <SidebarMenuSub className="border-none p-0 m-0">
                   {item.subItems.map((subItem) => (
                     <SidebarMenuSubItem key={subItem.href}>
-                      <Link href={subItem.href} passHref legacyBehavior={false} asChild>
+                      <Link href={subItem.href} asChild>
                         <SidebarMenuSubButton
                           className={cn(
                             "w-full justify-start text-sm",
@@ -136,7 +132,7 @@ export default function AppNavigation() {
             </AccordionItem>
           ) : (
             <SidebarMenuItem key={item.href}>
-              <Link href={item.href} passHref legacyBehavior={false} asChild>
+              <Link href={item.href} asChild>
                 <SidebarMenuButton
                   className={cn(
                     "w-full justify-start text-base",
