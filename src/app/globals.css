@@ -101,78 +101,108 @@
 }
 
 @media print {
-  /* Oculta tudo por padrão */
   body * {
     visibility: hidden;
   }
 
-  /* Torna a área de impressão e seus filhos visíveis */
-  .printable-content, .printable-content * {
+  .printable-content,
+  .printable-content * {
     visibility: visible;
   }
 
-  /* Posiciona a área de impressão para ocupar a página */
   .printable-content {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
+    position: absolute !important; /* Garante que a posição seja absoluta */
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    min-height: 100vh !important; /* Garante que o conteúdo ocupe a altura da página */
     border: none !important;
     box-shadow: none !important;
     margin: 0 !important;
-    padding: 10mm !important; /* Adiciona um pouco de padding ao redor do conteúdo impresso */
+    padding: 10mm !important;
+    background-color: white !important; /* Garante fundo branco para a área de impressão */
   }
 
-  /* Oculta elementos que não devem ser impressos dentro da área de impressão */
-  .printable-content .no-print {
+  /* Oculta elementos especificamente marcados com no-print,
+     E outros elementos de layout principais que não devem ser impressos */
+  .no-print,
+  [data-sidebar="sidebar"],
+  [data-sidebar-mobile="true"],
+  header.sticky, /* Cabeçalho principal da aplicação */
+  body > div[data-overlay-container="true"] /* Toasts, dialogs etc. */
+   {
     display: none !important;
-  }
-  
-  /* Garante que os elementos de layout do app principal sejam ocultados */
-  [data-sidebar="sidebar"], [data-sidebar-mobile="true"], header.sticky {
-    display: none !important;
+    visibility: hidden !important; /* Dupla garantia */
   }
 
-  /* Ajustes de página */
   @page {
-    size: A4 landscape; /* Sugere paisagem para tabelas largas, pode ser 'auto' ou 'A4 portrait' */
-    margin: 15mm; /* Margens da página */
+    size: A4 landscape;
+    margin: 10mm;
   }
 
   body {
-    -webkit-print-color-adjust: exact; /* Força a impressão de cores de fundo e texto no Chrome/Safari */
-    print-color-adjust: exact; /* Força a impressão de cores de fundo e texto */
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
     background-color: white !important; /* Garante fundo branco na impressão */
+    padding: 0 !important;
+    margin: 0 !important;
+    height: auto !important; /* Evita que o body restrinja o .printable-content */
+    overflow: visible !important; /* Garante que nada seja cortado */
   }
 
-  /* Estilos específicos para a tabela na impressão */
+  html {
+    background-color: white !important; /* Garante fundo branco para o html também */
+  }
+
+
   .printable-content table {
     width: 100% !important;
     border-collapse: collapse !important;
+    font-size: 9pt !important;
   }
-  .printable-content th, .printable-content td {
-    border: 1px solid #ccc !important; /* Adiciona bordas visíveis na tabela */
-    padding: 8px !important;
-    text-align: left !important;
-  }
-  .printable-content th {
-    background-color: #f2f2f2 !important; /* Cor de fundo para cabeçalhos */
-  }
-  .printable-content .text-right {
-    text-align: right !important;
-  }
-  .printable-content .text-center {
-    text-align: center !important;
-  }
-  .printable-content .font-medium {
-      font-weight: 500 !important;
-  }
-  .printable-content .badge { /* Simplifica a renderização de badges */
-    border: 1px solid #ccc !important;
-    background-color: transparent !important;
-    color: black !important;
-    padding: 2px 4px !important;
-    border-radius: 4px !important;
-  }
-}
 
+  .printable-content th,
+  .printable-content td {
+    border: 1px solid #bbb !important; /* Borda um pouco mais escura */
+    padding: 4px 5px !important; /* Ajuste fino do padding */
+    text-align: left !important;
+    word-wrap: break-word; /* Quebra palavras longas */
+  }
+
+  .printable-content th {
+    background-color: #e8e8e8 !important; /* Cor de fundo para cabeçalhos um pouco mais suave */
+    font-weight: bold !important;
+  }
+
+  .printable-content .text-right { text-align: right !important; }
+  .printable-content .text-center { text-align: center !important; }
+  .printable-content .font-medium { font-weight: 500 !important; }
+
+  .printable-content .badge {
+    border: 1px solid #aeaeae !important;
+    background-color: transparent !important;
+    color: #333 !important;
+    padding: 1px 3px !important;
+    border-radius: 3px !important;
+    font-size: 7.5pt !important; /* Ajuste fino da fonte */
+    display: inline-block !important;
+    white-space: nowrap; /* Evita que o texto do badge quebre linha */
+  }
+
+  /* Garante que o título dentro do CardHeader seja visível e bem formatado */
+  .printable-content .card-header .font-headline { /* CardTitle */
+     font-size: 14pt !important;
+     font-weight: bold !important;
+     color: black !important;
+     margin-bottom: 10px !important; /* Espaço abaixo do título */
+     display: block !important; /* Garante que seja um bloco para margem */
+  }
+
+  /* Garante que o CardHeader em si seja visível se contiver o título */
+   .printable-content .card-header {
+      padding-top: 0 !important; /* Ajusta padding para impressão */
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+      border-bottom: none !important; /* Remove borda do card header se houver */
+   }
+}

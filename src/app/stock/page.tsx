@@ -154,6 +154,7 @@ export default function StockPage() {
             <Printer className="mr-2 h-4 w-4" /> Imprimir Tabela
           </Button>
         }
+        className="no-print" // Adicionada a classe no-print aqui
       />
       <Card className="shadow-lg printable-content">
         <CardHeader>
@@ -249,4 +250,3 @@ export default function StockPage() {
     </div>
   );
 }
-
