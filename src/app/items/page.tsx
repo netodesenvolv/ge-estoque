@@ -7,7 +7,7 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Package, PlusCircle, Edit3, Trash2, Search, CalendarWarning } from 'lucide-react';
+import { Package, PlusCircle, Edit3, Trash2, Search, CalendarClock } from 'lucide-react';
 import type { Item } from '@/types';
 import { mockItems } from '@/data/mockData';
 import { Input } from '@/components/ui/input';
@@ -52,10 +52,10 @@ export default function ItemsPage() {
     today.setHours(0, 0, 0, 0); // Compare dates only
 
     if (isBefore(expDate, today)) {
-      return { text: `Vencido (${format(expDate, 'dd/MM/yy', { locale: ptBR })})`, variant: 'destructive', icon: <CalendarWarning className="h-3 w-3 mr-1 inline-block" /> };
+      return { text: `Vencido (${format(expDate, 'dd/MM/yy', { locale: ptBR })})`, variant: 'destructive', icon: <CalendarClock className="h-3 w-3 mr-1 inline-block" /> };
     }
     if (differenceInDays(expDate, today) <= NEARING_EXPIRATION_DAYS) {
-      return { text: `Vence em ${differenceInDays(expDate, today) +1}d (${format(expDate, 'dd/MM/yy', { locale: ptBR })})`, variant: 'secondary', icon: <CalendarWarning className="h-3 w-3 mr-1 inline-block" /> };
+      return { text: `Vence em ${differenceInDays(expDate, today) +1}d (${format(expDate, 'dd/MM/yy', { locale: ptBR })})`, variant: 'secondary', icon: <CalendarClock className="h-3 w-3 mr-1 inline-block" /> };
     }
     return { text: format(expDate, 'dd/MM/yyyy', { locale: ptBR }), variant: 'default' };
   };
