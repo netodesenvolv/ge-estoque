@@ -25,8 +25,10 @@ import {
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton,
+  useSidebar, // Import useSidebar
 } from '@/components/ui/sidebar';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 
 const navItems = [
@@ -75,32 +77,47 @@ const navItems = [
 
 export default function AppNavigation() {
   const pathname = usePathname();
+  const { state: sidebarState, isMobile } = useSidebar();
 
   return (
     <nav className="flex flex-col p-2">
       <Accordion type="multiple" className="w-full">
-        {navItems.map((item, index) =>
-          item.subItems ? (
+        {navItems.map((item, index) => {
+          const isActive = item.subItems ? 
+                           item.subItems.some(sub => pathname === sub.href || pathname.startsWith(sub.href + '/')) :
+                           pathname === item.href;
+
+          return item.subItems ? (
             <AccordionItem value={`item-${index}`} key={item.label} className="border-none">
-              <AccordionTrigger className="hover:no-underline py-0">
-                 <SidebarMenuButton
-                    asChild={false}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AccordionTrigger
                     className={cn(
-                      "w-full justify-start text-base",
-                      item.subItems.some(sub => pathname === sub.href || pathname.startsWith(sub.href + '/')) && "bg-sidebar-accent text-sidebar-accent-foreground"
+                      // Base styling from SidebarMenuButton, adapted for AccordionTrigger
+                      "w-full rounded-md p-2 text-base font-normal text-left",
+                      "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                      "focus-visible:ring-2 focus-visible:ring-sidebar-ring outline-none",
+                      "data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground",
+                       // Active state:
+                      isActive && "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
                     )}
-                    isActive={item.subItems.some(sub => pathname === sub.href || pathname.startsWith(sub.href + '/'))}
-                    tooltip={{ children: item.label, side:'right', align:'center' }}
                   >
-                    <item.icon className="h-5 w-5" />
-                    <span>{item.label}</span>
-                  </SidebarMenuButton>
-              </AccordionTrigger>
+                    <div className="flex flex-1 items-center gap-2">
+                      <item.icon className="h-5 w-5" />
+                      <span>{item.label}</span>
+                    </div>
+                    {/* ChevronDown is added automatically by AccordionTrigger */}
+                  </AccordionTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="right" align="center" hidden={sidebarState === "expanded" || isMobile}>
+                  {item.label}
+                </TooltipContent>
+              </Tooltip>
               <AccordionContent className="pb-0 pl-4 border-l border-sidebar-border ml-[18px]">
                 <SidebarMenuSub className="border-none p-0 m-0">
                   {item.subItems.map((subItem) => (
                     <SidebarMenuSubItem key={subItem.href}>
-                      <Link href={subItem.href} asChild>
+                      <Link href={subItem.href} passHref legacyBehavior={false} asChild>
                         <SidebarMenuSubButton
                           className={cn(
                             "w-full justify-start text-sm",
@@ -119,13 +136,13 @@ export default function AppNavigation() {
             </AccordionItem>
           ) : (
             <SidebarMenuItem key={item.href}>
-              <Link href={item.href}>
+              <Link href={item.href} passHref legacyBehavior={false} asChild>
                 <SidebarMenuButton
                   className={cn(
                     "w-full justify-start text-base",
-                     pathname === item.href && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
+                     isActive && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
                   )}
-                  isActive={pathname === item.href}
+                  isActive={isActive}
                   tooltip={{ children: item.label, side:'right', align:'center' }}
                 >
                   <item.icon className="h-5 w-5" />
@@ -133,8 +150,8 @@ export default function AppNavigation() {
                 </SidebarMenuButton>
               </Link>
             </SidebarMenuItem>
-          )
-        )}
+          );
+        })}
       </Accordion>
     </nav>
   );
