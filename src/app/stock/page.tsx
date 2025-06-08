@@ -7,10 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Warehouse, Search } from 'lucide-react';
+import { Warehouse, Search, Printer } from 'lucide-react';
 import type { Item, ServedUnit, StockItemConfig, Hospital } from '@/types';
 import { mockItems, mockServedUnits, mockStockConfigs, mockHospitals } from '@/data/mockData';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 
 interface DisplayStockItem extends StockItemConfig {
   status?: 'Optimal' | 'Low' | 'Alert'; // Optimal, Alert (below strategic), Low (below min)
@@ -138,14 +139,26 @@ export default function StockPage() {
     return 'N/D';
   }
 
+  const handlePrint = () => {
+    window.print();
+  };
 
   return (
     <div>
-      <PageHeader title="Estoque Atual" description="Visualize os níveis de estoque atuais em todos os locais." icon={Warehouse} />
-      <Card className="shadow-lg">
+      <PageHeader 
+        title="Estoque Atual" 
+        description="Visualize os níveis de estoque atuais em todos os locais." 
+        icon={Warehouse}
+        actions={
+          <Button onClick={handlePrint}>
+            <Printer className="mr-2 h-4 w-4" /> Imprimir Tabela
+          </Button>
+        }
+      />
+      <Card className="shadow-lg printable-content">
         <CardHeader>
           <CardTitle className="font-headline">Visão Geral do Estoque</CardTitle>
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 no-print">
             <div className="relative lg:col-span-2">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
               <Input
@@ -236,3 +249,4 @@ export default function StockPage() {
     </div>
   );
 }
+

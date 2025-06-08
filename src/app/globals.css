@@ -1,3 +1,4 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -98,3 +99,80 @@
     @apply bg-background text-foreground;
   }
 }
+
+@media print {
+  /* Oculta tudo por padrão */
+  body * {
+    visibility: hidden;
+  }
+
+  /* Torna a área de impressão e seus filhos visíveis */
+  .printable-content, .printable-content * {
+    visibility: visible;
+  }
+
+  /* Posiciona a área de impressão para ocupar a página */
+  .printable-content {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    border: none !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 10mm !important; /* Adiciona um pouco de padding ao redor do conteúdo impresso */
+  }
+
+  /* Oculta elementos que não devem ser impressos dentro da área de impressão */
+  .printable-content .no-print {
+    display: none !important;
+  }
+  
+  /* Garante que os elementos de layout do app principal sejam ocultados */
+  [data-sidebar="sidebar"], [data-sidebar-mobile="true"], header.sticky {
+    display: none !important;
+  }
+
+  /* Ajustes de página */
+  @page {
+    size: A4 landscape; /* Sugere paisagem para tabelas largas, pode ser 'auto' ou 'A4 portrait' */
+    margin: 15mm; /* Margens da página */
+  }
+
+  body {
+    -webkit-print-color-adjust: exact; /* Força a impressão de cores de fundo e texto no Chrome/Safari */
+    print-color-adjust: exact; /* Força a impressão de cores de fundo e texto */
+    background-color: white !important; /* Garante fundo branco na impressão */
+  }
+
+  /* Estilos específicos para a tabela na impressão */
+  .printable-content table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+  .printable-content th, .printable-content td {
+    border: 1px solid #ccc !important; /* Adiciona bordas visíveis na tabela */
+    padding: 8px !important;
+    text-align: left !important;
+  }
+  .printable-content th {
+    background-color: #f2f2f2 !important; /* Cor de fundo para cabeçalhos */
+  }
+  .printable-content .text-right {
+    text-align: right !important;
+  }
+  .printable-content .text-center {
+    text-align: center !important;
+  }
+  .printable-content .font-medium {
+      font-weight: 500 !important;
+  }
+  .printable-content .badge { /* Simplifica a renderização de badges */
+    border: 1px solid #ccc !important;
+    background-color: transparent !important;
+    color: black !important;
+    padding: 2px 4px !important;
+    border-radius: 4px !important;
+  }
+}
+
