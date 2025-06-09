@@ -531,22 +531,19 @@ type SidebarMenuButtonProps = React.ComponentProps<"button"> & {
 } & VariantProps<typeof sidebarMenuButtonVariants>
 
 const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonProps>(
-  (allProps, ref) => {
+  (props, ref) => {
     const {
-      asChild: ownAsChild = false,
+      asChild,
       isActive = false,
-      variant, // Pass variant to cva
-      size,   // Pass size to cva
+      variant,
+      size,
       tooltip,
-      className: incomingClassName, // Use a different name to avoid conflict
+      className: incomingClassName,
       children,
-      ...remainingParentProps // Props from parent (e.g., Link)
-    } = allProps;
+      ...restOfProps
+    } = props;
 
-    const Comp = ownAsChild ? Slot : "button";
-
-    // Explicitly remove 'asChild' from remainingParentProps before spreading
-    const { asChild: _forwardedAsChild, ...domProps } = remainingParentProps;
+    const Comp = asChild ? Slot : "button";
 
     const buttonElement = (
       <Comp
@@ -555,7 +552,7 @@ const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonP
         data-sidebar="menu-button"
         data-size={size}
         data-active={isActive}
-        {...domProps} // Spread cleaned props (href, onClick, etc.)
+        {...restOfProps}
       >
         {children}
       </Comp>
@@ -703,21 +700,18 @@ type SidebarMenuSubButtonProps = React.ComponentProps<"a"> & {
 }
 
 const SidebarMenuSubButton = React.forwardRef<HTMLAnchorElement, SidebarMenuSubButtonProps>(
-  (allProps, ref) => {
+  (props, ref) => {
     const {
-      asChild: ownAsChild = false,
+      asChild,
       size = "md",
       isActive,
-      className: incomingClassName, // Use a different name
+      className: incomingClassName,
       children,
-      ...remainingParentProps // Props from parent (e.g., Link)
-    } = allProps;
+      ...restOfProps
+    } = props;
 
-    const Comp = ownAsChild ? Slot : "a";
+    const Comp = asChild ? Slot : "a";
     
-    // Explicitly remove 'asChild' from remainingParentProps before spreading
-    const { asChild: _forwardedAsChild, ...domProps } = remainingParentProps;
-
     return (
       <Comp
         ref={ref}
@@ -727,12 +721,12 @@ const SidebarMenuSubButton = React.forwardRef<HTMLAnchorElement, SidebarMenuSubB
           size === "sm" && "text-xs",
           size === "md" && "text-sm",
           "group-data-[collapsible=icon]:hidden",
-          incomingClassName // Use the renamed className prop here
+          incomingClassName
         )}
         data-sidebar="menu-sub-button"
         data-size={size}
         data-active={isActive}
-        {...domProps} // Spread cleaned props
+        {...restOfProps}
       >
         {children}
       </Comp>
