@@ -1,3 +1,4 @@
+
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import './globals.css';
@@ -40,8 +41,10 @@ export default function RootLayout({
               <AppNavigation />
             </SidebarContent>
             <SidebarFooter className="p-4">
-              <Button variant="ghost" className="w-full justify-start gap-2">
-                <UserCircle size={20} /> Perfil
+              <Button variant="ghost" className="w-full justify-start gap-2" asChild>
+                <Link href="/profile">
+                  <UserCircle size={20} /> Perfil
+                </Link>
               </Button>
               <Button variant="ghost" className="w-full justify-start gap-2">
                 <Settings size={20} /> Configurações
