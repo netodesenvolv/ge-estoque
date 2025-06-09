@@ -14,10 +14,7 @@ import { Separator } from "@/components/ui/separator"
 import { Sheet, SheetContent } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  Tooltip,
-  TooltipContent,
   TooltipProvider,
-  TooltipTrigger,
 } from "@/components/ui/tooltip"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
@@ -529,7 +526,6 @@ export interface SidebarMenuButtonProps
     VariantProps<typeof sidebarMenuButtonVariants> {
   asChild?: boolean;
   isActive?: boolean;
-  // Tooltip prop removed
 }
 
 const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonProps>(
@@ -538,14 +534,18 @@ const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonP
       className,
       variant,
       size,
-      asChild = false,
-      isActive = false,
+      asChild: isAsChild, // Renomeado para evitar conflito com a prop `asChild` de Radix
+      isActive,
       children,
       ...props
     },
     ref
   ) => {
-    const Comp = asChild ? Slot : "button";
+    const Comp = isAsChild ? Slot : "button";
+    // Remove a prop `asChild` de `props` se ela existir para não ser passada ao DOM element
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { asChild, ...restButtonProps } = props as any;
+
     return (
       <Comp
         className={cn(sidebarMenuButtonVariants({ variant, size, className }))}
@@ -553,7 +553,7 @@ const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonP
         data-sidebar="menu-button"
         data-size={size}
         data-active={isActive}
-        {...props}
+        {...restButtonProps}
       >
         {children}
       </Comp>
@@ -680,14 +680,13 @@ export interface SidebarMenuSubButtonProps
   asChild?: boolean;
   size?: "sm" | "md";
   isActive?: boolean;
-  // Tooltip prop removed
 }
 
 const SidebarMenuSubButton = React.forwardRef<HTMLAnchorElement, SidebarMenuSubButtonProps>(
   (
     {
       className,
-      asChild = false,
+      asChild: isAsChild, // Renomeado para evitar conflito
       size = "md",
       isActive,
       children,
@@ -695,7 +694,10 @@ const SidebarMenuSubButton = React.forwardRef<HTMLAnchorElement, SidebarMenuSubB
     },
     ref
   ) => {
-    const Comp = asChild ? Slot : "a";
+    const Comp = isAsChild ? Slot : "a";
+     // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { asChild, ...restButtonProps } = props as any;
+
     return (
       <Comp
         className={cn(
@@ -710,7 +712,7 @@ const SidebarMenuSubButton = React.forwardRef<HTMLAnchorElement, SidebarMenuSubB
         data-sidebar="menu-sub-button"
         data-size={size}
         data-active={isActive}
-        {...props}
+        {...restButtonProps}
       >
         {children}
       </Comp>
@@ -735,12 +737,11 @@ export {
   SidebarMenuAction,
   SidebarMenuBadge,
   SidebarMenuButton,
-  // SidebarMenuButtonProps, // Interface exportada
+  sidebarMenuButtonVariants, // Exportando as variantes
   SidebarMenuItem,
   SidebarMenuSkeleton,
   SidebarMenuSub,
   SidebarMenuSubButton,
-  // SidebarMenuSubButtonProps, // Interface exportada
   SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,

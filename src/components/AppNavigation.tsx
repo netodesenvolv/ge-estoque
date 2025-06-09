@@ -15,16 +15,18 @@ import {
   TrendingUp,
   ShoppingCart,
   ClipboardList,
-  Building, 
+  Building,
+  ChevronDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   SidebarMenuItem,
   SidebarMenuButton,
+  sidebarMenuButtonVariants, // Importando as variantes
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton,
-  useSidebar, 
+  useSidebar,
 } from '@/components/ui/sidebar';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -82,7 +84,7 @@ export default function AppNavigation() {
     <nav className="flex flex-col p-2">
       <Accordion type="multiple" className="w-full">
         {navItems.map((item, index) => {
-          const isActive = item.subItems ? 
+          const isActive = item.subItems ?
                            item.subItems.some(sub => pathname === sub.href || pathname.startsWith(sub.href + '/')) :
                            pathname === item.href;
 
@@ -90,19 +92,28 @@ export default function AppNavigation() {
             <AccordionItem value={`item-${index}`} key={item.label} className="border-none">
               <Tooltip>
                 <TooltipTrigger asChild>
+                  {/* AccordionTrigger NÃO usa asChild aqui. Ele é o botão. */}
                   <AccordionTrigger
                     className={cn(
-                      "w-full rounded-md p-2 text-base font-normal text-left",
+                      sidebarMenuButtonVariants({ size: 'default' }), // Aplicando estilos base do SidebarMenuButton
+                      "w-full justify-between text-base font-normal text-left p-2", // Ajuste de padding e justify
                       "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                       "focus-visible:ring-2 focus-visible:ring-sidebar-ring outline-none",
-                      "data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground",
-                      isActive && "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                      isActive && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 font-medium",
+                      // A rotação do chevron é tratada pelo AccordionTrigger interno quando não é asChild
                     )}
                   >
-                    <div className="flex flex-1 items-center gap-2">
+                    {/* Conteúdo visual do botão/trigger */}
+                    <span className="flex items-center gap-2">
                       <item.icon className="h-5 w-5" />
-                      {(sidebarState === 'expanded' || isMobile) && <span>{item.label}</span>}
-                    </div>
+                      {(sidebarState === 'expanded' || isMobile) && <span className="truncate">{item.label}</span>}
+                    </span>
+                    {/* O ChevronDown é renderizado pelo AccordionTrigger (de ui/accordion.tsx)
+                        quando sua prop asChild é false (que é o caso aqui).
+                        Os estilos de rotação estão em ui/accordion.tsx:
+                        "[&[data-state=open]>svg]:rotate-180"
+                        Se precisarmos de um chevron customizado aqui, podemos adicioná-lo.
+                    */}
                   </AccordionTrigger>
                 </TooltipTrigger>
                 <TooltipContent side="right" align="center" hidden={sidebarState === "expanded" || isMobile}>
@@ -122,10 +133,10 @@ export default function AppNavigation() {
                           )}
                           isActive={pathname === subItem.href}
                         >
-                          <>
+                          <span className="flex items-center gap-2">
                             <subItem.icon className="h-4 w-4" />
-                            {subItem.label}
-                          </>
+                            <span className="truncate">{subItem.label}</span>
+                          </span>
                         </SidebarMenuSubButton>
                       </Link>
                     </SidebarMenuSubItem>
@@ -146,10 +157,10 @@ export default function AppNavigation() {
                         )}
                         isActive={isActive}
                       >
-                        <>
+                        <span className="flex items-center gap-2">
                           <item.icon className="h-5 w-5" />
-                          {(sidebarState === 'expanded' || isMobile) && <span>{item.label}</span>}
-                        </>
+                          {(sidebarState === 'expanded' || isMobile) && <span className="truncate">{item.label}</span>}
+                        </span>
                       </SidebarMenuButton>
                   </Link>
                 </TooltipTrigger>
@@ -159,10 +170,12 @@ export default function AppNavigation() {
               </Tooltip>
             </SidebarMenuItem>
           );
-          
+
           return menuItemContent;
         })}
       </Accordion>
     </nav>
   );
 }
+
+    
