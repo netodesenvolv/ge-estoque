@@ -533,17 +533,25 @@ type SidebarMenuButtonProps = React.ComponentProps<"button"> & {
 const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonProps>(
   (props, ref) => {
     const {
-      asChild,
+      asChild: ownAsChild = false,
       isActive = false,
       variant,
       size,
       tooltip,
       className: incomingClassName,
       children,
-      ...restOfProps
+      ...restOfAllProps
     } = props;
 
-    const Comp = asChild ? Slot : "button";
+    const Comp = ownAsChild ? Slot : "button";
+
+    let propsToSpread = restOfAllProps;
+    if (!ownAsChild) {
+      // Explicitly remove 'asChild' from props being spread to a DOM element
+      const { asChild: _discardedAsChildFromParent, ...filteredProps } = restOfAllProps;
+      propsToSpread = filteredProps;
+    }
+
 
     const buttonElement = (
       <Comp
@@ -552,7 +560,7 @@ const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonP
         data-sidebar="menu-button"
         data-size={size}
         data-active={isActive}
-        {...restOfProps}
+        {...propsToSpread}
       >
         {children}
       </Comp>
@@ -702,15 +710,22 @@ type SidebarMenuSubButtonProps = React.ComponentProps<"a"> & {
 const SidebarMenuSubButton = React.forwardRef<HTMLAnchorElement, SidebarMenuSubButtonProps>(
   (props, ref) => {
     const {
-      asChild,
+      asChild = false, // This component's asChild behavior
       size = "md",
       isActive,
       className: incomingClassName,
       children,
-      ...restOfProps
+      ...restOfAllProps // Props from parent, potentially including asChild from Link
     } = props;
 
     const Comp = asChild ? Slot : "a";
+
+    let propsToSpread = restOfAllProps;
+    if (!asChild) { // If this component itself is not a Slot (i.e., it's rendering 'a')
+      // Explicitly remove 'asChild' from props being spread to a DOM element
+      const { asChild: _discardedAsChildFromParent, ...filteredProps } = restOfAllProps;
+      propsToSpread = filteredProps;
+    }
     
     return (
       <Comp
@@ -726,7 +741,7 @@ const SidebarMenuSubButton = React.forwardRef<HTMLAnchorElement, SidebarMenuSubB
         data-sidebar="menu-sub-button"
         data-size={size}
         data-active={isActive}
-        {...restOfProps}
+        {...propsToSpread}
       >
         {children}
       </Comp>
