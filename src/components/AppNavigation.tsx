@@ -15,7 +15,7 @@ import {
   TrendingUp,
   ShoppingCart,
   ClipboardList,
-  Building, // Icon for Hospitals
+  Building, 
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -24,7 +24,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton,
-  useSidebar, // Import useSidebar
+  useSidebar, 
 } from '@/components/ui/sidebar';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -86,9 +86,9 @@ export default function AppNavigation() {
                            item.subItems.some(sub => pathname === sub.href || pathname.startsWith(sub.href + '/')) :
                            pathname === item.href;
 
-          return item.subItems ? (
+          const menuItemContent = item.subItems ? (
             <AccordionItem value={`item-${index}`} key={item.label} className="border-none">
-               <Tooltip>
+              <Tooltip>
                 <TooltipTrigger asChild>
                   <AccordionTrigger
                     className={cn(
@@ -101,7 +101,7 @@ export default function AppNavigation() {
                   >
                     <div className="flex flex-1 items-center gap-2">
                       <item.icon className="h-5 w-5" />
-                      <span>{item.label}</span>
+                      {sidebarState === 'expanded' || isMobile ? <span>{item.label}</span> : null}
                     </div>
                   </AccordionTrigger>
                 </TooltipTrigger>
@@ -113,16 +113,19 @@ export default function AppNavigation() {
                 <SidebarMenuSub className="border-none p-0 m-0">
                   {item.subItems.map((subItem) => (
                     <SidebarMenuSubItem key={subItem.href}>
-                      <Link href={subItem.href} asChild>
+                      <Link href={subItem.href} passHref legacyBehavior>
                         <SidebarMenuSubButton
+                          asChild
                           className={cn(
                             "w-full justify-start text-sm",
                             pathname === subItem.href && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
                           )}
                           isActive={pathname === subItem.href}
                         >
-                          <subItem.icon className="h-4 w-4 mr-2" />
-                          {subItem.label}
+                          <a> {/* Anchor tag for Link compatibility */}
+                            <subItem.icon className="h-4 w-4 mr-2" />
+                            {subItem.label}
+                          </a>
                         </SidebarMenuSubButton>
                       </Link>
                     </SidebarMenuSubItem>
@@ -132,23 +135,40 @@ export default function AppNavigation() {
             </AccordionItem>
           ) : (
             <SidebarMenuItem key={item.href}>
-              <Link href={item.href} asChild>
-                <SidebarMenuButton
-                  className={cn(
-                    "w-full justify-start text-base",
-                     isActive && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
-                  )}
-                  isActive={isActive}
-                  tooltip={{ children: item.label, side:'right', align:'center' }}
-                >
-                  <item.icon className="h-5 w-5" />
-                  <span>{item.label}</span>
-                </SidebarMenuButton>
-              </Link>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link href={item.href} passHref legacyBehavior>
+                     <SidebarMenuButton
+                        asChild
+                        className={cn(
+                          "w-full justify-start text-base",
+                          isActive && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
+                        )}
+                        isActive={isActive}
+                      >
+                        <a> {/* Anchor tag for Link compatibility */}
+                          <item.icon className="h-5 w-5" />
+                          {sidebarState === 'expanded' || isMobile ? <span>{item.label}</span> : null}
+                        </a>
+                      </SidebarMenuButton>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent side="right" align="center" hidden={sidebarState === "expanded" || isMobile}>
+                  {item.label}
+                </TooltipContent>
+              </Tooltip>
             </SidebarMenuItem>
           );
+          
+          // For non-accordion items (direct links), ensure the label is shown when expanded or on mobile.
+          // The span with item.label was conditional on sidebarState, this needs to be inside the button for tooltip to pick it up if needed
+          // or shown directly. The above structure now handles it.
+
+          return menuItemContent;
         })}
       </Accordion>
     </nav>
   );
 }
+
+    

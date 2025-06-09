@@ -524,65 +524,39 @@ const sidebarMenuButtonVariants = cva(
   }
 )
 
-type SidebarMenuButtonProps = React.ComponentProps<"button"> & {
-  asChild?: boolean
-  isActive?: boolean
-  tooltip?: string | React.ComponentProps<typeof TooltipContent>
-} & VariantProps<typeof sidebarMenuButtonVariants>
+export interface SidebarMenuButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof sidebarMenuButtonVariants> {
+  asChild?: boolean;
+  isActive?: boolean;
+  // Tooltip prop removed
+}
 
 const SidebarMenuButton = React.forwardRef<HTMLButtonElement, SidebarMenuButtonProps>(
-  (props, ref) => {
-    const {
-      asChild: ownAsChild = false,
-      isActive = false,
+  (
+    {
+      className,
       variant,
       size,
-      tooltip,
-      className: incomingClassName,
+      asChild = false,
+      isActive = false,
       children,
-      ...restOfAllProps
-    } = props;
-
-    const Comp = ownAsChild ? Slot : "button";
-
-    let propsToSpread = restOfAllProps;
-    if (!ownAsChild) {
-      // Explicitly remove 'asChild' from props being spread to a DOM element
-      const { asChild: _discardedAsChildFromParent, ...filteredProps } = restOfAllProps;
-      propsToSpread = filteredProps;
-    }
-
-
-    const buttonElement = (
+      ...props
+    },
+    ref
+  ) => {
+    const Comp = asChild ? Slot : "button";
+    return (
       <Comp
+        className={cn(sidebarMenuButtonVariants({ variant, size, className }))}
         ref={ref}
-        className={cn(sidebarMenuButtonVariants({ variant, size, className: incomingClassName }))}
         data-sidebar="menu-button"
         data-size={size}
         data-active={isActive}
-        {...propsToSpread}
+        {...props}
       >
         {children}
       </Comp>
-    );
-
-    if (!tooltip) {
-      return buttonElement;
-    }
-
-    const tooltipProps = typeof tooltip === "string" ? { children: tooltip } : tooltip;
-    const { state, isMobile } = useSidebar();
-
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>{buttonElement}</TooltipTrigger>
-        <TooltipContent
-          side="right"
-          align="center"
-          hidden={state !== "collapsed" || isMobile}
-          {...tooltipProps}
-        />
-      </Tooltip>
     );
   }
 );
@@ -701,53 +675,48 @@ const SidebarMenuSubItem = React.forwardRef<
 SidebarMenuSubItem.displayName = "SidebarMenuSubItem"
 
 
-type SidebarMenuSubButtonProps = React.ComponentProps<"a"> & {
-  asChild?: boolean
-  size?: "sm" | "md"
-  isActive?: boolean
+export interface SidebarMenuSubButtonProps
+  extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
+  asChild?: boolean;
+  size?: "sm" | "md";
+  isActive?: boolean;
+  // Tooltip prop removed
 }
 
 const SidebarMenuSubButton = React.forwardRef<HTMLAnchorElement, SidebarMenuSubButtonProps>(
-  (props, ref) => {
-    const {
-      asChild = false, // This component's asChild behavior
+  (
+    {
+      className,
+      asChild = false,
       size = "md",
       isActive,
-      className: incomingClassName,
       children,
-      ...restOfAllProps // Props from parent, potentially including asChild from Link
-    } = props;
-
+      ...props
+    },
+    ref
+  ) => {
     const Comp = asChild ? Slot : "a";
-
-    let propsToSpread = restOfAllProps;
-    if (!asChild) { // If this component itself is not a Slot (i.e., it's rendering 'a')
-      // Explicitly remove 'asChild' from props being spread to a DOM element
-      const { asChild: _discardedAsChildFromParent, ...filteredProps } = restOfAllProps;
-      propsToSpread = filteredProps;
-    }
-    
     return (
       <Comp
-        ref={ref}
         className={cn(
           "flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 text-sidebar-foreground outline-none ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-accent-foreground",
           "data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground",
           size === "sm" && "text-xs",
           size === "md" && "text-sm",
           "group-data-[collapsible=icon]:hidden",
-          incomingClassName
+          className
         )}
+        ref={ref}
         data-sidebar="menu-sub-button"
         data-size={size}
         data-active={isActive}
-        {...propsToSpread}
+        {...props}
       >
         {children}
       </Comp>
-    )
+    );
   }
-)
+);
 SidebarMenuSubButton.displayName = "SidebarMenuSubButton"
 
 
@@ -766,12 +735,12 @@ export {
   SidebarMenuAction,
   SidebarMenuBadge,
   SidebarMenuButton,
-  type SidebarMenuButtonProps,
+  // SidebarMenuButtonProps, // Interface exportada
   SidebarMenuItem,
   SidebarMenuSkeleton,
   SidebarMenuSub,
   SidebarMenuSubButton,
-  type SidebarMenuSubButtonProps,
+  // SidebarMenuSubButtonProps, // Interface exportada
   SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,
@@ -779,3 +748,5 @@ export {
   SidebarTrigger,
   useSidebar,
 }
+
+    
