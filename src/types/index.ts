@@ -34,8 +34,8 @@ export interface StockItemConfig {
   hospitalId?: string; // Only relevant if unitId is present
   hospitalName?: string; // Only relevant if unitId is present
   strategicStockLevel: number;
-  minQuantity: number; 
-  currentQuantity?: number; 
+  minQuantity: number;
+  currentQuantity?: number;
 }
 
 export type StockMovementType = 'entry' | 'exit' | 'consumption';
@@ -44,7 +44,7 @@ export interface StockMovement {
   id: string;
   itemId: string;
   itemName?: string;
-  unitId?: string; 
+  unitId?: string;
   unitName?: string;
   hospitalId?: string; // Only relevant if unitId is present for exit/consumption
   hospitalName?: string; // Only relevant if unitId is present for exit/consumption
@@ -52,6 +52,16 @@ export interface StockMovement {
   quantity: number;
   date: string; // ISO date string
   notes?: string;
+  patientId?: string; // Novo campo para associar paciente
+  patientName?: string; // Para display
+}
+
+export interface Patient {
+  id: string;
+  name: string;
+  birthDate: string; // ISO date string, e.g., "YYYY-MM-DD"
+  susCardNumber: string;
+  // Outros campos como gênero, endereço, contato podem ser adicionados depois
 }
 
 export interface ConsumptionDataPoint {
@@ -61,6 +71,7 @@ export interface ConsumptionDataPoint {
   quantityConsumed: number;
   servedUnitId: string;
   hospitalId: string;
+  patientId?: string; // Novo campo para associar paciente
 }
 
 // For GenAI input
@@ -70,5 +81,5 @@ export interface HistoricalDataEntry {
   quantityConsumed: number;
   servedUnit: string;
   hospital: string; // Added hospital context
+  patientSUS?: string; // Opcional: Cartão SUS do paciente
 }
-
