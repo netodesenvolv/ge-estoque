@@ -101,7 +101,7 @@ export default function AppNavigation() {
                   >
                     <div className="flex flex-1 items-center gap-2">
                       <item.icon className="h-5 w-5" />
-                      {sidebarState === 'expanded' || isMobile ? <span>{item.label}</span> : null}
+                      {(sidebarState === 'expanded' || isMobile) && <span>{item.label}</span>}
                     </div>
                   </AccordionTrigger>
                 </TooltipTrigger>
@@ -113,7 +113,7 @@ export default function AppNavigation() {
                 <SidebarMenuSub className="border-none p-0 m-0">
                   {item.subItems.map((subItem) => (
                     <SidebarMenuSubItem key={subItem.href}>
-                      <Link href={subItem.href} passHref legacyBehavior>
+                      <Link href={subItem.href}>
                         <SidebarMenuSubButton
                           asChild
                           className={cn(
@@ -122,10 +122,10 @@ export default function AppNavigation() {
                           )}
                           isActive={pathname === subItem.href}
                         >
-                          <a> {/* Anchor tag for Link compatibility */}
-                            <subItem.icon className="h-4 w-4 mr-2" />
+                          <>
+                            <subItem.icon className="h-4 w-4" />
                             {subItem.label}
-                          </a>
+                          </>
                         </SidebarMenuSubButton>
                       </Link>
                     </SidebarMenuSubItem>
@@ -137,7 +137,7 @@ export default function AppNavigation() {
             <SidebarMenuItem key={item.href}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Link href={item.href} passHref legacyBehavior>
+                  <Link href={item.href}>
                      <SidebarMenuButton
                         asChild
                         className={cn(
@@ -146,10 +146,10 @@ export default function AppNavigation() {
                         )}
                         isActive={isActive}
                       >
-                        <a> {/* Anchor tag for Link compatibility */}
+                        <>
                           <item.icon className="h-5 w-5" />
-                          {sidebarState === 'expanded' || isMobile ? <span>{item.label}</span> : null}
-                        </a>
+                          {(sidebarState === 'expanded' || isMobile) && <span>{item.label}</span>}
+                        </>
                       </SidebarMenuButton>
                   </Link>
                 </TooltipTrigger>
@@ -160,15 +160,9 @@ export default function AppNavigation() {
             </SidebarMenuItem>
           );
           
-          // For non-accordion items (direct links), ensure the label is shown when expanded or on mobile.
-          // The span with item.label was conditional on sidebarState, this needs to be inside the button for tooltip to pick it up if needed
-          // or shown directly. The above structure now handles it.
-
           return menuItemContent;
         })}
       </Accordion>
     </nav>
   );
 }
-
-    
