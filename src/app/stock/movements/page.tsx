@@ -24,7 +24,7 @@ const movementSchema = z.object({
   quantity: z.coerce.number().positive("A quantidade deve ser um número positivo."),
   hospitalId: z.string().optional(),
   unitId: z.string().optional(),
-  patientId: z.string().optional(), // Novo campo
+  patientId: z.string().optional(),
   date: z.string().refine((date) => !isNaN(Date.parse(date)), { message: "Data inválida." }),
   notes: z.string().optional(),
 }).refine(data => {
@@ -61,11 +61,13 @@ const movementSchema = z.object({
 
 type MovementFormData = z.infer<typeof movementSchema>;
 
+const NO_PATIENT_ID = "__NO_PATIENT__";
+
 export default function StockMovementsPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
-  const [patients, setPatients] = useState<Patient[]>([]); // Novo estado
+  const [patients, setPatients] = useState<Patient[]>([]);
   const { toast } = useToast();
 
   const form = useForm<MovementFormData>({
@@ -75,19 +77,19 @@ export default function StockMovementsPage() {
       quantity: 1,
       date: new Date().toISOString().split('T')[0],
       notes: '',
-      patientId: '',
+      patientId: undefined,
     },
   });
 
   const movementType = form.watch('type');
   const selectedHospitalId = form.watch('hospitalId');
-  const selectedUnitId = form.watch('unitId'); // Para verificar se é UBS
+  const selectedUnitId = form.watch('unitId');
 
   useEffect(() => {
     setItems(mockItems);
     setServedUnits(mockServedUnits);
     setHospitals(mockHospitals);
-    setPatients(mockPatients); // Carregar pacientes
+    setPatients(mockPatients);
   }, []);
 
   useEffect(() => {
@@ -96,16 +98,13 @@ export default function StockMovementsPage() {
         form.setValue('unitId', undefined);
         form.setValue('patientId', undefined);
     } else if (movementType === 'exit') {
-        form.setValue('patientId', undefined); // Saída não tem paciente
+        form.setValue('patientId', undefined);
     }
-    // Reset unitId se hospitalId mudar
     form.setValue('unitId', undefined);
 
   }, [movementType, form]);
 
    useEffect(() => {
-    // Reset unitId if hospitalId changes (para garantir que unitId seja resetado mesmo que não seja explicitamente)
-    // E resetar patientId se unitId for resetado ou se o tipo mudar para algo que não seja consumo.
     if (movementType !== 'consumption' || !selectedUnitId) {
         form.setValue('patientId', undefined);
     }
@@ -139,7 +138,7 @@ export default function StockMovementsPage() {
         if (unit && hospital) {
             description += ` para ${unit.name} (${hospital.name}).`;
         } else {
-            description += ` (Armazém Central).`; // Saída geral do armazém
+            description += ` (Armazém Central).`;
         }
     }
     if (patient) {
@@ -232,8 +231,8 @@ export default function StockMovementsPage() {
                         <Select
                             onValueChange={(value) => {
                                 field.onChange(value);
-                                form.setValue('unitId', undefined); // Reset unit when hospital changes
-                                form.setValue('patientId', undefined); // Reset patient when hospital changes
+                                form.setValue('unitId', undefined);
+                                form.setValue('patientId', undefined);
                             }}
                             value={field.value || ""}
                             defaultValue={field.value}
@@ -263,7 +262,7 @@ export default function StockMovementsPage() {
                             onValueChange={(value) => {
                                 field.onChange(value);
                                 if (movementType !== 'consumption' || !isConsumptionInUBS()) {
-                                    form.setValue('patientId', undefined); // Reset patient if not UBS consumption
+                                    form.setValue('patientId', undefined);
                                 }
                             }}
                             value={field.value || ""}
@@ -295,12 +294,16 @@ export default function StockMovementsPage() {
                             <FormLabel className="flex items-center gap-1">
                                 <User className="h-4 w-4 text-muted-foreground"/> Paciente (Opcional)
                             </FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value || ""} defaultValue={field.value}>
+                            <Select
+                                onValueChange={(value) => field.onChange(value === NO_PATIENT_ID ? undefined : value)}
+                                value={field.value || NO_PATIENT_ID}
+                                defaultValue={field.value || NO_PATIENT_ID}
+                            >
                             <FormControl><SelectTrigger>
                                 <SelectValue placeholder="Selecione um paciente (se aplicável)" />
                             </SelectTrigger></FormControl>
                             <SelectContent>
-                                <SelectItem value="">Nenhum paciente específico</SelectItem>
+                                <SelectItem value={NO_PATIENT_ID}>Nenhum paciente específico</SelectItem>
                                 {patients.map(patient => (
                                 <SelectItem key={patient.id} value={patient.id}>{patient.name} - SUS: {patient.susCardNumber}</SelectItem>
                                 ))}

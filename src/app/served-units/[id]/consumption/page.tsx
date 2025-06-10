@@ -26,6 +26,8 @@ const consumptionSchema = z.object({
 
 type ConsumptionFormData = z.infer<typeof consumptionSchema>;
 
+const NO_PATIENT_ID = "__NO_PATIENT__";
+
 export default function RecordConsumptionPage() {
   const params = useParams();
   const unitId = params.id as string;
@@ -52,7 +54,7 @@ export default function RecordConsumptionPage() {
     defaultValues: {
       quantityConsumed: 1,
       date: new Date().toISOString().split('T')[0],
-      patientId: '',
+      patientId: undefined, // Changed from ''
     },
   });
 
@@ -73,7 +75,7 @@ export default function RecordConsumptionPage() {
         quantityConsumed: 1,
         date: new Date().toISOString().split('T')[0],
         itemId: '',
-        patientId: '',
+        patientId: undefined, // Changed from ''
     });
   };
 
@@ -155,14 +157,18 @@ export default function RecordConsumptionPage() {
                       <FormLabel className="flex items-center gap-1">
                         <User className="h-4 w-4 text-muted-foreground"/> Paciente (Opcional para UBS)
                       </FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value} value={field.value || ""}>
+                      <Select
+                        onValueChange={(value) => field.onChange(value === NO_PATIENT_ID ? undefined : value)}
+                        value={field.value || NO_PATIENT_ID}
+                        defaultValue={field.value || NO_PATIENT_ID}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Selecione um paciente (se aplicável)" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="">Nenhum paciente específico</SelectItem>
+                          <SelectItem value={NO_PATIENT_ID}>Nenhum paciente específico</SelectItem>
                           {patients.map(patient => (
                             <SelectItem key={patient.id} value={patient.id}>{patient.name} - SUS: {patient.susCardNumber}</SelectItem>
                           ))}
