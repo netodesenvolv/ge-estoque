@@ -6,7 +6,6 @@ import { usePathname } from 'next/navigation';
 import {
   Home,
   Package,
-  PlusCircle,
   Archive,
   ArrowRightLeft,
   Warehouse,
@@ -25,20 +24,12 @@ import {
   History,
   ChevronDown,
   ListChecks,
+  PlusCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import {
-  SidebarMenuItem,
-  SidebarMenuButton,
-  sidebarMenuButtonVariants,
-  SidebarMenuSub,
-  SidebarMenuSubItem,
-  SidebarMenuSubButton,
-  useSidebar,
-} from '@/components/ui/sidebar';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-
+import { useSidebar } from '@/components/ui/sidebar';
 
 const navItems = [
   { href: '/', label: 'Painel', icon: Home },
@@ -114,6 +105,8 @@ export default function AppNavigation() {
     return acc;
   }, []);
 
+  const baseLinkStyles = "flex items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none ring-sidebar-ring transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-2";
+  const activeLinkStyles = "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 font-medium";
 
   return (
     <nav className="flex flex-col p-2">
@@ -123,93 +116,92 @@ export default function AppNavigation() {
           const isSubItemActive = item.subItems && item.subItems.some(sub => pathname.startsWith(sub.href));
           const isActive = isDirectActive || isSubItemActive;
 
-          const menuItemContent = item.subItems ? (
-            <AccordionItem value={`item-${index}`} key={item.label} className="border-none">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <AccordionTrigger
-                    asChild
-                    className={cn(
-                      sidebarMenuButtonVariants({ size: 'default' }),
-                       "w-full justify-between text-base font-normal text-left p-2 group/accordion",
-                       isActive && !isDirectActive && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 font-medium"
-                    )}
-                  >
-                     <SidebarMenuButton
-                        className={cn(
-                          isActive && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 font-medium",
-                           "w-full justify-between"
-                        )}
-                        isActive={isActive}
-                        // variant="ghost" // Ensure this does not override accordion trigger styles
-                      >
-                        <span className="flex items-center gap-2">
+          if (item.subItems) {
+            return (
+              <AccordionItem value={`item-${index}`} key={item.label} className="border-none">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {/* AccordionTrigger é o customizado de ui/accordion.tsx.
+                        Ele recebe asChild=true do TooltipTrigger.
+                        Seus filhos (children) precisam ser um único elemento. */}
+                    <AccordionTrigger
+                      className={cn(
+                        baseLinkStyles,
+                        "w-full justify-between group", // Adicionado 'group' para o Chevron
+                        (isSubItemActive && !isDirectActive) && activeLinkStyles // Ativa o trigger se um subitem estiver ativo
+                      )}
+                      data-active={(isSubItemActive && !isDirectActive)} // Para referência de estilo se necessário
+                    >
+                      {/* ÚNICO FILHO para o AccordionTrigger customizado */}
+                      <span className="flex w-full items-center justify-between">
+                        <span className="flex items-center gap-2 truncate">
                           <item.icon className="h-5 w-5" />
                           {(sidebarState === 'expanded' || isMobile) && <span className="truncate">{item.label}</span>}
                         </span>
-                        <ChevronDown className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]/accordion:rotate-180" />
-                      </SidebarMenuButton>
-                  </AccordionTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="right" align="center" hidden={sidebarState === "expanded" || isMobile}>
-                  {item.label}
-                </TooltipContent>
-              </Tooltip>
-              <AccordionContent className="pb-0 pl-4 border-l border-sidebar-border ml-[18px]">
-                <SidebarMenuSub className="border-none p-0 m-0">
-                  {item.subItems.map((subItem) => (
-                    <SidebarMenuSubItem key={subItem.href}>
-                      <Link href={subItem.href}>
-                        <SidebarMenuSubButton
+                        <ChevronDown className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                      </span>
+                    </AccordionTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" align="center" hidden={sidebarState === "expanded" || isMobile}>
+                    {item.label}
+                  </TooltipContent>
+                </Tooltip>
+                <AccordionContent className="pb-0 pl-4 border-l border-sidebar-border ml-[18px]">
+                  <ul className="flex w-full min-w-0 flex-col gap-1 pt-1">
+                    {item.subItems.map((subItem) => (
+                      <li key={subItem.href}>
+                        <Link
+                          href={subItem.href}
                           className={cn(
-                            "w-full justify-start text-sm",
-                             pathname.startsWith(subItem.href)
-                              ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
-                              : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                            baseLinkStyles,
+                            "text-xs", // Tamanho menor para sub-itens
+                            pathname.startsWith(subItem.href) && activeLinkStyles
                           )}
-                          isActive={pathname.startsWith(subItem.href)}
+                          data-active={pathname.startsWith(subItem.href)}
                         >
-                           <span className="flex items-center gap-2 truncate">
+                          <span className="flex items-center gap-2 truncate">
                             <subItem.icon className="h-4 w-4" />
-                            {subItem.label}
+                            <span className="truncate">{subItem.label}</span>
                           </span>
-                        </SidebarMenuSubButton>
-                      </Link>
-                    </SidebarMenuSubItem>
-                  ))}
-                </SidebarMenuSub>
-              </AccordionContent>
-            </AccordionItem>
-          ) : (
-            <SidebarMenuItem key={item.href}>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </AccordionContent>
+              </AccordionItem>
+            );
+          }
+
+          return (
+            <li key={item.href} className="relative">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Link href={item.href}>
-                     <SidebarMenuButton
-                        asChild
-                        className={cn(
-                          "w-full justify-start text-base",
-                           isActive && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
-                        )}
-                        isActive={isActive}
-                      >
-                        <span className="flex items-center gap-2">
-                          <item.icon className="h-5 w-5" />
-                          {(sidebarState === 'expanded' || isMobile) && <span className="truncate">{item.label}</span>}
-                        </span>
-                      </SidebarMenuButton>
+                  <Link
+                    href={item.href}
+                    className={cn(
+                      baseLinkStyles,
+                      "w-full justify-start",
+                      isActive && activeLinkStyles
+                    )}
+                    data-active={isActive}
+                  >
+                    <span className="flex items-center gap-2 truncate">
+                      <item.icon className="h-5 w-5" />
+                      {(sidebarState === 'expanded' || isMobile) && (
+                        <span className="truncate">{item.label}</span>
+                      )}
+                    </span>
                   </Link>
                 </TooltipTrigger>
                 <TooltipContent side="right" align="center" hidden={sidebarState === "expanded" || isMobile}>
                   {item.label}
                 </TooltipContent>
               </Tooltip>
-            </SidebarMenuItem>
+            </li>
           );
-
-          return menuItemContent;
         })}
       </Accordion>
     </nav>
   );
 }
+    
