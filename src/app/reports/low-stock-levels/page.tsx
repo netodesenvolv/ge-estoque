@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel } from '@/components/ui/form';
-import { ListChecks, Filter, Printer, AlertTriangle, CheckCircle } from 'lucide-react';
+import { ListChecks, Filter, Printer, AlertTriangle, CheckCircle, Download } from 'lucide-react';
 import type { Item, ServedUnit, StockItemConfig, Hospital } from '@/types';
 import { mockItems, mockServedUnits, mockStockConfigs, mockHospitals } from '@/data/mockData';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -29,6 +29,49 @@ interface DisplayStockItem extends StockItemConfig {
   statusLabel: 'Ótimo' | 'Baixo' | 'Alerta';
   statusVariant: 'default' | 'secondary' | 'destructive';
 }
+
+const escapeCsvValue = (value: any): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const stringValue = String(value);
+  if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+};
+
+const convertToCSV = (data: DisplayStockItem[]): string => {
+  const headers = [
+    { key: 'itemName', label: 'Item' },
+    { key: 'itemCode', label: 'Código' },
+    { key: 'unitName', label: 'Localização' },
+    { key: 'hospitalName', label: 'Hospital' },
+    { key: 'currentQuantity', label: 'Atual' },
+    { key: 'minQuantity', label: 'Mínimo' },
+    { key: 'strategicStockLevel', label: 'Estratégico' },
+    { key: 'statusLabel', label: 'Status' },
+  ];
+  const headerRow = headers.map(h => h.label).join(',');
+  const dataRows = data.map(row =>
+    headers.map(header => escapeCsvValue(row[header.key as keyof DisplayStockItem])).join(',')
+  );
+  return [headerRow, ...dataRows].join('\n');
+};
+
+const downloadCSV = (csvString: string, filename: string) => {
+  const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  if (link.download !== undefined) {
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+};
 
 export default function LowStockLevelsReportPage() {
   const [allItems, setAllItems] = useState<Item[]>([]);
@@ -178,13 +221,26 @@ export default function LowStockLevelsReportPage() {
     window.print();
   };
 
+  const handleExportCSV = () => {
+    if (reportData.length === 0) return;
+    const csvString = convertToCSV(reportData);
+    downloadCSV(csvString, 'relatorio_niveis_estoque.csv');
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Relatório de Níveis de Estoque Baixos/Alerta"
         description="Identifique itens que necessitam de atenção devido a níveis de estoque críticos."
         icon={ListChecks}
-        actions={<Button onClick={handlePrint} variant="outline"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>}
+        actions={
+          <div className="flex gap-2">
+            <Button onClick={handlePrint} variant="outline" className="no-print"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>
+            <Button onClick={handleExportCSV} variant="outline" className="no-print" disabled={reportData.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Exportar CSV
+            </Button>
+          </div>
+        }
         className="no-print"
       />
 
@@ -306,3 +362,6 @@ export default function LowStockLevelsReportPage() {
     </div>
   );
 }
+
+
+    

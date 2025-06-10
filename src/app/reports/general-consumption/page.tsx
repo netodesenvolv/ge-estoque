@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { BarChart3, CalendarIcon, Filter, Printer } from 'lucide-react';
+import { BarChart3, CalendarIcon, Filter, Printer, Download } from 'lucide-react';
 import type { Item, ServedUnit, Hospital, StockMovement } from '@/types';
 import { mockItems, mockServedUnits, mockHospitals, mockStockMovements } from '@/data/mockData';
 import { format, parseISO } from 'date-fns';
@@ -39,6 +39,47 @@ interface ReportData {
   hospitalName?: string;
   totalConsumed: number;
 }
+
+const escapeCsvValue = (value: any): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const stringValue = String(value);
+  if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+};
+
+const convertToCSV = (data: ReportData[]): string => {
+  const headers = [
+    { key: 'itemName', label: 'Nome do Item' },
+    { key: 'itemCode', label: 'Código' },
+    { key: 'unitName', label: 'Unidade/Local' },
+    { key: 'hospitalName', label: 'Hospital' },
+    { key: 'totalConsumed', label: 'Total Consumido' },
+  ];
+  const headerRow = headers.map(h => h.label).join(',');
+  const dataRows = data.map(row =>
+    headers.map(header => escapeCsvValue(row[header.key as keyof ReportData])).join(',')
+  );
+  return [headerRow, ...dataRows].join('\n');
+};
+
+const downloadCSV = (csvString: string, filename: string) => {
+  const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  if (link.download !== undefined) {
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+};
+
 
 export default function GeneralConsumptionReportPage() {
   const [items, setItems] = useState<Item[]>([]);
@@ -115,13 +156,26 @@ export default function GeneralConsumptionReportPage() {
     window.print();
   };
 
+  const handleExportCSV = () => {
+    if (reportData.length === 0) return;
+    const csvString = convertToCSV(reportData);
+    downloadCSV(csvString, 'relatorio_consumo_geral.csv');
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Relatório de Consumo Geral"
         description="Analise o consumo agregado de itens por diferentes filtros."
         icon={BarChart3}
-        actions={<Button onClick={handlePrint} variant="outline"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>}
+        actions={
+          <div className="flex gap-2">
+            <Button onClick={handlePrint} variant="outline" className="no-print"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>
+            <Button onClick={handleExportCSV} variant="outline" className="no-print" disabled={reportData.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Exportar CSV
+            </Button>
+          </div>
+        }
         className="no-print"
       />
 
@@ -281,3 +335,6 @@ export default function GeneralConsumptionReportPage() {
     </div>
   );
 }
+
+
+    

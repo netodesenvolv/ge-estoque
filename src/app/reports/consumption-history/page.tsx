@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { History, CalendarIcon, Filter, Printer } from 'lucide-react';
+import { History, CalendarIcon, Filter, Printer, Download } from 'lucide-react';
 import type { Item, ServedUnit, Hospital, Patient, StockMovement } from '@/types';
 import { mockItems, mockServedUnits, mockHospitals, mockPatients, mockStockMovements } from '@/data/mockData';
 import { format, parseISO } from 'date-fns';
@@ -37,6 +37,54 @@ interface ConsumptionHistoryData extends StockMovement {
   itemCode: string;
   patientName?: string;
 }
+
+const escapeCsvValue = (value: any): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const stringValue = String(value);
+  if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+};
+
+const convertToCSV = (data: ConsumptionHistoryData[]): string => {
+  const headers = [
+    { key: 'date', label: 'Data' },
+    { key: 'itemName', label: 'Item' },
+    { key: 'itemCode', label: 'Código' },
+    { key: 'quantity', label: 'Qtd.' },
+    { key: 'unitName', label: 'Unidade' },
+    { key: 'hospitalName', label: 'Hospital' },
+    { key: 'patientName', label: 'Paciente' },
+    { key: 'notes', label: 'Observações' },
+  ];
+  const headerRow = headers.map(h => h.label).join(',');
+  const dataRows = data.map(row =>
+    headers.map(header => {
+      if (header.key === 'date') {
+        return escapeCsvValue(format(parseISO(row.date), 'yyyy-MM-dd HH:mm'));
+      }
+      return escapeCsvValue(row[header.key as keyof ConsumptionHistoryData]);
+    }).join(',')
+  );
+  return [headerRow, ...dataRows].join('\n');
+};
+
+const downloadCSV = (csvString: string, filename: string) => {
+  const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  if (link.download !== undefined) {
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+};
 
 export default function ConsumptionHistoryReportPage() {
   const [items, setItems] = useState<Item[]>([]);
@@ -109,13 +157,26 @@ export default function ConsumptionHistoryReportPage() {
     window.print();
   };
 
+  const handleExportCSV = () => {
+    if (reportData.length === 0) return;
+    const csvString = convertToCSV(reportData);
+    downloadCSV(csvString, 'relatorio_historico_consumo.csv');
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Histórico Detalhado de Consumo"
         description="Consulte um log detalhado de todas as movimentações de consumo de itens."
         icon={History}
-        actions={<Button onClick={handlePrint} variant="outline"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>}
+        actions={
+          <div className="flex gap-2">
+            <Button onClick={handlePrint} variant="outline" className="no-print"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>
+            <Button onClick={handleExportCSV} variant="outline" className="no-print" disabled={reportData.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Exportar CSV
+            </Button>
+          </div>
+        }
         className="no-print"
       />
 
@@ -296,3 +357,6 @@ export default function ConsumptionHistoryReportPage() {
     </div>
   );
 }
+
+
+    

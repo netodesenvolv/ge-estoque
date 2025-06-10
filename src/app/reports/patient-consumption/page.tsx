@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { UserCheck, CalendarIcon, Filter, Printer } from 'lucide-react';
+import { UserCheck, CalendarIcon, Filter, Printer, Download } from 'lucide-react';
 import type { Patient, StockMovement, Item } from '@/types';
 import { mockPatients, mockStockMovements, mockItems } from '@/data/mockData';
 import { format, parseISO } from 'date-fns';
@@ -33,6 +33,52 @@ interface PatientConsumptionReportData extends StockMovement {
   itemName: string;
   itemCode: string;
 }
+
+const escapeCsvValue = (value: any): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const stringValue = String(value);
+  if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+};
+
+const convertToCSV = (data: PatientConsumptionReportData[]): string => {
+  const headers = [
+    { key: 'date', label: 'Data' },
+    { key: 'itemName', label: 'Item Consumido' },
+    { key: 'itemCode', label: 'Código' },
+    { key: 'quantity', label: 'Quantidade' },
+    { key: 'unitName', label: 'Unidade' },
+    { key: 'hospitalName', label: 'Hospital' },
+  ];
+  const headerRow = headers.map(h => h.label).join(',');
+  const dataRows = data.map(row =>
+    headers.map(header => {
+      if (header.key === 'date') {
+        return escapeCsvValue(format(parseISO(row.date), 'yyyy-MM-dd'));
+      }
+      return escapeCsvValue(row[header.key as keyof PatientConsumptionReportData]);
+    }).join(',')
+  );
+  return [headerRow, ...dataRows].join('\n');
+};
+
+const downloadCSV = (csvString: string, filename: string) => {
+  const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  if (link.download !== undefined) {
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+};
 
 export default function PatientConsumptionReportPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -82,13 +128,26 @@ export default function PatientConsumptionReportPage() {
     window.print();
   };
 
+  const handleExportCSV = () => {
+    if (reportData.length === 0) return;
+    const csvString = convertToCSV(reportData);
+    downloadCSV(csvString, `relatorio_consumo_${selectedPatientName.replace(/\s+/g, '_').toLowerCase()}.csv`);
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Relatório de Consumo por Paciente"
         description="Detalhe o consumo de itens para um paciente específico."
         icon={UserCheck}
-        actions={<Button onClick={handlePrint} variant="outline"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>}
+        actions={
+          <div className="flex gap-2">
+            <Button onClick={handlePrint} variant="outline" className="no-print"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>
+            <Button onClick={handleExportCSV} variant="outline" className="no-print" disabled={reportData.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Exportar CSV
+            </Button>
+          </div>
+        }
         className="no-print"
       />
 
@@ -217,3 +276,5 @@ export default function PatientConsumptionReportPage() {
   );
 }
 
+
+    

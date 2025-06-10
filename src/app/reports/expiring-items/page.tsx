@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { CalendarClock, Filter, Printer, AlertTriangle } from 'lucide-react';
+import { CalendarClock, Filter, Printer, AlertTriangle, Download } from 'lucide-react';
 import type { Item } from '@/types';
 import { mockItems } from '@/data/mockData';
 import { format, parseISO, differenceInDays, isValid } from 'date-fns';
@@ -30,6 +30,55 @@ interface ExpiringItemReportData extends Item {
   daysToExpire: number | null;
   status: 'Vencido' | 'Próximo do Vencimento' | 'Válido';
 }
+
+const escapeCsvValue = (value: any): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const stringValue = String(value);
+  if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+};
+
+const convertToCSV = (data: ExpiringItemReportData[]): string => {
+  const headers = [
+    { key: 'name', label: 'Nome do Item' },
+    { key: 'code', label: 'Código' },
+    { key: 'currentQuantityCentral', label: 'Qtde. (Central)' },
+    { key: 'expirationDate', label: 'Data de Validade' },
+    { key: 'daysToExpire', label: 'Dias Restantes/Vencido Há' },
+    { key: 'status', label: 'Status' },
+  ];
+  const headerRow = headers.map(h => h.label).join(',');
+  const dataRows = data.map(row =>
+    headers.map(header => {
+      if (header.key === 'expirationDate' && row.expirationDate) {
+        return escapeCsvValue(format(parseISO(row.expirationDate), 'yyyy-MM-dd'));
+      }
+      if (header.key === 'daysToExpire' && row.daysToExpire !== null) {
+        return escapeCsvValue(row.daysToExpire < 0 ? `Vencido há ${Math.abs(row.daysToExpire)}d` : `${row.daysToExpire +1}d`);
+      }
+      return escapeCsvValue(row[header.key as keyof ExpiringItemReportData]);
+    }).join(',')
+  );
+  return [headerRow, ...dataRows].join('\n');
+};
+
+const downloadCSV = (csvString: string, filename: string) => {
+  const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  if (link.download !== undefined) {
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+};
 
 export default function ExpiringItemsReportPage() {
   const [allItems, setAllItems] = useState<Item[]>([]);
@@ -92,6 +141,12 @@ export default function ExpiringItemsReportPage() {
   const handlePrint = () => {
     window.print();
   };
+
+  const handleExportCSV = () => {
+    if (reportData.length === 0) return;
+    const csvString = convertToCSV(reportData);
+    downloadCSV(csvString, 'relatorio_itens_a_vencer.csv');
+  };
   
   const getStatusBadgeVariant = (status: ExpiringItemReportData['status']): "destructive" | "secondary" | "default" => {
     if (status === 'Vencido') return 'destructive';
@@ -105,7 +160,14 @@ export default function ExpiringItemsReportPage() {
         title="Relatório de Itens a Vencer (Estoque Central)"
         description="Identifique itens no estoque central próximos da validade ou já vencidos."
         icon={CalendarClock}
-        actions={<Button onClick={handlePrint} variant="outline"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>}
+        actions={
+          <div className="flex gap-2">
+            <Button onClick={handlePrint} variant="outline" className="no-print"><Printer className="mr-2 h-4 w-4" /> Imprimir</Button>
+            <Button onClick={handleExportCSV} variant="outline" className="no-print" disabled={reportData.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Exportar CSV
+            </Button>
+          </div>
+        }
         className="no-print"
       />
 
@@ -207,3 +269,6 @@ export default function ExpiringItemsReportPage() {
     </div>
   );
 }
+
+
+    
