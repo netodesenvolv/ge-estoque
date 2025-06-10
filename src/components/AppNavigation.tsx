@@ -19,12 +19,13 @@ import {
   ChevronDown,
   UserPlus,
   Contact,
+  FileText, // Added FileText
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   SidebarMenuItem,
   SidebarMenuButton,
-  sidebarMenuButtonVariants,
+  sidebarMenuButtonVariants, // Ensure this is exported and used correctly
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton,
@@ -76,6 +77,8 @@ const navItems = [
       { href: '/served-units/add', label: 'Adicionar Unidade', icon: PlusCircle },
     ],
   },
+  { href: '/trends', label: 'Tendências de Consumo', icon: TrendingUp },
+  { href: '/reports', label: 'Relatórios', icon: FileText }, // New Reports item
   {
     label: 'Configuração',
     icon: Settings2,
@@ -83,7 +86,6 @@ const navItems = [
       { href: '/config/stock-levels', label: 'Níveis Estratégicos', icon: ShoppingCart },
     ],
   },
-  { href: '/trends', label: 'Tendências de Consumo', icon: TrendingUp },
 ];
 
 export default function AppNavigation() {
@@ -110,6 +112,7 @@ export default function AppNavigation() {
             <AccordionItem value={`item-${index}`} key={item.label} className="border-none">
               <Tooltip>
                 <TooltipTrigger asChild>
+                  {/* Apply sidebarMenuButtonVariants directly to AccordionTrigger */}
                   <AccordionTrigger
                     className={cn(
                       sidebarMenuButtonVariants({ size: 'default' }),
@@ -123,7 +126,7 @@ export default function AppNavigation() {
                       <item.icon className="h-5 w-5" />
                       {(sidebarState === 'expanded' || isMobile) && <span className="truncate">{item.label}</span>}
                     </span>
-                    {/* ChevronDown é renderizado pelo AccordionTrigger de ui/accordion.tsx quando asChild é false */}
+                    {/* ChevronDown is managed by AccordionTrigger itself when asChild is false */}
                   </AccordionTrigger>
                 </TooltipTrigger>
                 <TooltipContent side="right" align="center" hidden={sidebarState === "expanded" || isMobile}>
