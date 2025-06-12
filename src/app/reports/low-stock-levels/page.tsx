@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel } from '@/components/ui/form';
-import { ListChecks, Filter, Printer, AlertTriangle, CheckCircle, Download } from 'lucide-react';
+import { ListChecks, Filter, Printer, AlertTriangle, CheckCircle, Download, Package } from 'lucide-react';
 import type { Item, ServedUnit, StockItemConfig, Hospital } from '@/types';
 import { mockItems, mockServedUnits, mockStockConfigs, mockHospitals } from '@/data/mockData';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 const reportFiltersSchema = z.object({
   hospitalId: z.string().optional(),
   unitId: z.string().optional(),
+  itemId: z.string().optional(),
   status: z.enum(['all', 'low', 'alert']).optional().default('all'),
 });
 
@@ -86,6 +87,7 @@ export default function LowStockLevelsReportPage() {
     defaultValues: {
       hospitalId: 'all',
       unitId: 'all',
+      itemId: 'all',
       status: 'all',
     },
   });
@@ -101,7 +103,6 @@ export default function LowStockLevelsReportPage() {
     setAllServedUnits(enrichedServedUnits);
     setAllHospitals(mockHospitals);
 
-    // Prepare base stock data
     const getUnitDetails = (unitId?: string) => {
         if (!unitId) return { unitName: 'Armazém Central', hospitalId: undefined, hospitalName: undefined };
         const unit = enrichedServedUnits.find(u => u.id === unitId);
@@ -168,16 +169,15 @@ export default function LowStockLevelsReportPage() {
       (a.itemName || '').localeCompare(b.itemName || '')
     );
     setStockData(combinedStock);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); 
 
   useEffect(() => {
-    // Auto-generate report when stockData is ready or filters change
     if (stockData.length > 0) {
       onSubmit(form.getValues());
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stockData, form.watch('hospitalId'), form.watch('unitId'), form.watch('status')]);
+  }, [stockData, form.watch('hospitalId'), form.watch('unitId'), form.watch('status'), form.watch('itemId')]);
 
 
   useEffect(() => {
@@ -198,19 +198,20 @@ export default function LowStockLevelsReportPage() {
                            item.hospitalId === filters.hospitalId;
       
       const unitMatch = filters.unitId === 'all' || !filters.unitId || 
-                       (filters.hospitalId === 'central') || // If central is chosen, unit filter is irrelevant for central items
+                       (filters.hospitalId === 'central') || 
                        item.unitId === filters.unitId;
+
+      const itemMatch = filters.itemId === 'all' || !filters.itemId || item.itemId === filters.itemId;
 
       const statusMatch = filters.status === 'all' || 
                          (filters.status === 'low' && item.statusLabel === 'Baixo') ||
                          (filters.status === 'alert' && item.statusLabel === 'Alerta');
       
-      // Logic to ensure "Armazém Central" is only shown if hospitalId is 'central' or 'all'
       if (filters.hospitalId !== 'central' && filters.hospitalId !== 'all' && !item.unitId) {
         return false;
       }
 
-      return hospitalMatch && unitMatch && statusMatch;
+      return hospitalMatch && unitMatch && itemMatch && statusMatch;
     });
     
     setReportData(filtered);
@@ -250,7 +251,7 @@ export default function LowStockLevelsReportPage() {
         </CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
-            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <FormField
                 control={form.control}
                 name="hospitalId"
@@ -279,6 +280,22 @@ export default function LowStockLevelsReportPage() {
                       <SelectContent>
                         <SelectItem value="all">Todas as Unidades</SelectItem>
                         {availableUnits.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="itemId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="flex items-center gap-1"><Package className="h-4 w-4 text-muted-foreground" />Item</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormControl><SelectTrigger><SelectValue placeholder="Todos os Itens" /></SelectTrigger></FormControl>
+                      <SelectContent>
+                        <SelectItem value="all">Todos os Itens</SelectItem>
+                        {allItems.map(item => <SelectItem key={item.id} value={item.id}>{item.name} ({item.code})</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -362,6 +379,4 @@ export default function LowStockLevelsReportPage() {
     </div>
   );
 }
-
-
     
