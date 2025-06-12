@@ -1,5 +1,5 @@
 
-import type { Item, ServedUnit, StockItemConfig, StockMovement, Hospital, Patient } from '@/types';
+import type { Item, ServedUnit, StockItemConfig, StockMovement, Hospital, Patient, User } from '@/types';
 import { addDays, formatISO, subYears } from 'date-fns';
 
 const today = new Date();
@@ -66,4 +66,10 @@ export const mockStockMovements: StockMovement[] = [
     { id: 'sm2', itemId: '1', itemName: findItemName('1'), type: 'consumption', quantity: 1, date: '2024-05-03', ...getUnitDetails('su6'), patientId: 'pat1', patientName: findPatientName('pat1') },
     { id: 'sm3', itemId: '2', itemName: findItemName('2'), type: 'exit', quantity: 50, date: '2024-05-05', notes: 'Transferência para Farmácia', ...getUnitDetails('su3') },
     { id: 'sm4', itemId: '4', itemName: findItemName('4'), type: 'consumption', quantity: 20, date: '2024-05-10', ...getUnitDetails('su1') },
+];
+
+export const mockUsers: User[] = [
+  { id: 'user1', name: 'Alice Admin', email: 'alice@example.com', role: 'admin', status: 'active' },
+  { id: 'user2', name: 'Bob Usuário', email: 'bob@example.com', role: 'user', status: 'active' },
+  { id: 'user3', name: 'Charlie Inativo', email: 'charlie@example.com', role: 'user', status: 'inactive' },
 ];

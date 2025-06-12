@@ -52,8 +52,8 @@ export interface StockMovement {
   quantity: number;
   date: string; // ISO date string
   notes?: string;
-  patientId?: string; // Novo campo para associar paciente
-  patientName?: string; // Para display
+  patientId?: string; 
+  patientName?: string; 
 }
 
 export interface Patient {
@@ -61,7 +61,6 @@ export interface Patient {
   name: string;
   birthDate: string; // ISO date string, e.g., "YYYY-MM-DD"
   susCardNumber: string;
-  // Outros campos como gênero, endereço, contato podem ser adicionados depois
 }
 
 export interface ConsumptionDataPoint {
@@ -71,7 +70,7 @@ export interface ConsumptionDataPoint {
   quantityConsumed: number;
   servedUnitId: string;
   hospitalId: string;
-  patientId?: string; // Novo campo para associar paciente
+  patientId?: string; 
 }
 
 // For GenAI input
@@ -80,6 +79,18 @@ export interface HistoricalDataEntry {
   date: string; // YYYY-MM-DD
   quantityConsumed: number;
   servedUnit: string;
-  hospital: string; // Added hospital context
-  patientSUS?: string; // Opcional: Cartão SUS do paciente
+  hospital: string; 
+  patientSUS?: string; 
+}
+
+export type UserRole = 'admin' | 'user';
+export type UserStatus = 'active' | 'inactive';
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  status: UserStatus;
+  // Password is not stored in the client-side mock data for security simulation
 }

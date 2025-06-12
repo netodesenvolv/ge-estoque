@@ -25,6 +25,7 @@ import {
   ChevronDown,
   ListChecks,
   PlusCircle,
+  Users2, // Ícone para o menu principal de Usuários
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -67,7 +68,7 @@ const navItems = [
   },
   {
     label: 'Unidades Servidas',
-    icon: Users,
+    icon: Users, // Manter Users para unidades, usar Users2 para gerenciamento de usuários
     subItems: [
       { href: '/served-units', label: 'Ver Unidades', icon: Users },
       { href: '/served-units/add', label: 'Adicionar Unidade', icon: PlusCircle },
@@ -83,6 +84,14 @@ const navItems = [
       { href: '/reports/expiring-items', label: 'Itens a Vencer', icon: CalendarClock },
       { href: '/reports/consumption-history', label: 'Histórico de Consumo', icon: History },
       { href: '/reports/low-stock-levels', label: 'Níveis Baixos/Alerta', icon: ListChecks },
+    ],
+  },
+   {
+    label: 'Usuários',
+    icon: Users2, // Novo ícone para o menu de Usuários
+    subItems: [
+      { href: '/users', label: 'Ver Usuários', icon: Users },
+      { href: '/users/add', label: 'Adicionar Usuário', icon: UserPlus },
     ],
   },
   {
@@ -113,7 +122,7 @@ export default function AppNavigation() {
       <Accordion type="multiple" className="w-full" defaultValue={defaultOpenAccordionItems}>
         {navItems.map((item, index) => {
           const isDirectActive = !item.subItems && pathname === item.href;
-          const isSubItemActive = item.subItems && item.subItems.some(sub => pathname.startsWith(sub.href));
+          const isSubItemActive = item.subItems && item.subItems.some(sub => pathname.startsWith(sub.href) && sub.href !== '/'); // Evitar que '/' ative todos os submenus
           const isActive = isDirectActive || isSubItemActive;
 
           if (item.subItems) {
@@ -121,18 +130,14 @@ export default function AppNavigation() {
               <AccordionItem value={`item-${index}`} key={item.label} className="border-none">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    {/* AccordionTrigger é o customizado de ui/accordion.tsx.
-                        Ele recebe asChild=true do TooltipTrigger.
-                        Seus filhos (children) precisam ser um único elemento. */}
                     <AccordionTrigger
                       className={cn(
                         baseLinkStyles,
-                        "w-full justify-between group", // Adicionado 'group' para o Chevron
-                        (isSubItemActive && !isDirectActive) && activeLinkStyles // Ativa o trigger se um subitem estiver ativo
+                        "w-full justify-between group", 
+                        (isSubItemActive && !isDirectActive) && activeLinkStyles 
                       )}
-                      data-active={(isSubItemActive && !isDirectActive)} // Para referência de estilo se necessário
+                      data-active={(isSubItemActive && !isDirectActive)} 
                     >
-                      {/* ÚNICO FILHO para o AccordionTrigger customizado */}
                       <span className="flex w-full items-center justify-between">
                         <span className="flex items-center gap-2 truncate">
                           <item.icon className="h-5 w-5" />
@@ -154,10 +159,10 @@ export default function AppNavigation() {
                           href={subItem.href}
                           className={cn(
                             baseLinkStyles,
-                            "text-xs", // Tamanho menor para sub-itens
-                            pathname.startsWith(subItem.href) && activeLinkStyles
+                            "text-xs", 
+                            pathname.startsWith(subItem.href) && (subItem.href !== '/' || pathname === '/') && activeLinkStyles
                           )}
-                          data-active={pathname.startsWith(subItem.href)}
+                          data-active={pathname.startsWith(subItem.href) && (subItem.href !== '/' || pathname === '/')}
                         >
                           <span className="flex items-center gap-2 truncate">
                             <subItem.icon className="h-4 w-4" />
@@ -204,4 +209,3 @@ export default function AppNavigation() {
     </nav>
   );
 }
-    
