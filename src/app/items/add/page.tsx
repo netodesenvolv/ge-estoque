@@ -52,12 +52,38 @@ const BatchImportForm = () => {
   };
 
   const handleDownloadTemplate = () => {
-    // Simulação de download. Em uma aplicação real, você forneceria um link para um arquivo.
-    toast({
-      title: "Modelo de Planilha",
-      description: "Em uma aplicação real, o download da planilha modelo iniciaria aqui. Por favor, siga as instruções de colunas abaixo.",
-    });
-  }
+    const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
+    const csvHeader = "Nome,Código,Categoria,Unidade de Medida,Qtde. Mínima (Armazém Central),Qtde. Atual (Armazém Central),Fornecedor,Data de Validade\n";
+    const csvExampleRow1 = "Paracetamol 500mg,PARA500,Analgésico,Comprimido,100,500,Pharma Inc.,2025-12-31\n";
+    const csvExampleRow2 = "Seringa Descartável 10ml,SER10ML,Material Hospitalar,Unidade,200,1000,MedSupply,2026-06-30\n";
+    const csvExampleRow3 = "Álcool em Gel 70% 500ml,ALC500,Antisséptico,Frasco,50,200,CleanPro,\n"; // Exemplo sem data de validade
+    
+    const csvContent = BOM + csvHeader + csvExampleRow1 + csvExampleRow2 + csvExampleRow3;
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "modelo_importacao_itens.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast({
+        title: "Download Iniciado",
+        description: "O arquivo modelo_importacao_itens.csv está sendo baixado.",
+      });
+    } else {
+      toast({
+        title: "Erro no Download",
+        description: "Seu navegador não suporta o download automático de arquivos. Por favor, copie o formato manualmente.",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <Card className="shadow-lg">
@@ -65,9 +91,7 @@ const BatchImportForm = () => {
         <CardTitle className="font-headline">Importar Itens em Lote via Planilha</CardTitle>
         <CardDescription>
           Faça o upload de um arquivo (CSV, XLSX) contendo os dados dos itens.
-          A primeira linha da planilha deve ser o cabeçalho e as colunas devem estar na seguinte ordem:
-          <br />
-          <strong>Nome</strong>, <strong>Código</strong>, <strong>Categoria</strong>, <strong>Unidade de Medida</strong>, <strong>Qtde. Mínima (Armazém Central)</strong>, <strong>Qtde. Atual (Armazém Central)</strong>, <strong>Fornecedor (Opcional)</strong>, <strong>Data de Validade (AAAA-MM-DD, Opcional)</strong>.
+          A primeira linha da planilha deve ser o cabeçalho.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -90,7 +114,7 @@ const BatchImportForm = () => {
                 <li><code>Data de Validade</code> (Data no formato AAAA-MM-DD, Opcional) - Deixe em branco se não aplicável.</li>
               </ul>
               <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="mt-4">
-                <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (Instruções)
+                <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (.csv)
               </Button>
             </AlertDescription>
           </Alert>
@@ -140,3 +164,4 @@ export default function AddItemPage() {
     </div>
   );
 }
+
