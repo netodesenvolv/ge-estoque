@@ -49,10 +49,11 @@ const BatchImportPatientForm = () => {
   };
 
   const handleDownloadTemplate = () => {
+    const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
     const csvHeader = "Nome Completo,Número do Cartão SUS,Data de Nascimento\n";
-    const csvExampleRow1 = "Maria Joaquina de Amaral Pereira Goes,700123456789012,1985-07-22\n";
+    const csvExampleRow1 = "Maria Joaquina de Amaral Pereira Góes,700123456789012,1985-07-22\n"; // Exemplo com acento
     const csvExampleRow2 = "José Ricardo da Silva,700987654321098,\n"; // Exemplo sem data de nascimento
-    const csvContent = csvHeader + csvExampleRow1 + csvExampleRow2;
+    const csvContent = BOM + csvHeader + csvExampleRow1 + csvExampleRow2;
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
