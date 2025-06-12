@@ -75,8 +75,8 @@ const BatchImportPatientForm = () => {
               </p>
               <ul className="list-disc list-inside text-sm space-y-1">
                 <li><code>Nome Completo</code> (Texto, Obrigatório) - Nome completo do paciente.</li>
-                <li><code>Data de Nascimento</code> (Data no formato AAAA-MM-DD, Obrigatório) - Ex: 1990-12-31.</li>
                 <li><code>Número do Cartão SUS</code> (Texto/Número, Obrigatório) - 15 dígitos do Cartão Nacional de Saúde.</li>
+                <li><code>Data de Nascimento</code> (Data no formato AAAA-MM-DD, Opcional) - Ex: 1990-12-31. Deixe em branco se não for fornecer.</li>
               </ul>
               <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="mt-4">
                 <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (Instruções)
@@ -130,3 +130,4 @@ export default function AddPatientPage() {
     </div>
   );
 }
+
