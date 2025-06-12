@@ -49,18 +49,42 @@ const BatchImportHospitalForm = () => {
   };
 
   const handleDownloadTemplate = () => {
-    toast({
-      title: "Modelo de Planilha para Hospitais",
-      description: "Em uma aplicação real, o download da planilha modelo iniciaria aqui. Por favor, siga as instruções de colunas abaixo.",
-    });
+    const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
+    const csvHeader = "Nome,Endereço\n";
+    const csvExampleRow1 = "Hospital Central da Cidade,\"Rua Principal, 123, Centro\"\n";
+    const csvExampleRow2 = "UBS Vila Esperança,\n"; // Exemplo sem endereço
+    const csvContent = BOM + csvHeader + csvExampleRow1 + csvExampleRow2;
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "modelo_importacao_hospitais.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+       toast({
+        title: "Download Iniciado",
+        description: "O arquivo modelo_importacao_hospitais.csv está sendo baixado.",
+      });
+    } else {
+        toast({
+            title: "Erro no Download",
+            description: "Seu navegador não suporta o download automático de arquivos. Por favor, copie o formato manualmente.",
+            variant: "destructive",
+        });
+    }
   }
 
   return (
     <Card className="shadow-lg">
       <CardHeader>
-        <CardTitle className="font-headline">Importar Hospitais em Lote via Planilha</CardTitle>
+        <CardTitle className="font-headline">Importar Hospitais/UBS em Lote via Planilha</CardTitle>
         <CardDescription>
-          Faça o upload de um arquivo (CSV, XLSX) contendo os dados dos hospitais.
+          Faça o upload de um arquivo (CSV, XLSX) contendo os dados dos hospitais ou UBS.
           A primeira linha da planilha deve ser o cabeçalho.
         </CardDescription>
       </CardHeader>
@@ -68,17 +92,17 @@ const BatchImportHospitalForm = () => {
         <div className="space-y-4">
           <Alert>
             <Download className="h-4 w-4" />
-            <AlertTitle>Formato da Planilha de Hospitais</AlertTitle>
+            <AlertTitle>Formato da Planilha de Hospitais/UBS</AlertTitle>
             <AlertDescription>
               <p className="mb-2">
                 Sua planilha (CSV ou XLSX) deve ter as seguintes colunas, nesta ordem:
               </p>
               <ul className="list-disc list-inside text-sm space-y-1">
-                <li><code>Nome</code> (Texto, Obrigatório) - Nome do hospital.</li>
-                <li><code>Endereço</code> (Texto, Opcional) - Endereço completo do hospital.</li>
+                <li><code>Nome</code> (Texto, Obrigatório) - Nome do hospital ou UBS.</li>
+                <li><code>Endereço</code> (Texto, Opcional) - Endereço completo.</li>
               </ul>
               <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="mt-4">
-                <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (Instruções)
+                <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (.csv)
               </Button>
             </AlertDescription>
           </Alert>
@@ -109,8 +133,8 @@ export default function AddHospitalPage() {
   return (
     <div>
       <PageHeader
-        title="Adicionar Hospitais"
-        description="Cadastre um novo hospital manualmente ou importe uma lista via planilha."
+        title="Adicionar Hospitais/UBS"
+        description="Cadastre um novo hospital/UBS manualmente ou importe uma lista via planilha."
         icon={Building}
       />
       <Tabs defaultValue="manual" className="w-full">
