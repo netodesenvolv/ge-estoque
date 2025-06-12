@@ -43,6 +43,7 @@ const escapeCsvValue = (value: any): string => {
 };
 
 const convertToCSV = (data: DisplayStockItem[]): string => {
+  const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
   const headers = [
     { key: 'itemName', label: 'Item' },
     { key: 'itemCode', label: 'Código' },
@@ -57,7 +58,7 @@ const convertToCSV = (data: DisplayStockItem[]): string => {
   const dataRows = data.map(row =>
     headers.map(header => escapeCsvValue(row[header.key as keyof DisplayStockItem])).join(',')
   );
-  return [headerRow, ...dataRows].join('\n');
+  return BOM + [headerRow, ...dataRows].join('\n');
 };
 
 const downloadCSV = (csvString: string, filename: string) => {
@@ -71,6 +72,7 @@ const downloadCSV = (csvString: string, filename: string) => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 };
 
@@ -106,10 +108,11 @@ export default function LowStockLevelsReportPage() {
     const getUnitDetails = (unitId?: string) => {
         if (!unitId) return { unitName: 'Armazém Central', hospitalId: undefined, hospitalName: undefined };
         const unit = enrichedServedUnits.find(u => u.id === unitId);
+        if (!unit) return { unitName: 'Unidade Desconhecida', hospitalId: undefined, hospitalName: undefined };
         return { 
-          unitName: unit?.name || 'Unidade Desconhecida', 
-          hospitalId: unit?.hospitalId, 
-          hospitalName: unit?.hospitalName 
+          unitName: unit.name, 
+          hospitalId: unit.hospitalId, 
+          hospitalName: unit.hospitalName 
         };
     };
 
