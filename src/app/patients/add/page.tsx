@@ -49,10 +49,33 @@ const BatchImportPatientForm = () => {
   };
 
   const handleDownloadTemplate = () => {
-    toast({
-      title: "Modelo de Planilha para Pacientes",
-      description: "Em uma aplicação real, o download da planilha modelo iniciaria aqui. Por favor, siga as instruções de colunas abaixo.",
-    });
+    const csvHeader = "Nome Completo,Número do Cartão SUS,Data de Nascimento\n";
+    const csvExampleRow1 = "Maria Joaquina de Amaral Pereira Goes,700123456789012,1985-07-22\n";
+    const csvExampleRow2 = "José Ricardo da Silva,700987654321098,\n"; // Exemplo sem data de nascimento
+    const csvContent = csvHeader + csvExampleRow1 + csvExampleRow2;
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "modelo_importacao_pacientes.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+       toast({
+        title: "Download Iniciado",
+        description: "O arquivo modelo_importacao_pacientes.csv está sendo baixado.",
+      });
+    } else {
+        toast({
+            title: "Erro no Download",
+            description: "Seu navegador não suporta o download automático de arquivos. Por favor, copie o formato manualmente.",
+            variant: "destructive",
+        });
+    }
   }
 
   return (
@@ -79,7 +102,7 @@ const BatchImportPatientForm = () => {
                 <li><code>Data de Nascimento</code> (Data no formato AAAA-MM-DD, Opcional) - Ex: 1990-12-31. Deixe em branco se não for fornecer.</li>
               </ul>
               <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="mt-4">
-                <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (Instruções)
+                <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (.csv)
               </Button>
             </AlertDescription>
           </Alert>
@@ -130,4 +153,3 @@ export default function AddPatientPage() {
     </div>
   );
 }
-
