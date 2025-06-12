@@ -49,10 +49,35 @@ const BatchImportServedUnitForm = () => {
   };
 
   const handleDownloadTemplate = () => {
-    toast({
-      title: "Modelo de Planilha para Unidades Servidas",
-      description: "Em uma aplicação real, o download da planilha modelo iniciaria aqui. Por favor, siga as instruções de colunas abaixo.",
-    });
+    const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
+    const csvHeader = "Nome da Unidade,Localização,Nome do Hospital Associado\n";
+    const csvExampleRow1 = "Sala de Emergência,\"Piso 1, Ala A\",Hospital Central da Cidade\n";
+    const csvExampleRow2 = "UTI Neonatal,\"Piso 3, Ala C\",Hospital Infantil Sul\n";
+    const csvExampleRow3 = "Consultório 1 - Clínica Geral,Térreo,UBS Vila Esperança\n";
+    const csvContent = BOM + csvHeader + csvExampleRow1 + csvExampleRow2 + csvExampleRow3;
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "modelo_importacao_unidades_servidas.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+       toast({
+        title: "Download Iniciado",
+        description: "O arquivo modelo_importacao_unidades_servidas.csv está sendo baixado.",
+      });
+    } else {
+        toast({
+            title: "Erro no Download",
+            description: "Seu navegador não suporta o download automático de arquivos. Por favor, copie o formato manualmente.",
+            variant: "destructive",
+        });
+    }
   }
 
   return (
@@ -71,18 +96,18 @@ const BatchImportServedUnitForm = () => {
             <AlertTitle>Formato da Planilha de Unidades Servidas</AlertTitle>
             <AlertDescription>
               <p className="mb-2">
-                Sua planilha (CSV ou XLSX) deve ter as seguintes colunas, nesta ordem:
+                Sua planilha (CSV ou XLSX) deve ter as seguintes colunas, nesta ordem (todas obrigatórias):
               </p>
               <ul className="list-disc list-inside text-sm space-y-1">
-                <li><code>Nome da Unidade</code> (Texto, Obrigatório) - Nome do setor ou departamento. Ex: "Sala de Emergência".</li>
-                <li><code>Localização</code> (Texto, Obrigatório) - Localização física da unidade dentro do hospital. Ex: "Piso 1, Ala A".</li>
-                <li><code>Nome do Hospital Associado</code> (Texto, Obrigatório) - Nome exato de um hospital já cadastrado no sistema. Ex: "Hospital Central da Cidade".</li>
+                <li><code>Nome da Unidade</code> (Texto) - Nome do setor ou departamento. Ex: "Sala de Emergência".</li>
+                <li><code>Localização</code> (Texto) - Localização física da unidade dentro do hospital. Ex: "Piso 1, Ala A".</li>
+                <li><code>Nome do Hospital Associado</code> (Texto) - Nome exato de um hospital ou UBS já cadastrado no sistema. Ex: "Hospital Central da Cidade".</li>
               </ul>
                <p className="mt-2 text-xs text-muted-foreground">
-                Nota: O 'Nome do Hospital Associado' deve corresponder exatamente a um hospital já existente no sistema para que a importação seja bem-sucedida.
+                Nota: O 'Nome do Hospital Associado' deve corresponder exatamente a um hospital ou UBS já existente no sistema para que a importação seja bem-sucedida.
               </p>
               <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="mt-4">
-                <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (Instruções)
+                <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (.csv)
               </Button>
             </AlertDescription>
           </Alert>
