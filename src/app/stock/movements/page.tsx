@@ -18,6 +18,8 @@ import { mockItems, mockServedUnits, mockHospitals, mockPatients } from '@/data/
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 
+const CENTRAL_WAREHOUSE_EXIT_VALUE = "CENTRAL_WAREHOUSE_DIRECT_EXIT";
+
 const movementSchema = z.object({
   itemId: z.string().min(1, "A seleção do item é obrigatória."),
   type: z.enum(['entry', 'exit', 'consumption'], { required_error: "O tipo de movimentação é obrigatório." }),
@@ -30,32 +32,26 @@ const movementSchema = z.object({
 }).refine(data => {
   if (data.type === 'consumption' && data.unitId && !data.patientId) {
     // Para consumo em unidade, o paciente pode ser obrigatório dependendo da regra de negócio.
-    // Aqui, estamos tornando opcional, mas em UBS seria mais comum.
-    // Se for uma UBS (identificado pelo nome do hospital/unidade), paciente é mais relevante.
   }
-  if ((data.type === 'exit' || data.type === 'consumption')) {
-    return data.unitId ? !!data.hospitalId : true;
+  // Se é saída ou consumo E um hospital REAL foi selecionado (não baixa direta do armazém) E não há unidade, então é erro.
+  if ((data.type === 'exit' || data.type === 'consumption') &&
+      data.hospitalId && data.hospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE &&
+      !data.unitId) {
+    return false;
   }
   return true;
 }, {
-  message: "Para Saída ou Consumo em unidade específica, o Hospital é obrigatório.",
-  path: ["hospitalId"],
+  message: "Para Saída ou Consumo com um Hospital específico selecionado, a Unidade Servida também deve ser selecionada.",
+  path: ["unitId"],
 }).refine(data => {
-    if ((data.type === 'exit' || data.type === 'consumption') && data.hospitalId && !data.unitId) {
-        // Não permitiremos mais saída para hospital sem unidade, apenas para unidade ou geral do armazém.
-        // Se a intenção for uma baixa genérica de um hospital, isso deve ser feito de outra forma ou não é suportado aqui.
-        // Esta validação previne hospitalId sem unitId para exit/consumption.
-        // No entanto, uma saída do armazém central (sem hospitalId e sem unitId) é permitida.
-        // A regra é: se tem hospitalId, precisa de unitId para exit/consumption.
-        return false;
-    }
-    if((data.type === 'exit' || data.type === 'consumption') && !data.hospitalId && data.unitId){
-        return false; // Não pode ter unidade sem hospital
+    // Não pode ter unidade sem hospital (a menos que hospitalId seja CENTRAL_WAREHOUSE_EXIT_VALUE, mas nesse caso unitId deveria ser undefined)
+    if((data.type === 'exit' || data.type === 'consumption') && !data.hospitalId && data.unitId && data.hospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE){
+        return false; 
     }
     return true;
 }, {
-    message: "Para Saída ou Consumo com Hospital selecionado, a Unidade Servida também deve ser selecionada.",
-    path: ["unitId"],
+    message: "A Unidade Servida não pode ser selecionada sem um Hospital.",
+    path: ["hospitalId"], // Ou unitId, dependendo do foco da mensagem
 });
 
 
@@ -77,6 +73,8 @@ export default function StockMovementsPage() {
       quantity: 1,
       date: new Date().toISOString().split('T')[0],
       notes: '',
+      hospitalId: undefined,
+      unitId: undefined,
       patientId: undefined,
     },
   });
@@ -99,21 +97,22 @@ export default function StockMovementsPage() {
         form.setValue('patientId', undefined);
     } else if (movementType === 'exit') {
         form.setValue('patientId', undefined);
+        // Se mudou para 'exit' e hospitalId era algo, mas agora 'Nenhum' é uma opção,
+        // pode ser necessário resetar hospitalId se a opção 'Nenhum' não existir para 'consumption'.
+        // A lógica atual de resetar unitId quando hospitalId muda já cobre parte disso.
     }
-    form.setValue('unitId', undefined);
-
+    // Reset unitId sempre que o tipo de movimento muda, a menos que o hospital já exija um.
+    // A lógica abaixo (useEffect em selectedHospitalId) já trata o reset de unitId.
   }, [movementType, form]);
 
    useEffect(() => {
-    if (movementType !== 'consumption' || !selectedUnitId) {
-        form.setValue('patientId', undefined);
-    }
-     form.setValue('unitId', undefined, { shouldValidate: true });
-
-  }, [selectedHospitalId, movementType, form]);
+    // Sempre reseta unitId e patientId quando hospitalId muda.
+    form.setValue('unitId', undefined, { shouldValidate: true });
+    form.setValue('patientId', undefined);
+  }, [selectedHospitalId, form]);
 
 
-  const availableUnits = selectedHospitalId
+  const availableUnits = selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE
     ? servedUnits.filter(unit => unit.hospitalId === selectedHospitalId)
     : [];
 
@@ -129,23 +128,29 @@ export default function StockMovementsPage() {
   const onSubmit = (data: MovementFormData) => {
     const item = items.find(i => i.id === data.itemId);
     const patient = data.patientId ? patients.find(p => p.id === data.patientId) : null;
+    
+    let processedData = {...data};
+    if (data.hospitalId === CENTRAL_WAREHOUSE_EXIT_VALUE) {
+        processedData.hospitalId = undefined; // Trata a string especial como undefined para lógica de negócio
+    }
 
-    let description = `Movimentação de ${data.quantity} unidade(s) do item ${item?.name || data.itemId} registrada como ${data.type}.`;
 
-    if (data.type !== 'entry') {
-        const hospital = hospitals.find(h => h.id === data.hospitalId);
-        const unit = servedUnits.find(u => u.id === data.unitId);
+    let description = `Movimentação de ${processedData.quantity} unidade(s) do item ${item?.name || processedData.itemId} registrada como ${processedData.type}.`;
+
+    if (processedData.type !== 'entry') {
+        const hospital = hospitals.find(h => h.id === processedData.hospitalId);
+        const unit = servedUnits.find(u => u.id === processedData.unitId);
         if (unit && hospital) {
             description += ` para ${unit.name} (${hospital.name}).`;
-        } else {
-            description += ` (Armazém Central).`;
+        } else if (processedData.hospitalId === undefined) { // Modificado para usar processedData
+            description += ` (Baixa direta do Armazém Central).`;
         }
     }
     if (patient) {
       description += ` Paciente: ${patient.name}.`;
     }
 
-    console.log('Movimentação de estoque submetida:', data);
+    console.log('Movimentação de estoque submetida:', processedData);
     toast({
       title: "Movimentação de Estoque Registrada",
       description: description,
@@ -209,7 +214,7 @@ export default function StockMovementsPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Item</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value} value={field.value || ""}>
+                    <Select onValueChange={field.onChange} value={field.value ?? undefined}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Selecione um item" /></SelectTrigger></FormControl>
                       <SelectContent>
                         {items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} ({item.code})</SelectItem>)}
@@ -230,28 +235,26 @@ export default function StockMovementsPage() {
                         <FormLabel>Hospital de Destino/Consumo</FormLabel>
                         <Select
                             onValueChange={(value) => {
-                                field.onChange(value);
-                                form.setValue('unitId', undefined);
-                                form.setValue('patientId', undefined);
+                                field.onChange(value === CENTRAL_WAREHOUSE_EXIT_VALUE ? undefined : value);
+                                // O useEffect para selectedHospitalId cuidará de resetar unitId e patientId
                             }}
-                            value={field.value || ""}
-                            defaultValue={field.value}
+                            value={field.value ?? undefined} // Use field.value direto, Select lida com undefined para placeholder
                         >
-                          <FormControl><SelectTrigger><SelectValue placeholder="Selecione um hospital" /></SelectTrigger></FormControl>
+                          <FormControl><SelectTrigger><SelectValue placeholder="Selecione um hospital ou baixa direta" /></SelectTrigger></FormControl>
                           <SelectContent>
-                             {movementType === 'exit' && <SelectItem value="">Nenhum (Baixa do Armazém Central)</SelectItem>}
+                             {movementType === 'exit' && <SelectItem value={CENTRAL_WAREHOUSE_EXIT_VALUE}>Nenhum (Baixa do Armazém Central)</SelectItem>}
                             {hospitals.map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
                           </SelectContent>
                         </Select>
                          <FormDescription>
-                            {movementType === 'exit' && "Se for uma baixa direta do Armazém Central sem unidade de destino, deixe em branco. Para transferir para uma unidade, selecione o hospital."}
+                            {movementType === 'exit' && "Selecione 'Nenhum' para baixa direta do Armazém Central. Para transferir, selecione o hospital."}
                             {movementType === 'consumption' && "Selecione o hospital onde o item foi consumido."}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                  {selectedHospitalId && (movementType === 'exit' || movementType === 'consumption') && (
+                  {selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE && (movementType === 'exit' || movementType === 'consumption') && (
                     <FormField
                       control={form.control}
                       name="unitId"
@@ -259,15 +262,9 @@ export default function StockMovementsPage() {
                         <FormItem>
                           <FormLabel>Unidade Servida de Destino/Consumo</FormLabel>
                           <Select
-                            onValueChange={(value) => {
-                                field.onChange(value);
-                                if (movementType !== 'consumption' || !isConsumptionInUBS()) {
-                                    form.setValue('patientId', undefined);
-                                }
-                            }}
-                            value={field.value || ""}
-                            defaultValue={field.value}
-                            disabled={!selectedHospitalId || availableUnits.length === 0}
+                            onValueChange={field.onChange}
+                            value={field.value ?? undefined}
+                            disabled={!selectedHospitalId || availableUnits.length === 0 || selectedHospitalId === CENTRAL_WAREHOUSE_EXIT_VALUE}
                           >
                             <FormControl><SelectTrigger>
                                 <SelectValue placeholder={availableUnits.length > 0 ? "Selecione uma unidade" : "Nenhuma unidade para este hospital"} />
@@ -297,7 +294,6 @@ export default function StockMovementsPage() {
                             <Select
                                 onValueChange={(value) => field.onChange(value === NO_PATIENT_ID ? undefined : value)}
                                 value={field.value || NO_PATIENT_ID}
-                                defaultValue={field.value || NO_PATIENT_ID}
                             >
                             <FormControl><SelectTrigger>
                                 <SelectValue placeholder="Selecione um paciente (se aplicável)" />
@@ -361,3 +357,4 @@ export default function StockMovementsPage() {
     </div>
   );
 }
+
