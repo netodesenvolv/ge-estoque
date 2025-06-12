@@ -17,6 +17,7 @@ import { ptBR } from 'date-fns/locale';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const reportFiltersSchema = z.object({
   daysThreshold: z.coerce.number().int().min(0).optional().default(30),
