@@ -20,95 +20,110 @@ import { useRouter, usePathname } from 'next/navigation';
 
 interface AuthContextType {
   user: FirebaseUser | null;
-  loading: boolean;
+  loading: boolean; // Continuará indicando o carregamento do estado de autenticação
+  logout: () => Promise<void>;
   loginWithEmailAndPassword: (email: string, pass: string) => Promise<FirebaseUser | AuthError>;
   signUpWithEmailAndPassword: (email: string, pass: string) => Promise<FirebaseUser | AuthError>;
-  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 interface AuthProviderProps {
-  children: ReactNode; // Changed from render prop to ReactNode
+  children: ReactNode;
 }
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // Indica se o estado de autenticação inicial ainda está carregando
+  const [isMounted, setIsMounted] = useState(false); // Para rastrear se o componente montou no cliente
+
   const router = useRouter();
   const pathname = usePathname();
   const isAuthRoute = pathname === '/login' || pathname === '/signup';
 
   useEffect(() => {
+    setIsMounted(true); // Define como montado após a primeira renderização do cliente
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      setLoading(false);
+      setLoading(false); // Estado de autenticação carregado
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (!loading && !user && !isAuthRoute) {
+    // Lógica de redirecionamento: executa apenas no cliente após a montagem e o estado de auth ser carregado
+    if (isMounted && !loading && !user && !isAuthRoute) {
       router.push('/login');
     }
-  }, [user, loading, pathname, router, isAuthRoute]);
-
-  const loginWithEmailAndPassword = async (email: string, pass: string): Promise<FirebaseUser | AuthError> => {
-    try {
-      const userCredential = await firebaseSignIn(auth, email, pass);
-      return userCredential.user;
-    } catch (error) {
-      return error as AuthError;
-    }
-  };
-
-  const signUpWithEmailAndPassword = async (email: string, pass: string): Promise<FirebaseUser | AuthError> => {
-     try {
-      const userCredential = await firebaseSignUp(auth, email, pass);
-      return userCredential.user;
-    } catch (error) {
-      return error as AuthError;
-    }
-  };
-
-  const logout = async (): Promise<void> => {
-    await firebaseSignOut(auth);
-    router.push('/login');
-  };
+  }, [isMounted, user, loading, pathname, router, isAuthRoute]);
 
   const authContextValue: AuthContextType = {
     user,
     loading,
-    loginWithEmailAndPassword,
-    signUpWithEmailAndPassword,
-    logout
+    loginWithEmailAndPassword: async (email: string, pass: string): Promise<FirebaseUser | AuthError> => {
+      try {
+        const userCredential = await firebaseSignIn(auth, email, pass);
+        return userCredential.user;
+      } catch (error) {
+        return error as AuthError;
+      }
+    },
+    signUpWithEmailAndPassword: async (email: string, pass: string): Promise<FirebaseUser | AuthError> => {
+      try {
+        const userCredential = await firebaseSignUp(auth, email, pass);
+        return userCredential.user;
+      } catch (error) {
+        return error as AuthError;
+      }
+    },
+    logout: async (): Promise<void> => {
+      await firebaseSignOut(auth);
+      // O router.push('/login') está no useEffect, mas podemos adicionar aqui para garantir se necessário
+      // ou confiar que o estado de 'user' mudando acionará o useEffect.
+      // Para uma experiência mais imediata, podemos fazer o push aqui também.
+      router.push('/login');
+    }
   };
 
-  // Conditional rendering logic now happens inside AuthProvider
-  if (loading && !isAuthRoute) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <p>Carregando aplicação...</p>
-      </div>
-    );
-  }
-
-  // If it's an auth route, or if the user is authenticated, render children
-  // The redirection for unauthenticated users on non-auth routes is handled by the useEffect above.
-  if (isAuthRoute || (!loading && user)) {
+  // Durante SSR e a primeira renderização no cliente (antes de isMounted se tornar true),
+  // sempre renderize os children para garantir que a hidratação corresponda.
+  if (!isMounted) {
     return (
       <AuthContext.Provider value={authContextValue}>
         {children}
       </AuthContext.Provider>
     );
   }
-  
-  // If not loading, no user, and not an auth route, user will be redirected by useEffect.
-  // Return a loading state or null while redirect is happening.
+
+  // Lógica de UI condicional APÓS a montagem no cliente
+  if (loading && !isAuthRoute) {
+    // Ainda carregando o estado de autenticação, exibe a UI de carregamento
+    return (
+      <AuthContext.Provider value={authContextValue}>
+        <div className="flex h-screen items-center justify-center">
+          <p>Carregando aplicação...</p>
+        </div>
+      </AuthContext.Provider>
+    );
+  }
+
+  if (!loading && !user && !isAuthRoute) {
+    // Autenticação carregada, sem usuário, não é uma rota de autenticação -> exibe UI de redirecionamento/verificação
+    // O useEffect acima trata do router.push real.
+    return (
+      <AuthContext.Provider value={authContextValue}>
+        <div className="flex h-screen items-center justify-center">
+          <p>Verificando autenticação...</p>
+        </div>
+      </AuthContext.Provider>
+    );
+  }
+
+  // Se for uma rota de autenticação, ou se o usuário estiver carregado e não estiver carregando: renderize os children
   return (
-    <div className="flex h-screen items-center justify-center">
-      <p>Verificando autenticação...</p>
-    </div>
+    <AuthContext.Provider value={authContextValue}>
+      {children}
+    </AuthContext.Provider>
   );
 };
 
@@ -117,6 +132,5 @@ export const useAuth = (): AuthContextType => {
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
-  // This hook can still be used by components deeper in the tree if needed
   return context;
 };
