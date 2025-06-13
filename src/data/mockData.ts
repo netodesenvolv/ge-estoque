@@ -4,13 +4,7 @@ import { addDays, formatISO, subYears } from 'date-fns';
 
 const today = new Date();
 
-export const mockItems: Item[] = [
-  { id: '1', name: 'Paracetamol 500mg', code: 'PARA500', category: 'Analgésico', unitOfMeasure: 'Comprimido', minQuantity: 100, currentQuantityCentral: 500, supplier: 'Pharma Inc.', expirationDate: formatISO(addDays(today, 90), { representation: 'date' }) },
-  { id: '2', name: 'Amoxicilina 250mg', code: 'AMOX250', category: 'Antibiótico', unitOfMeasure: 'Cápsula', minQuantity: 50, currentQuantityCentral: 200, supplier: 'MediCorp', expirationDate: formatISO(addDays(today, 15), { representation: 'date' }) },
-  { id: '3', name: 'Curativos Sortidos (Band-Aid)', code: 'BANDAID', category: 'Primeiros Socorros', unitOfMeasure: 'Caixa', minQuantity: 20, currentQuantityCentral: 150, supplier: 'HealthGoods', expirationDate: formatISO(addDays(today, -10), { representation: 'date' }) },
-  { id: '4', name: 'Seringa 5ml', code: 'SYR5ML', category: 'Suprimentos Médicos', unitOfMeasure: 'Peça', minQuantity: 200, currentQuantityCentral: 1000, supplier: 'MediSupply Co.', expirationDate: formatISO(addDays(today, 365), { representation: 'date' }) },
-  { id: '5', name: 'Compressas de Gaze', code: 'GAUZEP', category: 'Primeiros Socorros', unitOfMeasure: 'Pacote', minQuantity: 50, currentQuantityCentral: 300, supplier: 'HealthGoods' },
-];
+export const mockItems: Item[] = [];
 
 export const mockHospitals: Hospital[] = [
   { id: 'hosp1', name: 'Hospital Central da Cidade', address: 'Rua Principal, 123, Centro' },
@@ -50,23 +44,9 @@ const getUnitDetails = (unitId?: string) => {
 const findPatientName = (patientId?: string) => patientId ? (mockPatients.find(p => p.id === patientId)?.name || 'Paciente Desconhecido') : undefined;
 
 
-export const mockStockConfigs: StockItemConfig[] = [
-  { id: 'sc1', itemId: '1', itemName: findItemName('1'), unitId: 'su1', ...getUnitDetails('su1'), strategicStockLevel: 50, minQuantity: 20, currentQuantity: 30 },
-  { id: 'sc2', itemId: '1', itemName: findItemName('1'), ...getUnitDetails(undefined), strategicStockLevel: 200, minQuantity: 100, currentQuantity: mockItems.find(i => i.id === '1')?.currentQuantityCentral },
-  { id: 'sc3', itemId: '2', itemName: findItemName('2'), unitId: 'su3', ...getUnitDetails('su3'), strategicStockLevel: 100, minQuantity: 30, currentQuantity: 80 },
-  { id: 'sc4', itemId: '4', itemName: findItemName('4'), unitId: 'su1', ...getUnitDetails('su1'), strategicStockLevel: 100, minQuantity: 50, currentQuantity: 70 },
-  { id: 'sc5', itemId: '4', itemName: findItemName('4'), ...getUnitDetails(undefined), strategicStockLevel: 500, minQuantity: 200, currentQuantity: mockItems.find(i => i.id === '4')?.currentQuantityCentral },
-  { id: 'sc6', itemId: '5', itemName: findItemName('5'), unitId: 'su2', ...getUnitDetails('su2'), strategicStockLevel: 60, minQuantity: 25, currentQuantity: 40 },
-  { id: 'sc7', itemId: '3', itemName: findItemName('3'), unitId: 'su4', ...getUnitDetails('su4'), strategicStockLevel: 30, minQuantity: 10, currentQuantity: 15 },
-  { id: 'sc8', itemId: '1', itemName: findItemName('1'), unitId: 'su6', ...getUnitDetails('su6'), strategicStockLevel: 20, minQuantity: 5, currentQuantity: 10 }, // Para UBS
-];
+export const mockStockConfigs: StockItemConfig[] = [];
 
-export const mockStockMovements: StockMovement[] = [
-    { id: 'sm1', itemId: '1', itemName: findItemName('1'), type: 'entry', quantity: 200, date: '2024-05-01', notes: 'Novo lote recebido', ...getUnitDetails(undefined) },
-    { id: 'sm2', itemId: '1', itemName: findItemName('1'), type: 'consumption', quantity: 1, date: '2024-05-03', ...getUnitDetails('su6'), patientId: 'pat1', patientName: findPatientName('pat1') },
-    { id: 'sm3', itemId: '2', itemName: findItemName('2'), type: 'exit', quantity: 50, date: '2024-05-05', notes: 'Transferência para Farmácia', ...getUnitDetails('su3') },
-    { id: 'sm4', itemId: '4', itemName: findItemName('4'), type: 'consumption', quantity: 20, date: '2024-05-10', ...getUnitDetails('su1') },
-];
+export const mockStockMovements: StockMovement[] = [];
 
 export const mockUsers: User[] = [
   { id: 'user1', name: 'Alice Admin', email: 'alice@example.com', role: 'admin', status: 'active' },
