@@ -1,0 +1,49 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Regra padrão: Negar acesso a menos que especificado abaixo.
+    // É uma boa prática ter isso, mas as regras específicas abaixo terão precedência.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Permitir que usuários autenticados leiam e escrevam em todas as coleções.
+    // Você DEVE refinar isso para produção com regras mais específicas por coleção.
+    match /items/{itemId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /hospitals/{hospitalId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /servedUnits/{unitId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /patients/{patientId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /stockConfigs/{configId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /stockMovements/{movementId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Para a coleção 'users', você pode querer regras mais específicas.
+    // Por exemplo, permitir que um usuário leia seus próprios dados e que administradores leiam todos.
+    // Por enquanto, vamos manter a regra geral para usuários autenticados.
+    match /users/{userId} {
+      allow read, write: if request.auth != null;
+      // Exemplo de regra mais granular (comentada):
+      // allow read: if request.auth != null;
+      // allow write: if request.auth.uid == userId; // Usuário só pode escrever em seu próprio documento
+    }
+  }
+}
