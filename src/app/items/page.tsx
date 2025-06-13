@@ -9,12 +9,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Package, PlusCircle, Edit3, Trash2, Search, CalendarClock } from 'lucide-react';
 import type { Item } from '@/types';
-import { mockItems } from '@/data/mockData';
+// import { mockItems } from '@/data/mockData'; // Não usaremos mais mockItems
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { format, parseISO, isBefore, differenceInDays, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { firestore } from '@/lib/firebase'; // Importar firestore
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore'; // Importar funções do Firestore
 
 const NEARING_EXPIRATION_DAYS = 30;
 
@@ -24,13 +26,32 @@ export default function ItemsPage() {
   const { toast } = useToast();
 
   useEffect(() => {
-    setItems(mockItems);
-  }, []);
+    const itemsCollectionRef = collection(firestore, "items");
+    // Ordenar por nome para consistência, você pode mudar ou adicionar mais critérios
+    const q = query(itemsCollectionRef, orderBy("name", "asc"));
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const itemsData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      } as Item));
+      setItems(itemsData);
+    }, (error) => {
+      console.error("Erro ao buscar itens: ", error);
+      toast({
+        title: "Erro ao Carregar Itens",
+        description: "Não foi possível carregar os itens do banco de dados.",
+        variant: "destructive",
+      });
+    });
+
+    return () => unsubscribe(); // Limpar o listener ao desmontar o componente
+  }, [toast]);
 
   const filteredItems = items.filter(item =>
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.category.toLowerCase().includes(searchTerm.toLowerCase())
+    (item.code && item.code.toLowerCase().includes(searchTerm.toLowerCase())) || // Adicionado verificação para item.code
+    (item.category && item.category.toLowerCase().includes(searchTerm.toLowerCase())) // Adicionado verificação para item.category
   );
 
   const handleEdit = (id: string) => {
@@ -41,17 +62,28 @@ export default function ItemsPage() {
     });
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     console.log('Excluir item:', id);
-    setItems(prevItems => prevItems.filter(item => item.id !== id));
-    toast({
-      title: "Item Excluído (Simulado)",
-      description: `Item com ID: ${id} foi removido da lista.`,
-      variant: "default", 
-    });
+    const itemDocRef = doc(firestore, "items", id);
+    try {
+      await deleteDoc(itemDocRef);
+      toast({
+        title: "Item Excluído",
+        description: `Item foi removido do banco de dados.`,
+        variant: "default", 
+      });
+      // A UI será atualizada automaticamente pelo listener onSnapshot
+    } catch (error) {
+      console.error("Erro ao excluir item: ", error);
+      toast({
+        title: "Erro ao Excluir Item",
+        description: "Não foi possível excluir o item. Tente novamente.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const getExpirationStatus = (expirationDate?: string): { text: string; variant: 'default' | 'secondary' | 'destructive'; icon?: React.ReactNode } => {
+  const getExpirationStatus = (expirationDate?: string | null): { text: string; variant: 'default' | 'secondary' | 'destructive'; icon?: React.ReactNode } => {
     if (!expirationDate) {
       return { text: 'N/A', variant: 'default' };
     }
@@ -65,8 +97,9 @@ export default function ItemsPage() {
     if (isBefore(expDate, today)) {
       return { text: `Vencido (${format(expDate, 'dd/MM/yy', { locale: ptBR })})`, variant: 'destructive', icon: <CalendarClock className="h-3 w-3 mr-1 inline-block" /> };
     }
-    if (differenceInDays(expDate, today) <= NEARING_EXPIRATION_DAYS) {
-      return { text: `Vence em ${differenceInDays(expDate, today) +1}d (${format(expDate, 'dd/MM/yy', { locale: ptBR })})`, variant: 'secondary', icon: <CalendarClock className="h-3 w-3 mr-1 inline-block" /> };
+    const daysDiff = differenceInDays(expDate, today);
+    if (daysDiff <= NEARING_EXPIRATION_DAYS) {
+      return { text: `Vence em ${daysDiff +1}d (${format(expDate, 'dd/MM/yy', { locale: ptBR })})`, variant: 'secondary', icon: <CalendarClock className="h-3 w-3 mr-1 inline-block" /> };
     }
     return { text: format(expDate, 'dd/MM/yyyy', { locale: ptBR }), variant: 'default' };
   };

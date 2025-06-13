@@ -12,6 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import type { Item } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
+import { firestore } from '@/lib/firebase'; // Importar firestore
+import { collection, addDoc } from 'firebase/firestore'; // Importar funções do Firestore
 
 const itemSchema = z.object({
   name: z.string().min(2, { message: "O nome deve ter pelo menos 2 caracteres." }),
@@ -27,7 +29,7 @@ const itemSchema = z.object({
 type ItemFormData = z.infer<typeof itemSchema>;
 
 interface ItemFormProps {
-  initialData?: Item;
+  initialData?: Item; // Para futura edição
   onSubmitSuccess?: (data: Item) => void;
 }
 
@@ -49,23 +51,29 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
     },
   });
 
-  const onSubmit = (data: ItemFormData) => {
-    console.log('Formulário de item submetido:', data);
-    const submittedItem: Item = { 
-      ...data, 
-      id: initialData?.id || Math.random().toString(36).substring(2, 15),
-      expirationDate: data.expirationDate || undefined, // Garante que seja undefined se vazio
+  const onSubmit = async (data: ItemFormData) => {
+    const itemDataToSave = {
+      ...data,
+      expirationDate: data.expirationDate || null, // Firestore lida melhor com null
     };
-    
-    if (onSubmitSuccess) {
-      onSubmitSuccess(submittedItem);
-    } else {
+
+    try {
+      const itemsCollectionRef = collection(firestore, "items");
+      await addDoc(itemsCollectionRef, itemDataToSave);
+      
       toast({
-        title: initialData ? "Item Atualizado" : "Item Adicionado",
-        description: `${data.name} foi ${initialData ? 'atualizado' : 'adicionado'} com sucesso.`,
+        title: "Item Adicionado",
+        description: `${data.name} foi adicionado com sucesso ao banco de dados.`,
         variant: "default",
       });
-      router.push('/items');
+      router.push('/items'); // Redireciona para a página de listagem
+    } catch (error) {
+      console.error("Erro ao adicionar item: ", error);
+      toast({
+        title: "Erro ao Adicionar Item",
+        description: "Não foi possível adicionar o item. Verifique o console para mais detalhes.",
+        variant: "destructive",
+      });
     }
   };
 
