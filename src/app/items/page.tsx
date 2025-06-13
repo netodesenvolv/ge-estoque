@@ -11,6 +11,7 @@ import { Package, PlusCircle, Edit3, Trash2, Search, CalendarClock } from 'lucid
 import type { Item } from '@/types';
 import { mockItems } from '@/data/mockData';
 import { Input } from '@/components/ui/input';
+import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { format, parseISO, isBefore, differenceInDays, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -20,6 +21,7 @@ const NEARING_EXPIRATION_DAYS = 30;
 export default function ItemsPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const { toast } = useToast();
 
   useEffect(() => {
     setItems(mockItems);
@@ -33,11 +35,20 @@ export default function ItemsPage() {
 
   const handleEdit = (id: string) => {
     console.log('Editar item:', id);
+    toast({
+      title: "Ação Simulada",
+      description: `Editar item com ID: ${id}. Funcionalidade de edição completa não implementada.`,
+    });
   };
 
   const handleDelete = (id: string) => {
     console.log('Excluir item:', id);
     setItems(prevItems => prevItems.filter(item => item.id !== id));
+    toast({
+      title: "Item Excluído (Simulado)",
+      description: `Item com ID: ${id} foi removido da lista.`,
+      variant: "default", 
+    });
   };
 
   const getExpirationStatus = (expirationDate?: string): { text: string; variant: 'default' | 'secondary' | 'destructive'; icon?: React.ReactNode } => {
