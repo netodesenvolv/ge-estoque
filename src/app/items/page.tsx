@@ -9,14 +9,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Package, PlusCircle, Edit3, Trash2, Search, CalendarClock } from 'lucide-react';
 import type { Item } from '@/types';
-// import { mockItems } from '@/data/mockData'; // Não usaremos mais mockItems
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { format, parseISO, isBefore, differenceInDays, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { firestore } from '@/lib/firebase'; // Importar firestore
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore'; // Importar funções do Firestore
+import { firestore } from '@/lib/firebase';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
+import { useRouter } from 'next/navigation'; // Importar useRouter
 
 const NEARING_EXPIRATION_DAYS = 30;
 
@@ -24,10 +24,10 @@ export default function ItemsPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const { toast } = useToast();
+  const router = useRouter(); // Inicializar useRouter
 
   useEffect(() => {
     const itemsCollectionRef = collection(firestore, "items");
-    // Ordenar por nome para consistência, você pode mudar ou adicionar mais critérios
     const q = query(itemsCollectionRef, orderBy("name", "asc"));
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -45,25 +45,20 @@ export default function ItemsPage() {
       });
     });
 
-    return () => unsubscribe(); // Limpar o listener ao desmontar o componente
+    return () => unsubscribe();
   }, [toast]);
 
   const filteredItems = items.filter(item =>
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (item.code && item.code.toLowerCase().includes(searchTerm.toLowerCase())) || // Adicionado verificação para item.code
-    (item.category && item.category.toLowerCase().includes(searchTerm.toLowerCase())) // Adicionado verificação para item.category
+    (item.code && item.code.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (item.category && item.category.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const handleEdit = (id: string) => {
-    console.log('Editar item:', id);
-    toast({
-      title: "Ação Simulada",
-      description: `Editar item com ID: ${id}. Funcionalidade de edição completa não implementada.`,
-    });
+    router.push(`/items/${id}/edit`);
   };
 
   const handleDelete = async (id: string) => {
-    console.log('Excluir item:', id);
     const itemDocRef = doc(firestore, "items", id);
     try {
       await deleteDoc(itemDocRef);
@@ -72,7 +67,6 @@ export default function ItemsPage() {
         description: `Item foi removido do banco de dados.`,
         variant: "default", 
       });
-      // A UI será atualizada automaticamente pelo listener onSnapshot
     } catch (error) {
       console.error("Erro ao excluir item: ", error);
       toast({
@@ -92,7 +86,7 @@ export default function ItemsPage() {
         return { text: 'Inválida', variant: 'destructive' };
     }
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // Compare dates only
+    today.setHours(0, 0, 0, 0);
 
     if (isBefore(expDate, today)) {
       return { text: `Vencido (${format(expDate, 'dd/MM/yy', { locale: ptBR })})`, variant: 'destructive', icon: <CalendarClock className="h-3 w-3 mr-1 inline-block" /> };

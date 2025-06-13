@@ -6,14 +6,14 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import type { Item } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
-import { firestore } from '@/lib/firebase'; // Importar firestore
-import { collection, addDoc } from 'firebase/firestore'; // Importar funções do Firestore
+import { firestore } from '@/lib/firebase';
+import { collection, addDoc, doc, setDoc } from 'firebase/firestore'; // Importar doc e setDoc para atualização
+import { useEffect } from 'react';
 
 const itemSchema = z.object({
   name: z.string().min(2, { message: "O nome deve ter pelo menos 2 caracteres." }),
@@ -23,23 +23,29 @@ const itemSchema = z.object({
   minQuantity: z.coerce.number().min(0, { message: "A quantidade mínima não pode ser negativa." }),
   currentQuantityCentral: z.coerce.number().min(0, { message: "A quantidade atual não pode ser negativa." }),
   supplier: z.string().optional(),
-  expirationDate: z.string().refine((val) => val === "" || !isNaN(Date.parse(val)), { message: "Data de validade inválida. Use o formato AAAA-MM-DD ou deixe em branco." }).optional(),
+  expirationDate: z.string().refine((val) => val === "" || !isNaN(Date.parse(val)) || val === null, { message: "Data de validade inválida. Use o formato AAAA-MM-DD ou deixe em branco." }).optional().nullable(),
 });
 
-type ItemFormData = z.infer<typeof itemSchema>;
+export type ItemFormData = z.infer<typeof itemSchema>;
 
 interface ItemFormProps {
-  initialData?: Item; // Para futura edição
+  initialData?: Partial<ItemFormData>; // Para edição, pode vir com dados parciais ou completos
+  itemId?: string; // ID do item para modo de edição
   onSubmitSuccess?: (data: Item) => void;
 }
 
-export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps) {
+export default function ItemForm({ initialData, itemId, onSubmitSuccess }: ItemFormProps) {
   const router = useRouter();
   const { toast } = useToast();
 
   const form = useForm<ItemFormData>({
     resolver: zodResolver(itemSchema),
-    defaultValues: initialData || {
+    defaultValues: initialData ? {
+        ...initialData,
+        minQuantity: initialData.minQuantity ?? 0,
+        currentQuantityCentral: initialData.currentQuantityCentral ?? 0,
+        expirationDate: initialData.expirationDate === '' ? null : initialData.expirationDate,
+    } : {
       name: '',
       code: '',
       category: '',
@@ -47,31 +53,59 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
       minQuantity: 0,
       currentQuantityCentral: 0,
       supplier: '',
-      expirationDate: '',
+      expirationDate: null,
     },
   });
+
+  useEffect(() => {
+    if (initialData) {
+      form.reset({
+        ...initialData,
+        minQuantity: initialData.minQuantity ?? 0,
+        currentQuantityCentral: initialData.currentQuantityCentral ?? 0,
+        expirationDate: initialData.expirationDate === '' ? null : initialData.expirationDate,
+      });
+    }
+  }, [initialData, form]);
 
   const onSubmit = async (data: ItemFormData) => {
     const itemDataToSave = {
       ...data,
-      expirationDate: data.expirationDate || null, // Firestore lida melhor com null
+      expirationDate: data.expirationDate || null,
     };
 
     try {
-      const itemsCollectionRef = collection(firestore, "items");
-      await addDoc(itemsCollectionRef, itemDataToSave);
+      if (itemId) {
+        // Modo de Edição
+        const itemDocRef = doc(firestore, "items", itemId);
+        await setDoc(itemDocRef, itemDataToSave, { merge: true }); // Usar setDoc com merge para atualizar ou criar se não existir (embora devêssemos ter certeza que existe)
+        toast({
+          title: "Item Atualizado",
+          description: `${data.name} foi atualizado com sucesso.`,
+          variant: "default",
+        });
+      } else {
+        // Modo de Adição
+        const itemsCollectionRef = collection(firestore, "items");
+        await addDoc(itemsCollectionRef, itemDataToSave);
+        toast({
+          title: "Item Adicionado",
+          description: `${data.name} foi adicionado com sucesso ao banco de dados.`,
+          variant: "default",
+        });
+      }
       
-      toast({
-        title: "Item Adicionado",
-        description: `${data.name} foi adicionado com sucesso ao banco de dados.`,
-        variant: "default",
-      });
-      router.push('/items'); // Redireciona para a página de listagem
+      if (onSubmitSuccess) {
+        // @ts-ignore // O ID será gerado pelo Firestore ou já existe
+        onSubmitSuccess({ ...itemDataToSave, id: itemId || 'new_id_placeholder' });
+      } else {
+        router.push('/items'); // Redireciona para a página de listagem
+      }
     } catch (error) {
-      console.error("Erro ao adicionar item: ", error);
+      console.error("Erro ao salvar item: ", error);
       toast({
-        title: "Erro ao Adicionar Item",
-        description: "Não foi possível adicionar o item. Verifique o console para mais detalhes.",
+        title: `Erro ao ${itemId ? 'Atualizar' : 'Adicionar'} Item`,
+        description: `Não foi possível ${itemId ? 'atualizar' : 'adicionar'} o item. Verifique o console para mais detalhes.`,
         variant: "destructive",
       });
     }
@@ -80,7 +114,7 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
   return (
     <Card className="max-w-2xl mx-auto shadow-lg">
       <CardHeader>
-        <CardTitle className="font-headline">{initialData ? 'Editar Item' : 'Adicionar Novo Item'}</CardTitle>
+        <CardTitle className="font-headline">{itemId ? 'Editar Item' : 'Adicionar Novo Item'}</CardTitle>
       </CardHeader>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -147,7 +181,7 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                   <FormItem>
                     <FormLabel>Fornecedor (Opcional)</FormLabel>
                     <FormControl>
-                      <Input placeholder="ex: Pharma Inc." {...field} />
+                      <Input placeholder="ex: Pharma Inc." {...field} value={field.value ?? ''} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -188,7 +222,7 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
                   <FormItem>
                     <FormLabel>Data de Validade (Opcional)</FormLabel>
                     <FormControl>
-                      <Input type="date" {...field} />
+                      <Input type="date" {...field} value={field.value ?? ''}/>
                     </FormControl>
                     <FormDescription>Formato: AAAA-MM-DD</FormDescription>
                     <FormMessage />
@@ -202,7 +236,7 @@ export default function ItemForm({ initialData, onSubmitSuccess }: ItemFormProps
               Cancelar
             </Button>
             <Button type="submit">
-              {initialData ? 'Salvar Alterações' : 'Adicionar Item'}
+              {itemId ? 'Salvar Alterações' : 'Adicionar Item'}
             </Button>
           </CardFooter>
         </form>
