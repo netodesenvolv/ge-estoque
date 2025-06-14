@@ -9,7 +9,7 @@ import { SidebarProvider, Sidebar, SidebarInset, SidebarTrigger, SidebarHeader, 
 import AppNavigation from '@/components/AppNavigation';
 import AppLogo from '@/components/AppLogo';
 import { Button } from '@/components/ui/button';
-import { UserCircle, LogOut } from 'lucide-react';
+import { UserCircle, LogOut, Loader2 } from 'lucide-react';
 
 // Extracted UI component for authenticated users
 function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
@@ -66,18 +66,37 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  if (user && !loading) {
-    return <AuthenticatedLayout>{children}</AuthenticatedLayout>;
-  }
-  
-  // Covered by AuthProvider's loading/redirect logic, but as a fallback:
   if (loading) {
      return (
       <div className="flex h-screen items-center justify-center">
-        <p>Verificando autenticação (LayoutRenderer)...</p>
+        <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
+        <p className="text-lg text-muted-foreground">Carregando aplicação...</p>
       </div>
     );
   }
 
-  return null; // Or some other fallback if needed before redirection from AuthProvider takes effect
+  if (!user && !isAuthRoute) {
+    // O AuthProvider já lida com o redirecionamento.
+    // Podemos mostrar uma tela de "Verificando..." ou um spinner se o redirecionamento demorar.
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
+        <p className="text-lg text-muted-foreground">Verificando autenticação...</p>
+      </div>
+    );
+  }
+  
+  if (user) {
+    return <AuthenticatedLayout>{children}</AuthenticatedLayout>;
+  }
+
+  // Fallback para o caso de rotas de autenticação se o usuário já estiver logado (embora o AuthProvider deva redirecionar)
+  // Ou se algo inesperado acontecer.
+  return (
+    <div className="flex h-screen items-center justify-center">
+       <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
+       <p className="text-lg text-muted-foreground">Redirecionando...</p>
+    </div>
+  );
 }
+

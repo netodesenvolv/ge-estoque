@@ -87,39 +87,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   // Durante SSR e a primeira renderização no cliente (antes de isMounted se tornar true),
   // sempre renderize os children para garantir que a hidratação corresponda.
-  if (!isMounted) {
-    return (
-      <AuthContext.Provider value={authContextValue}>
-        {children}
-      </AuthContext.Provider>
-    );
-  }
-
-  // Lógica de UI condicional APÓS a montagem no cliente
-  if (loading && !isAuthRoute) {
-    // Ainda carregando o estado de autenticação, exibe a UI de carregamento
-    return (
-      <AuthContext.Provider value={authContextValue}>
-        <div className="flex h-screen items-center justify-center">
-          <p>Carregando aplicação...</p>
-        </div>
-      </AuthContext.Provider>
-    );
-  }
-
-  if (!loading && !user && !isAuthRoute) {
-    // Autenticação carregada, sem usuário, não é uma rota de autenticação -> exibe UI de redirecionamento/verificação
-    // O useEffect acima trata do router.push real.
-    return (
-      <AuthContext.Provider value={authContextValue}>
-        <div className="flex h-screen items-center justify-center">
-          <p>Verificando autenticação...</p>
-        </div>
-      </AuthContext.Provider>
-    );
-  }
-
-  // Se for uma rota de autenticação, ou se o usuário estiver carregado e não estiver carregando: renderize os children
+  // A lógica de exibir "Carregando..." ou "Verificando..." será gerenciada pelo LayoutRenderer
+  // ou por componentes filhos que consomem o contexto.
   return (
     <AuthContext.Provider value={authContextValue}>
       {children}
@@ -134,3 +103,4 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
+
