@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button'; // Importar buttonVariants
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -37,10 +37,10 @@ export default function UsersPage() {
       setUserProfiles(profilesData);
       setIsLoading(false);
     }, (error) => {
-      console.error("Erro ao buscar perfis de usuários: ", error);
+      console.error("Firestore onSnapshot error in UsersPage:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2)); // Log mais detalhado
       toast({
         title: "Erro ao Carregar Usuários",
-        description: "Não foi possível carregar os perfis de usuários do banco de dados.",
+        description: `Não foi possível carregar os perfis: ${error.message}`, // Mensagem de erro mais específica
         variant: "destructive",
       });
       setIsLoading(false);
@@ -192,3 +192,4 @@ export default function UsersPage() {
     </div>
   );
 }
+
