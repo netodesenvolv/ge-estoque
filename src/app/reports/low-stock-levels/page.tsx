@@ -9,27 +9,40 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel } from '@/components/ui/form';
-import { ListChecks, Filter, Printer, AlertTriangle, CheckCircle, Download, Package } from 'lucide-react';
-import type { Item, ServedUnit, StockItemConfig, Hospital } from '@/types';
-import { mockItems, mockServedUnits, mockStockConfigs, mockHospitals } from '@/data/mockData';
+import { ListChecks, Filter, Printer, Download, Package as PackageIcon, Loader2, CheckCircle } from 'lucide-react';
+import type { Item } from '@/types';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Badge } from '@/components/ui/badge';
+import { firestore } from '@/lib/firebase';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { useToast } from '@/hooks/use-toast';
+
+// Interface para configurações de estoque do Firestore
+interface FirestoreStockConfig {
+  id?: string; // ID do documento do Firestore (itemId_central)
+  itemId: string;
+  strategicStockLevel: number;
+  minQuantity: number;
+  // unitId e hospitalId não são usados neste relatório, pois focamos no central
+}
+
+// Interface para exibição no relatório
+interface LowStockReportItem extends Item {
+  strategicStockLevel?: number;
+  effectiveMinQuantity?: number; // minQuantity da config ou do item
+  statusLabel: 'Ótimo' | 'Baixo' | 'Alerta' | 'Não Configurado';
+  statusVariant: 'default' | 'secondary' | 'destructive' | 'outline';
+}
+
 
 const reportFiltersSchema = z.object({
-  hospitalId: z.string().optional(),
-  unitId: z.string().optional(),
-  itemId: z.string().optional(),
-  status: z.enum(['all', 'low', 'alert']).optional().default('all'),
+  status: z.enum(['all', 'low', 'alert', 'not_configured']).optional().default('all'),
+  itemId: z.string().optional().default('all'),
 });
 
 type ReportFiltersFormData = z.infer<typeof reportFiltersSchema>;
 
-interface DisplayStockItem extends StockItemConfig {
-  itemCode?: string;
-  statusLabel: 'Ótimo' | 'Baixo' | 'Alerta';
-  statusVariant: 'default' | 'secondary' | 'destructive';
-}
 
 const escapeCsvValue = (value: any): string => {
   if (value === null || value === undefined) {
@@ -42,21 +55,19 @@ const escapeCsvValue = (value: any): string => {
   return stringValue;
 };
 
-const convertToCSV = (data: DisplayStockItem[]): string => {
+const convertToCSV = (data: LowStockReportItem[]): string => {
   const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
   const headers = [
-    { key: 'itemName', label: 'Item' },
-    { key: 'itemCode', label: 'Código' },
-    { key: 'unitName', label: 'Localização' },
-    { key: 'hospitalName', label: 'Hospital' },
-    { key: 'currentQuantity', label: 'Atual' },
-    { key: 'minQuantity', label: 'Mínimo' },
-    { key: 'strategicStockLevel', label: 'Estratégico' },
+    { key: 'name', label: 'Item' },
+    { key: 'code', label: 'Código' },
+    { key: 'currentQuantityCentral', label: 'Qtde. Atual (Central)' },
+    { key: 'effectiveMinQuantity', label: 'Mínimo Configurado' },
+    { key: 'strategicStockLevel', label: 'Estratégico Configurado' },
     { key: 'statusLabel', label: 'Status' },
   ];
   const headerRow = headers.map(h => h.label).join(',');
   const dataRows = data.map(row =>
-    headers.map(header => escapeCsvValue(row[header.key as keyof DisplayStockItem])).join(',')
+    headers.map(header => escapeCsvValue(row[header.key as keyof LowStockReportItem])).join(',')
   );
   return BOM + [headerRow, ...dataRows].join('\n');
 };
@@ -77,148 +88,132 @@ const downloadCSV = (csvString: string, filename: string) => {
 };
 
 export default function LowStockLevelsReportPage() {
-  const [allItems, setAllItems] = useState<Item[]>([]);
-  const [allServedUnits, setAllServedUnits] = useState<ServedUnit[]>([]);
-  const [allHospitals, setAllHospitals] = useState<Hospital[]>([]);
-  const [stockData, setStockData] = useState<DisplayStockItem[]>([]);
-  const [reportData, setReportData] = useState<DisplayStockItem[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [firestoreItems, setFirestoreItems] = useState<Item[]>([]);
+  const [firestoreStockConfigs, setFirestoreStockConfigs] = useState<FirestoreStockConfig[]>([]);
+  const [processedReportItems, setProcessedReportItems] = useState<LowStockReportItem[]>([]);
+  const [reportData, setReportData] = useState<LowStockReportItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const { toast } = useToast();
 
   const form = useForm<ReportFiltersFormData>({
     resolver: zodResolver(reportFiltersSchema),
     defaultValues: {
-      hospitalId: 'all',
-      unitId: 'all',
-      itemId: 'all',
       status: 'all',
+      itemId: 'all',
     },
   });
-  
-  const selectedHospitalId = form.watch('hospitalId');
 
   useEffect(() => {
-    setAllItems(mockItems);
-    const enrichedServedUnits = mockServedUnits.map(su => ({
-        ...su,
-        hospitalName: mockHospitals.find(h => h.id === su.hospitalId)?.name || 'N/A'
-    }));
-    setAllServedUnits(enrichedServedUnits);
-    setAllHospitals(mockHospitals);
+    setIsLoading(true);
+    let itemsLoaded = false;
+    let configsLoaded = false;
 
-    const getUnitDetails = (unitId?: string) => {
-        if (!unitId) return { unitName: 'Armazém Central', hospitalId: undefined, hospitalName: undefined };
-        const unit = enrichedServedUnits.find(u => u.id === unitId);
-        if (!unit) return { unitName: 'Unidade Desconhecida', hospitalId: undefined, hospitalName: undefined };
-        return { 
-          unitName: unit.name, 
-          hospitalId: unit.hospitalId, 
-          hospitalName: unit.hospitalName 
-        };
+    const checkDoneLoading = () => {
+      if (itemsLoaded && configsLoaded) {
+        // O setIsLoading(false) será chamado no useEffect que processa os dados
+      }
     };
 
-    const centralStock: DisplayStockItem[] = mockItems.map(item => {
-      const config = mockStockConfigs.find(sc => sc.itemId === item.id && !sc.unitId);
-      const currentQuantity = item.currentQuantityCentral;
-      let statusLabel: DisplayStockItem['statusLabel'] = 'Ótimo';
-      let statusVariant: DisplayStockItem['statusVariant'] = 'default';
-      if (config) {
-        if (config.minQuantity > 0 && currentQuantity < config.minQuantity) {
-            statusLabel = 'Baixo'; statusVariant = 'secondary';
-        } else if (currentQuantity < config.strategicStockLevel) {
-            statusLabel = 'Alerta'; statusVariant = 'destructive';
-        }
-      }
-      return {
-        id: `central-${item.id}`,
-        itemId: item.id,
-        itemName: item.name,
-        itemCode: item.code,
-        ...getUnitDetails(undefined),
-        strategicStockLevel: config?.strategicStockLevel || 0,
-        minQuantity: config?.minQuantity || item.minQuantity,
-        currentQuantity: currentQuantity,
-        statusLabel,
-        statusVariant,
-      };
+    const itemsQuery = query(collection(firestore, "items"), orderBy("name", "asc"));
+    const unsubscribeItems = onSnapshot(itemsQuery, (snapshot) => {
+      setFirestoreItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item)));
+      itemsLoaded = true;
+      checkDoneLoading();
+    }, (error) => {
+      console.error("Erro ao buscar itens:", error);
+      toast({ title: "Erro ao carregar itens", variant: "destructive" });
+      itemsLoaded = true;
+      checkDoneLoading();
     });
 
-    const unitStock: DisplayStockItem[] = mockStockConfigs
-      .filter(config => config.unitId)
-      .map(config => {
-        const itemDetail = mockItems.find(i => i.id === config.itemId);
-        let statusLabel: DisplayStockItem['statusLabel'] = 'Ótimo';
-        let statusVariant: DisplayStockItem['statusVariant'] = 'default';
-        const unitDetails = getUnitDetails(config.unitId);
-        if (typeof config.currentQuantity === 'number') {
-           if (config.minQuantity > 0 && config.currentQuantity < config.minQuantity) {
-             statusLabel = 'Baixo'; statusVariant = 'secondary';
-           } else if (config.currentQuantity < config.strategicStockLevel) {
-             statusLabel = 'Alerta'; statusVariant = 'destructive';
-           }
+    const configsQuery = query(collection(firestore, "stockConfigs"));
+    const unsubscribeConfigs = onSnapshot(configsQuery, (snapshot) => {
+      // Filtramos aqui para pegar apenas configs do armazém central ou configs que tenham itemId
+      // Na verdade, a lógica de combinação usará todas as configs e fará a correspondência
+      setFirestoreStockConfigs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig)));
+      configsLoaded = true;
+      checkDoneLoading();
+    }, (error) => {
+      console.error("Erro ao buscar configs de estoque:", error);
+      toast({ title: "Erro ao carregar configs de estoque", variant: "destructive" });
+      configsLoaded = true;
+      checkDoneLoading();
+    });
+
+    return () => {
+      unsubscribeItems();
+      unsubscribeConfigs();
+    };
+  }, [toast]);
+
+  useEffect(() => {
+    if (firestoreItems.length > 0 || (firestoreItems.length === 0 && firestoreStockConfigs.length >=0 && !isLoading)) {
+      setIsLoading(true); // Para fase de processamento
+      const processed: LowStockReportItem[] = firestoreItems.map(item => {
+        const centralConfigId = `${item.id}_central`;
+        const config = firestoreStockConfigs.find(sc => sc.id === centralConfigId);
+
+        let statusLabel: LowStockReportItem['statusLabel'] = 'Não Configurado';
+        let statusVariant: LowStockReportItem['statusVariant'] = 'outline';
+        const currentQuantity = item.currentQuantityCentral;
+        const strategicLvl = config?.strategicStockLevel;
+        const minQtyConfig = config?.minQuantity;
+        // effectiveMinQuantity usa o minQuantity da config se existir, senão o minQuantity do item (do catálogo)
+        const effectiveMinQuantity = minQtyConfig ?? item.minQuantity;
+
+
+        if (config) { // Se existe uma configuração para o armazém central
+          statusLabel = 'Ótimo'; // Default
+          statusVariant = 'default';
+          if (currentQuantity < effectiveMinQuantity) {
+            statusLabel = 'Baixo'; // Abaixo do mínimo (configurado ou do item)
+            statusVariant = 'secondary';
+          } else if (strategicLvl !== undefined && currentQuantity < strategicLvl) {
+            statusLabel = 'Alerta'; // Abaixo do estratégico, mas acima ou igual ao mínimo
+            statusVariant = 'destructive';
+          }
         }
+
         return {
-          ...config,
-          itemName: config.itemName || itemDetail?.name,
-          itemCode: itemDetail?.code,
-          ...unitDetails,
+          ...item,
+          strategicStockLevel: strategicLvl,
+          effectiveMinQuantity: effectiveMinQuantity,
           statusLabel,
           statusVariant,
         };
       });
-    
-    const combinedStock = [...centralStock, ...unitStock].sort((a, b) => 
-      (a.hospitalName || '').localeCompare(b.hospitalName || '') || 
-      a.unitName!.localeCompare(b.unitName!) ||
-      (a.itemName || '').localeCompare(b.itemName || '')
-    );
-    setStockData(combinedStock);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+      setProcessedReportItems(processed.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+      setIsLoading(false);
+    } else if (!isLoading && firestoreItems.length === 0) {
+        // Se não há itens, não há o que processar.
+        setProcessedReportItems([]);
+        setIsLoading(false);
+    }
 
+  }, [firestoreItems, firestoreStockConfigs, isLoading]);
+
+  // Efeito para atualizar o relatório quando os filtros ou os itens processados mudam
   useEffect(() => {
-    if (stockData.length > 0) {
+    if (!isLoading) {
       onSubmit(form.getValues());
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stockData, form.watch('hospitalId'), form.watch('unitId'), form.watch('status'), form.watch('itemId')]);
+  }, [processedReportItems, form.watch('status'), form.watch('itemId'), isLoading]);
 
-
-  useEffect(() => {
-    form.setValue('unitId', 'all');
-  }, [selectedHospitalId, form]);
-
-  const availableUnits = selectedHospitalId && selectedHospitalId !== 'all'
-    ? allServedUnits.filter(unit => unit.hospitalId === selectedHospitalId)
-    : allServedUnits;
 
   const onSubmit = (filters: ReportFiltersFormData) => {
-    setIsGenerating(true);
-    console.log("Gerando relatório de níveis de estoque com filtros:", filters);
+    console.log("Gerando relatório de níveis de estoque baixos/alerta com filtros:", filters);
+    if (isLoading) return; // Não gerar se ainda estiver carregando dados primários
 
-    const filtered = stockData.filter(item => {
-      const hospitalMatch = filters.hospitalId === 'all' || !filters.hospitalId || 
-                           (filters.hospitalId === 'central' && !item.unitId) || 
-                           item.hospitalId === filters.hospitalId;
-      
-      const unitMatch = filters.unitId === 'all' || !filters.unitId || 
-                       (filters.hospitalId === 'central') || 
-                       item.unitId === filters.unitId;
-
-      const itemMatch = filters.itemId === 'all' || !filters.itemId || item.itemId === filters.itemId;
-
-      const statusMatch = filters.status === 'all' || 
+    const filtered = processedReportItems.filter(item => {
+      const itemMatch = filters.itemId === 'all' || !filters.itemId || item.id === filters.itemId;
+      const statusMatch = filters.status === 'all' ||
                          (filters.status === 'low' && item.statusLabel === 'Baixo') ||
-                         (filters.status === 'alert' && item.statusLabel === 'Alerta');
-      
-      if (filters.hospitalId !== 'central' && filters.hospitalId !== 'all' && !item.unitId) {
-        return false;
-      }
-
-      return hospitalMatch && unitMatch && itemMatch && statusMatch;
+                         (filters.status === 'alert' && item.statusLabel === 'Alerta') ||
+                         (filters.status === 'not_configured' && item.statusLabel === 'Não Configurado');
+      return itemMatch && statusMatch;
     });
-    
     setReportData(filtered);
-    setIsGenerating(false);
   };
   
   const handlePrint = () => {
@@ -228,14 +223,14 @@ export default function LowStockLevelsReportPage() {
   const handleExportCSV = () => {
     if (reportData.length === 0) return;
     const csvString = convertToCSV(reportData);
-    downloadCSV(csvString, 'relatorio_niveis_estoque.csv');
+    downloadCSV(csvString, 'relatorio_niveis_estoque_baixos.csv');
   };
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Relatório de Níveis de Estoque Baixos/Alerta"
-        description="Identifique itens que necessitam de atenção devido a níveis de estoque críticos."
+        title="Relatório de Níveis de Estoque (Armazém Central)"
+        description="Identifique itens no Armazém Central que necessitam de atenção devido a níveis de estoque baixos ou em alerta, ou que não estão configurados."
         icon={ListChecks}
         actions={
           <div className="flex gap-2">
@@ -254,51 +249,18 @@ export default function LowStockLevelsReportPage() {
         </CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
-            <CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <FormField
-                control={form.control}
-                name="hospitalId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Hospital/Local</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl><SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger></FormControl>
-                      <SelectContent>
-                        <SelectItem value="all">Todos Hospitais e Armazém</SelectItem>
-                        <SelectItem value="central">Apenas Armazém Central</SelectItem>
-                        {allHospitals.map(h => <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="unitId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Unidade Servida</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || 'all'} disabled={selectedHospitalId === 'central'}>
-                      <FormControl><SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger></FormControl>
-                      <SelectContent>
-                        <SelectItem value="all">Todas as Unidades</SelectItem>
-                        {availableUnits.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </FormItem>
-                )}
-              />
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
                 name="itemId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="flex items-center gap-1"><Package className="h-4 w-4 text-muted-foreground" />Item</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormLabel className="flex items-center gap-1"><PackageIcon className="h-4 w-4 text-muted-foreground" />Item</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || 'all'}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todos os Itens" /></SelectTrigger></FormControl>
                       <SelectContent>
                         <SelectItem value="all">Todos os Itens</SelectItem>
-                        {allItems.map(item => <SelectItem key={item.id} value={item.id}>{item.name} ({item.code})</SelectItem>)}
+                        {firestoreItems.map(item => <SelectItem key={item.id} value={item.id}>{item.name} ({item.code})</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -309,13 +271,14 @@ export default function LowStockLevelsReportPage() {
                 name="status"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Status do Estoque</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormLabel>Status do Estoque (Armazém Central)</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || 'all'}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger></FormControl>
                       <SelectContent>
-                        <SelectItem value="all">Todos (Baixo e Alerta)</SelectItem>
+                        <SelectItem value="all">Todos os Status</SelectItem>
                         <SelectItem value="low">Apenas Baixo (Abaixo do Mínimo)</SelectItem>
                         <SelectItem value="alert">Apenas Alerta (Abaixo do Estratégico)</SelectItem>
+                        <SelectItem value="not_configured">Apenas Não Configurado</SelectItem>
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -323,18 +286,23 @@ export default function LowStockLevelsReportPage() {
               />
             </CardContent>
             <CardFooter>
-              <Button type="submit" disabled={isGenerating}>
-                {isGenerating ? "Atualizando..." : "Atualizar Relatório"}
+              <Button type="submit" disabled={isLoading}>
+                {isLoading ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Carregando...</>) : "Atualizar Relatório"}
               </Button>
             </CardFooter>
           </form>
         </Form>
       </Card>
       
-      {reportData.length > 0 && (
+      {isLoading && reportData.length === 0 ? (
+         <div className="flex items-center justify-center h-64">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="ml-3 text-muted-foreground">Carregando dados do relatório...</p>
+        </div>
+      ) : reportData.length > 0 ? (
         <Card className="shadow-lg mt-6 printable-content">
           <CardHeader>
-            <CardTitle className="font-headline">Itens com Nível de Estoque Baixo ou em Alerta</CardTitle>
+            <CardTitle className="font-headline">Itens com Nível de Estoque Baixo, em Alerta ou Não Configurado (Armazém Central)</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
@@ -342,9 +310,7 @@ export default function LowStockLevelsReportPage() {
                 <TableRow>
                   <TableHead>Item</TableHead>
                   <TableHead>Código</TableHead>
-                  <TableHead>Localização</TableHead>
-                  <TableHead>Hospital</TableHead>
-                  <TableHead className="text-right">Atual</TableHead>
+                  <TableHead className="text-right">Qtde. Atual</TableHead>
                   <TableHead className="text-right">Mínimo</TableHead>
                   <TableHead className="text-right">Estratégico</TableHead>
                   <TableHead className="text-center">Status</TableHead>
@@ -353,13 +319,11 @@ export default function LowStockLevelsReportPage() {
               <TableBody>
                 {reportData.map((item) => (
                   <TableRow key={item.id} className={item.statusVariant === 'destructive' ? 'bg-red-500/5' : item.statusVariant === 'secondary' ? 'bg-yellow-500/5' : ''}>
-                    <TableCell className="font-medium">{item.itemName}</TableCell>
-                    <TableCell>{item.itemCode}</TableCell>
-                    <TableCell>{item.unitName}</TableCell>
-                    <TableCell>{item.hospitalName || '-'}</TableCell>
-                    <TableCell className="text-right">{item.currentQuantity}</TableCell>
-                    <TableCell className="text-right">{item.minQuantity}</TableCell>
-                    <TableCell className="text-right">{item.strategicStockLevel}</TableCell>
+                    <TableCell className="font-medium">{item.name}</TableCell>
+                    <TableCell>{item.code}</TableCell>
+                    <TableCell className="text-right">{item.currentQuantityCentral}</TableCell>
+                    <TableCell className="text-right">{item.effectiveMinQuantity ?? 'N/A'}</TableCell>
+                    <TableCell className="text-right">{item.strategicStockLevel ?? 'N/A'}</TableCell>
                     <TableCell className="text-center">
                       <Badge variant={item.statusVariant}>{item.statusLabel}</Badge>
                     </TableCell>
@@ -369,13 +333,12 @@ export default function LowStockLevelsReportPage() {
             </Table>
           </CardContent>
         </Card>
-      )}
-      {!isGenerating && form.formState.isSubmitted && reportData.length === 0 && (
+      ) : (
          <Card className="mt-6 shadow-lg">
           <CardContent className="pt-6 flex flex-col items-center justify-center text-center">
             <CheckCircle className="h-12 w-12 text-green-500 mb-3" />
-            <p className="text-lg font-semibold">Nenhum item em alerta ou com estoque baixo encontrado.</p>
-            <p className="text-sm text-muted-foreground">Todos os níveis de estoque estão adequados para os filtros selecionados.</p>
+            <p className="text-lg font-semibold">Nenhum item em alerta, baixo ou não configurado encontrado.</p>
+            <p className="text-sm text-muted-foreground">Todos os níveis de estoque no Armazém Central estão adequados para os filtros selecionados, ou não há itens para exibir.</p>
           </CardContent>
         </Card>
       )}
