@@ -139,7 +139,7 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
             processedData.hospitalId && processedData.unitId) {
           unitConfigDocId = `${processedData.itemId}_${processedData.unitId}`;
           unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
-          unitConfigSnap = await transaction.get(unitConfigDocRef); // Read unit config
+          unitConfigSnap = await transaction.get(unitConfigDocRef); 
         }
         
         // PREPARE WRITES
@@ -190,7 +190,7 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
 
         const movementLog: Omit<StockMovement, 'id'> = {
           itemId: processedData.itemId,
-          itemName: itemDetailsForLog?.name || 'Desconhecido',
+          itemName: itemDetailsForLog?.name || null,
           type: processedData.type,
           quantity: processedData.quantity,
           date: processedData.date,
@@ -517,20 +517,26 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
           const { data: rows, errors: parseErrors } = results;
 
           if (parseErrors.length > 0) {
-             const errorMessages = parseErrors.map((err: ParseError) => `Linha ${err.row + 2}: ${err.message} (Código: ${err.code})`).join('\n');
+            console.error("Erros de parsing do CSV (objetos completos):", JSON.stringify(parseErrors, null, 2));
+            const errorMessages = parseErrors.map((err: Papa.ParseError, index: number) => {
+              const rowInfo = typeof err.row === 'number' ? `Linha ${err.row + 2}: ` : `Erro genérico ${index + 1}: `;
+              const message = err.message || "Mensagem de erro não disponível";
+              const type = err.type ? ` (Tipo: ${err.type}` : "";
+              const code = err.code ? `, Código: ${err.code})` : (type ? ")" : "");
+              return `${rowInfo}${message}${type}${code}`;
+            });
             toast({ 
                 title: "Erro ao Processar CSV", 
                 description: (
                     <div className="max-h-60 overflow-y-auto text-xs">
                         <p className="font-semibold mb-1">Houve {parseErrors.length} erro(s) ao ler o arquivo:</p>
-                        {parseErrors.map((err, i) => <p key={i}>Linha {err.row + 2}: {err.message} (Tipo: {err.type}, Código: {err.code})</p>)}
-                        <p className="mt-2">Verifique o console para mais detalhes técnicos.</p>
+                        {errorMessages.map((msg, i) => <p key={i}>{msg}</p>)}
+                        <p className="mt-2">Verifique o console para mais detalhes técnicos e o formato JSON dos erros.</p>
                     </div>
                 ), 
                 variant: "destructive",
-                duration: 15000 
+                duration: 20000 
             });
-            console.error("Erros de parsing do CSV:", parseErrors);
             setIsProcessing(false);
             return;
           }
@@ -682,7 +688,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                     
                     const patientDetailsForLog = patientId ? patients.find(p => p.id === patientId) : null;
                     const movementLog: Omit<StockMovement, 'id'> = {
-                        itemId: item.id, itemName: item.name,
+                        itemId: item.id, itemName: item.name || null,
                         type: movementData.type, quantity: movementData.quantity, date: movementData.date,
                         notes: movementData.notes || null,
                         hospitalId: movementData.hospitalId || null,
@@ -720,7 +726,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
               duration: 10000,
             });
           }
-          if (successfulImports === 0 && importErrors.length === 0 && rows.length > 0) { // Nenhuma válida, mas sem erros de parsing
+          if (successfulImports === 0 && importErrors.length === 0 && rows.length > 0) { 
             toast({ title: "Nenhuma Movimentação Válida", description: "Nenhuma movimentação válida encontrada na planilha ou todas falharam na validação inicial.", variant: "default" });
           }
           
@@ -729,14 +735,14 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
           const fileInput = document.getElementById('batch-movements-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
         },
-        error: (err) => { // Erro do PapaParse antes do 'complete'
+        error: (err) => { 
           toast({ title: "Erro Crítico de Leitura do CSV", description: `Não foi possível processar o arquivo CSV: ${err.message}. Verifique o formato do arquivo e o console.`, variant: "destructive" });
           console.error("Erro crítico de parsing PapaParse:", err);
           setIsProcessing(false);
         }
       });
     };
-    reader.readAsText(file, 'UTF-8'); // Especificando UTF-8
+    reader.readAsText(file, 'UTF-8'); 
   };
 
 
