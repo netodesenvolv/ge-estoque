@@ -12,13 +12,13 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
-import { ArrowRightLeft, User } from 'lucide-react';
+import { ArrowRightLeft, User, Loader2 } from 'lucide-react';
 import type { Item, ServedUnit, Hospital, Patient } from '@/types';
-import { mockServedUnits, mockHospitals, mockPatients } from '@/data/mockData'; // Itens serão buscados do Firestore
+import { mockServedUnits, mockHospitals, mockPatients } from '@/data/mockData';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, runTransaction, updateDoc, getDoc } from 'firebase/firestore';
 
 const CENTRAL_WAREHOUSE_EXIT_VALUE = "CENTRAL_WAREHOUSE_DIRECT_EXIT";
 
@@ -35,7 +35,6 @@ const movementSchema = z.object({
   if (data.type === 'consumption' && data.unitId && !data.patientId) {
     // Para consumo em unidade, o paciente pode ser obrigatório dependendo da regra de negócio.
   }
-  // Se é saída ou consumo E um hospital REAL foi selecionado (não baixa direta do armazém) E não há unidade, então é erro.
   if ((data.type === 'exit' || data.type === 'consumption') &&
       data.hospitalId && data.hospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE &&
       !data.unitId) {
@@ -46,14 +45,13 @@ const movementSchema = z.object({
   message: "Para Saída ou Consumo com um Hospital específico selecionado, a Unidade Servida também deve ser selecionada.",
   path: ["unitId"],
 }).refine(data => {
-    // Não pode ter unidade sem hospital (a menos que hospitalId seja CENTRAL_WAREHOUSE_EXIT_VALUE, mas nesse caso unitId deveria ser undefined)
     if((data.type === 'exit' || data.type === 'consumption') && !data.hospitalId && data.unitId && data.hospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE){
-        return false; 
+        return false;
     }
     return true;
 }, {
     message: "A Unidade Servida não pode ser selecionada sem um Hospital.",
-    path: ["hospitalId"], // Ou unitId, dependendo do foco da mensagem
+    path: ["hospitalId"],
 });
 
 
@@ -66,6 +64,7 @@ export default function StockMovementsPage() {
   const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
 
   const form = useForm<MovementFormData>({
@@ -87,7 +86,6 @@ export default function StockMovementsPage() {
   const selectedUnitId = form.watch('unitId');
 
   useEffect(() => {
-    // Buscar Itens
     const itemsCollectionRef = collection(firestore, "items");
     const qItems = query(itemsCollectionRef, orderBy("name", "asc"));
     const unsubscribeItems = onSnapshot(qItems, (querySnapshot) => {
@@ -98,14 +96,12 @@ export default function StockMovementsPage() {
       toast({ title: "Erro ao Carregar Itens", description: "Não foi possível carregar a lista de itens.", variant: "destructive" });
     });
 
-    // Mock data para outras entidades (serão substituídas por chamadas ao Firestore conforme necessário)
-    setServedUnits(mockServedUnits); // Manter mock ou buscar do Firestore se já implementado
-    setHospitals(mockHospitals);     // Manter mock ou buscar do Firestore se já implementado
-    setPatients(mockPatients);       // Manter mock ou buscar do Firestore se já implementado
+    setServedUnits(mockServedUnits);
+    setHospitals(mockHospitals);
+    setPatients(mockPatients);
     
     return () => {
       unsubscribeItems();
-      // Adicionar unsubscribes para outras coleções se forem adicionados listeners
     };
   }, [toast]);
 
@@ -138,45 +134,91 @@ export default function StockMovementsPage() {
   };
 
 
-  const onSubmit = (data: MovementFormData) => {
+  const onSubmit = async (data: MovementFormData) => {
+    setIsSubmitting(true);
     const item = items.find(i => i.id === data.itemId);
     const patient = data.patientId ? patients.find(p => p.id === data.patientId) : null;
     
     let processedData = {...data};
     if (data.hospitalId === CENTRAL_WAREHOUSE_EXIT_VALUE) {
-        processedData.hospitalId = undefined;
+        processedData.hospitalId = undefined; // Clear hospital if it's the direct exit placeholder
     }
 
-    let description = `Movimentação de ${processedData.quantity} unidade(s) do item ${item?.name || processedData.itemId} registrada como ${processedData.type}.`;
+    try {
+      const itemDocRef = doc(firestore, "items", processedData.itemId);
 
-    if (processedData.type !== 'entry') {
-        const hospital = hospitals.find(h => h.id === processedData.hospitalId);
-        const unit = servedUnits.find(u => u.id === processedData.unitId);
-        if (unit && hospital) {
-            description += ` para ${unit.name} (${hospital.name}).`;
-        } else if (processedData.hospitalId === undefined) { 
-            description += ` (Baixa direta do Armazém Central).`;
+      await runTransaction(firestore, async (transaction) => {
+        const itemSnap = await transaction.get(itemDocRef);
+        if (!itemSnap.exists()) {
+          throw new Error("Item não encontrado no banco de dados.");
         }
-    }
-    if (patient) {
-      description += ` Paciente: ${patient.name}.`;
-    }
 
-    console.log('Movimentação de estoque submetida:', processedData);
-    toast({
-      title: "Movimentação de Estoque Registrada",
-      description: description,
-    });
-    form.reset({
-        type: 'entry',
-        quantity: 1,
-        date: new Date().toISOString().split('T')[0],
-        notes: '',
-        itemId: undefined,
-        hospitalId: undefined,
-        unitId: undefined,
-        patientId: undefined,
-    });
+        const currentItemData = itemSnap.data() as Item;
+        let newQuantityCentral = currentItemData.currentQuantityCentral;
+
+        if (processedData.type === 'entry') {
+          newQuantityCentral += processedData.quantity;
+        } else if (processedData.type === 'exit' || processedData.type === 'consumption') {
+          // For now, only handle direct exits/consumptions from Central Warehouse
+          if (!processedData.hospitalId && !processedData.unitId) {
+            if (newQuantityCentral < processedData.quantity) {
+              throw new Error("Estoque insuficiente no Armazém Central para esta operação.");
+            }
+            newQuantityCentral -= processedData.quantity;
+          } else {
+            // Logic for updating unit-specific stock would go here in the future
+            // For now, we assume unit-level consumption/exit doesn't directly debit central stock in this transaction.
+            // Or, if it should, the logic would be more complex, potentially involving StockItemConfig.
+            console.log("Movimentação para unidade/hospital, não alterando estoque central diretamente nesta lógica.");
+          }
+        }
+        transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
+      });
+      
+      // --- Placeholder for saving the movement itself to a 'stockMovements' collection ---
+      // const movementToSave = { ...processedData, itemName: item?.name, patientName: patient?.name };
+      // await addDoc(collection(firestore, "stockMovements"), movementToSave);
+      // --- End Placeholder ---
+
+      let description = `Movimentação de ${processedData.quantity} unidade(s) do item ${item?.name || processedData.itemId} registrada como ${processedData.type}.`;
+      if (processedData.type !== 'entry') {
+          const hospital = hospitals.find(h => h.id === processedData.hospitalId);
+          const unit = servedUnits.find(u => u.id === processedData.unitId);
+          if (unit && hospital) {
+              description += ` para ${unit.name} (${hospital.name}).`;
+          } else if (!processedData.hospitalId) { 
+              description += ` (Baixa direta do Armazém Central).`;
+          }
+      }
+      if (patient) {
+        description += ` Paciente: ${patient.name}.`;
+      }
+
+      toast({
+        title: "Movimentação de Estoque Registrada",
+        description: description,
+      });
+      form.reset({
+          type: 'entry',
+          quantity: 1,
+          date: new Date().toISOString().split('T')[0],
+          notes: '',
+          itemId: undefined,
+          hospitalId: undefined,
+          unitId: undefined,
+          patientId: undefined,
+      });
+
+    } catch (error: any) {
+      console.error('Erro ao registrar movimentação de estoque:', error);
+      toast({
+        title: "Erro ao Registrar Movimentação",
+        description: error.message || "Não foi possível concluir a operação.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -230,7 +272,7 @@ export default function StockMovementsPage() {
                       <FormControl><SelectTrigger><SelectValue placeholder="Selecione um item" /></SelectTrigger></FormControl>
                       <SelectContent>
                         {items.length === 0 && <SelectItem value="loading" disabled>Carregando itens...</SelectItem>}
-                        {items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} ({item.code})</SelectItem>)}
+                        {items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} ({item.code}) - Atual: {item.currentQuantityCentral}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -247,20 +289,18 @@ export default function StockMovementsPage() {
                       <FormItem>
                         <FormLabel>Hospital de Destino/Consumo</FormLabel>
                         <Select
-                            onValueChange={(value) => {
-                                field.onChange(value === CENTRAL_WAREHOUSE_EXIT_VALUE ? undefined : value);
-                            }}
-                            value={field.value ?? undefined} 
+                            onValueChange={field.onChange}
+                            value={field.value ?? CENTRAL_WAREHOUSE_EXIT_VALUE}
                         >
                           <FormControl><SelectTrigger><SelectValue placeholder="Selecione um hospital ou baixa direta" /></SelectTrigger></FormControl>
                           <SelectContent>
-                             {movementType === 'exit' && <SelectItem value={CENTRAL_WAREHOUSE_EXIT_VALUE}>Nenhum (Baixa do Armazém Central)</SelectItem>}
+                             <SelectItem value={CENTRAL_WAREHOUSE_EXIT_VALUE}>Nenhum (Baixa/Consumo do Armazém Central)</SelectItem>
                             {hospitals.map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
                           </SelectContent>
                         </Select>
                          <FormDescription>
                             {movementType === 'exit' && "Selecione 'Nenhum' para baixa direta do Armazém Central. Para transferir, selecione o hospital."}
-                            {movementType === 'consumption' && "Selecione o hospital onde o item foi consumido."}
+                            {movementType === 'consumption' && "Selecione 'Nenhum' se o consumo for diretamente do Armazém Central, ou o hospital onde o item foi consumido."}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -361,7 +401,10 @@ export default function StockMovementsPage() {
               />
             </CardContent>
             <CardFooter className="flex justify-end">
-              <Button type="submit">Registrar Movimentação</Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Registrar Movimentação
+              </Button>
             </CardFooter>
           </form>
         </Form>
@@ -369,4 +412,3 @@ export default function StockMovementsPage() {
     </div>
   );
 }
-
