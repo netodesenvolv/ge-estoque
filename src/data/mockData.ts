@@ -23,12 +23,7 @@ export const mockServedUnits: ServedUnit[] = [
   { id: 'su7', name: 'Sala de Vacinação', location: 'Piso Superior', hospitalId: 'ubs1', hospitalName: mockHospitals.find(h => h.id === 'ubs1')?.name },
 ];
 
-export const mockPatients: Patient[] = [
-  { id: 'pat1', name: 'João Silva', birthDate: formatISO(subYears(today, 30), { representation: 'date' }), susCardNumber: '700123456789012' },
-  { id: 'pat2', name: 'Maria Oliveira', birthDate: formatISO(subYears(today, 45), { representation: 'date' }), susCardNumber: '700987654321098' },
-  { id: 'pat3', name: 'Carlos Pereira', birthDate: formatISO(subYears(today, 22), { representation: 'date' }), susCardNumber: '700112233445566' },
-  { id: 'pat4', name: 'Ana Costa', birthDate: formatISO(subYears(today, 60), { representation: 'date' }), susCardNumber: '700665544332211' },
-];
+export const mockPatients: Patient[] = [];
 
 const findItemName = (itemId: string) => mockItems.find(i => i.id === itemId)?.name || 'Nome Desconhecido';
 const getUnitDetails = (unitId?: string) => {
@@ -53,3 +48,4 @@ export const mockUsers: User[] = [
   { id: 'user2', name: 'Bob Usuário', email: 'bob@example.com', role: 'user', status: 'active' },
   { id: 'user3', name: 'Charlie Inativo', email: 'charlie@example.com', role: 'user', status: 'inactive' },
 ];
+

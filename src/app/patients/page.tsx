@@ -3,24 +3,47 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Users, PlusCircle, Edit3, Trash2, Search } from 'lucide-react';
 import type { Patient } from '@/types';
-import { mockPatients } from '@/data/mockData';
 import { Input } from '@/components/ui/input';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { firestore } from '@/lib/firebase';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
+import { useToast } from '@/hooks/use-toast';
 
 export default function PatientsPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const router = useRouter();
+  const { toast } = useToast();
 
   useEffect(() => {
-    setPatients(mockPatients);
-  }, []);
+    const patientsCollectionRef = collection(firestore, "patients");
+    const q = query(patientsCollectionRef, orderBy("name", "asc"));
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const patientsData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      } as Patient));
+      setPatients(patientsData);
+    }, (error) => {
+      console.error("Erro ao buscar pacientes: ", error);
+      toast({
+        title: "Erro ao Carregar Pacientes",
+        description: "Não foi possível carregar os pacientes do banco de dados.",
+        variant: "destructive",
+      });
+    });
+
+    return () => unsubscribe();
+  }, [toast]);
 
   const filteredPatients = patients.filter(patient =>
     patient.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -28,15 +51,41 @@ export default function PatientsPage() {
   );
 
   const handleEdit = (id: string) => {
-    console.log('Editar paciente:', id);
-    // Implementar navegação para página de edição, ex: router.push(`/patients/${id}/edit`);
+    router.push(`/patients/${id}/edit`);
   };
 
-  const handleDelete = (id: string) => {
-    console.log('Excluir paciente:', id);
-    setPatients(prevPatients => prevPatients.filter(patient => patient.id !== id));
-    // Adicionar toast de sucesso/erro
+  const handleDelete = async (id: string) => {
+    const patientDocRef = doc(firestore, "patients", id);
+    try {
+      await deleteDoc(patientDocRef);
+      toast({
+        title: "Paciente Excluído",
+        description: "Paciente foi removido do banco de dados.",
+        variant: "default",
+      });
+    } catch (error) {
+      console.error("Erro ao excluir paciente: ", error);
+      toast({
+        title: "Erro ao Excluir Paciente",
+        description: "Não foi possível excluir o paciente. Tente novamente.",
+        variant: "destructive",
+      });
+    }
   };
+
+  const formatBirthDate = (dateString?: string) => {
+    if (!dateString) return 'N/A';
+    try {
+      const date = parseISO(dateString);
+      if (isValid(date)) {
+        return format(date, 'dd/MM/yyyy', { locale: ptBR });
+      }
+      return 'Data Inválida';
+    } catch (error) {
+      return 'Data Inválida';
+    }
+  };
+
 
   return (
     <div>
@@ -83,7 +132,7 @@ export default function PatientsPage() {
                     <TableRow key={patient.id}>
                       <TableCell className="font-medium">{patient.name}</TableCell>
                       <TableCell>
-                        {patient.birthDate ? format(parseISO(patient.birthDate), 'dd/MM/yyyy', { locale: ptBR }) : 'N/A'}
+                        {formatBirthDate(patient.birthDate)}
                       </TableCell>
                       <TableCell>{patient.susCardNumber}</TableCell>
                       <TableCell className="text-center">

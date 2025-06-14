@@ -16,10 +16,13 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar } from '@/components/ui/calendar';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { firestore } from '@/lib/firebase';
+import { collection, addDoc, doc, setDoc } from 'firebase/firestore';
+import { useEffect } from 'react';
 
 const patientSchema = z.object({
   name: z.string().min(3, { message: "O nome do paciente deve ter pelo menos 3 caracteres." }),
-  birthDate: z.date({ required_error: "A data de nascimento é obrigatória." }),
+  birthDate: z.date({ required_error: "A data de nascimento é obrigatória.", invalid_type_error: "Data de nascimento inválida."}),
   susCardNumber: z.string()
     .min(15, { message: "O número do Cartão SUS deve ter 15 dígitos." })
     .max(15, { message: "O número do Cartão SUS deve ter 15 dígitos." })
@@ -30,10 +33,11 @@ type PatientFormData = z.infer<typeof patientSchema>;
 
 interface PatientFormProps {
   initialData?: Patient;
+  patientId?: string; // ID do paciente para modo de edição
   onSubmitSuccess?: (data: Patient) => void;
 }
 
-export default function PatientForm({ initialData, onSubmitSuccess }: PatientFormProps) {
+export default function PatientForm({ initialData, patientId, onSubmitSuccess }: PatientFormProps) {
   const router = useRouter();
   const { toast } = useToast();
 
@@ -41,7 +45,7 @@ export default function PatientForm({ initialData, onSubmitSuccess }: PatientFor
     resolver: zodResolver(patientSchema),
     defaultValues: initialData ? {
       ...initialData,
-      birthDate: initialData.birthDate ? new Date(initialData.birthDate) : undefined,
+      birthDate: initialData.birthDate ? new Date(initialData.birthDate) : new Date(), // Garante que seja um objeto Date
     } : {
       name: '',
       susCardNumber: '',
@@ -49,30 +53,62 @@ export default function PatientForm({ initialData, onSubmitSuccess }: PatientFor
     },
   });
 
-  const onSubmit = (data: PatientFormData) => {
-    const formattedData = {
-      ...data,
-      birthDate: format(data.birthDate, 'yyyy-MM-dd'), // Formata para string ISO
-    };
-    console.log('Formulário de paciente submetido:', formattedData);
-    const patientId = initialData?.id || Math.random().toString(36).substring(2, 15);
-    const submittedPatient: Patient = { ...formattedData, id: patientId };
-
-    if (onSubmitSuccess) {
-      onSubmitSuccess(submittedPatient);
-    } else {
-      toast({
-        title: initialData ? "Paciente Atualizado" : "Paciente Adicionado",
-        description: `${data.name} foi ${initialData ? 'atualizado(a)' : 'adicionado(a)'} com sucesso.`,
+  useEffect(() => {
+    if (initialData) {
+      form.reset({
+        ...initialData,
+        birthDate: initialData.birthDate ? new Date(initialData.birthDate) : new Date(),
       });
-      router.push('/patients');
+    }
+  }, [initialData, form]);
+
+  const onSubmit = async (data: PatientFormData) => {
+    const patientDataToSave = {
+      ...data,
+      birthDate: format(data.birthDate, 'yyyy-MM-dd'), // Formata para string ISO antes de salvar
+    };
+
+    try {
+      if (patientId) {
+        // Modo de Edição
+        const patientDocRef = doc(firestore, "patients", patientId);
+        await setDoc(patientDocRef, patientDataToSave, { merge: true });
+        toast({
+          title: "Paciente Atualizado",
+          description: `${data.name} foi atualizado(a) com sucesso.`,
+          variant: "default",
+        });
+      } else {
+        // Modo de Adição
+        const patientsCollectionRef = collection(firestore, "patients");
+        await addDoc(patientsCollectionRef, patientDataToSave);
+        toast({
+          title: "Paciente Adicionado",
+          description: `${data.name} foi adicionado(a) com sucesso ao banco de dados.`,
+          variant: "default",
+        });
+      }
+      
+      if (onSubmitSuccess) {
+        // @ts-ignore
+        onSubmitSuccess({ ...patientDataToSave, id: patientId || 'new_id_placeholder' });
+      } else {
+        router.push('/patients'); 
+      }
+    } catch (error) {
+      console.error("Erro ao salvar paciente: ", error);
+      toast({
+        title: `Erro ao ${patientId ? 'Atualizar' : 'Adicionar'} Paciente`,
+        description: `Não foi possível ${patientId ? 'atualizar' : 'adicionar'} o paciente. Verifique o console.`,
+        variant: "destructive",
+      });
     }
   };
 
   return (
     <Card className="max-w-lg mx-auto shadow-lg">
       <CardHeader>
-        <CardTitle className="font-headline">{initialData ? 'Editar Paciente' : 'Adicionar Novo Paciente'}</CardTitle>
+        <CardTitle className="font-headline">{patientId ? 'Editar Paciente' : 'Adicionar Novo Paciente'}</CardTitle>
       </CardHeader>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -151,7 +187,7 @@ export default function PatientForm({ initialData, onSubmitSuccess }: PatientFor
               Cancelar
             </Button>
             <Button type="submit">
-              {initialData ? 'Salvar Alterações' : 'Adicionar Paciente'}
+              {patientId ? 'Salvar Alterações' : 'Adicionar Paciente'}
             </Button>
           </CardFooter>
         </form>
