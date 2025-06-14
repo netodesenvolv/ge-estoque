@@ -26,7 +26,7 @@ export interface ServedUnit {
 }
 
 export interface StockItemConfig {
-  id: string;
+  id: string; // ID do documento Firestore (itemId_unitId ou itemId_central) ou ID de exibição
   itemId: string;
   itemName?: string; // For display purposes
   unitId?: string; // Nullable for central warehouse
@@ -35,7 +35,7 @@ export interface StockItemConfig {
   hospitalName?: string; // Only relevant if unitId is present
   strategicStockLevel: number;
   minQuantity: number;
-  currentQuantity?: number;
+  currentQuantity?: number; // Adicionado para rastrear estoque atual na unidade
 }
 
 export type StockMovementType = 'entry' | 'exit' | 'consumption';

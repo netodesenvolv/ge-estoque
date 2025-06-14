@@ -8,20 +8,29 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Settings2, Save, AlertCircle, Loader2 } from 'lucide-react';
-import type { StockItemConfig, Item, ServedUnit, Hospital } from '@/types';
+import type { StockItemConfig as GlobalStockItemConfig, Item, ServedUnit, Hospital } from '@/types'; // Renomeado para evitar conflito
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, writeBatch, getDocs, setDoc, where } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, writeBatch, getDocs } from 'firebase/firestore';
 
 // Interface para o que é armazenado no Firestore para stockConfigs
+// Esta interface define como os dados SÃO ARMAZENADOS no Firestore
 interface FirestoreStockConfig {
   itemId: string;
   unitId?: string;
-  hospitalId?: string;
+  hospitalId?: string; // Adicionado para consistência
   strategicStockLevel: number;
   minQuantity: number;
+  currentQuantity?: number; // Gerenciado por movimentações, não por esta tela
 }
+
+// Interface para o que é USADO NA TELA para exibição e edição.
+// Pode incluir campos adicionais para facilitar a interface.
+interface DisplayStockConfig extends GlobalStockItemConfig { // Herda de GlobalStockItemConfig
+  // currentQuantity é herdado, mas não será editado aqui
+}
+
 
 export default function StockLevelsConfigPage() {
   const [firestoreItems, setFirestoreItems] = useState<Item[]>([]);
@@ -29,78 +38,82 @@ export default function StockLevelsConfigPage() {
   const [allHospitals, setAllHospitals] = useState<Hospital[]>([]);
   const [dbStockConfigs, setDbStockConfigs] = useState<FirestoreStockConfig[]>([]);
   
-  const [stockConfigsForDisplay, setStockConfigsForDisplay] = useState<StockItemConfig[]>([]);
+  // Este estado é para o que é exibido e editado na tela.
+  const [stockConfigsForDisplay, setStockConfigsForDisplay] = useState<DisplayStockConfig[]>([]);
   const [hospitalFilter, setHospitalFilter] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
 
   useEffect(() => {
     setIsLoading(true);
-    const fetchInitialData = async () => {
-      try {
-        // Fetch Items
-        const itemsCollectionRef = collection(firestore, "items");
-        const qItems = query(itemsCollectionRef, orderBy("name", "asc"));
-        const itemsSnapshot = await getDocs(qItems);
-        const itemsData = itemsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item));
-        setFirestoreItems(itemsData);
+    const unsubscribers: (() => void)[] = [];
 
-        // Fetch Served Units
-        const unitsCollectionRef = collection(firestore, "servedUnits");
-        const qUnits = query(unitsCollectionRef, orderBy("name", "asc"));
-        const unitsSnapshot = await getDocs(qUnits);
-        const unitsData = unitsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServedUnit));
-        setAllServedUnits(unitsData);
+    const fetchData = async () => {
+        try {
+            const itemsQuery = query(collection(firestore, "items"), orderBy("name", "asc"));
+            unsubscribers.push(onSnapshot(itemsQuery, snapshot => 
+                setFirestoreItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item)))
+            ));
 
-        // Fetch Hospitals
-        const hospitalsCollectionRef = collection(firestore, "hospitals");
-        const qHospitals = query(hospitalsCollectionRef, orderBy("name", "asc"));
-        const hospitalsSnapshot = await getDocs(qHospitals);
-        const hospitalsData = hospitalsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital));
-        setAllHospitals(hospitalsData);
-        
-        // Fetch existing stock configurations
-        const stockConfigsCollectionRef = collection(firestore, "stockConfigs"); // Nome da coleção alterado
-        const stockConfigsSnapshot = await getDocs(stockConfigsCollectionRef);
-        const dbConfigsData = stockConfigsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig & {id: string}));
-        setDbStockConfigs(dbConfigsData);
+            const unitsQuery = query(collection(firestore, "servedUnits"), orderBy("name", "asc"));
+            unsubscribers.push(onSnapshot(unitsQuery, snapshot => {
+                 const unitsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServedUnit));
+                 setAllServedUnits(unitsData);
+            }));
 
-      } catch (error) {
-        console.error("Erro ao buscar dados iniciais: ", error);
-        toast({
-          title: "Erro ao Carregar Dados",
-          description: "Não foi possível carregar os dados necessários do banco de dados.",
-          variant: "destructive",
-        });
-      } finally {
-        // O setIsLoading(false) será chamado no useEffect que depende desses dados
-      }
+            const hospitalsQuery = query(collection(firestore, "hospitals"), orderBy("name", "asc"));
+            unsubscribers.push(onSnapshot(hospitalsQuery, snapshot => {
+                setAllHospitals(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital)));
+            }));
+            
+            const stockConfigsQuery = query(collection(firestore, "stockConfigs"));
+            unsubscribers.push(onSnapshot(stockConfigsQuery, snapshot => {
+                setDbStockConfigs(snapshot.docs.map(docData => ({ id: docData.id, ...docData.data() } as FirestoreStockConfig & {id: string})));
+            }));
+
+        } catch (error) {
+            console.error("Erro ao buscar dados iniciais: ", error);
+            toast({
+                title: "Erro ao Carregar Dados",
+                description: "Não foi possível carregar os dados necessários.",
+                variant: "destructive",
+            });
+            setIsLoading(false); // Parar o loading em caso de erro na configuração dos listeners
+        }
     };
-    fetchInitialData();
+
+    fetchData();
+
+    return () => unsubscribers.forEach(unsub => unsub());
   }, [toast]);
 
   useEffect(() => {
-    if (firestoreItems.length > 0 || (!isLoading && firestoreItems.length === 0)) { 
-        setIsLoading(true); 
-        const combinedConfigs: StockItemConfig[] = [];
+    // Este useEffect combina os dados quando eles são carregados/atualizados.
+    // Só executa se todos os dados base estiverem disponíveis.
+    if (firestoreItems.length > 0 && allServedUnits.length >= 0 && allHospitals.length >= 0 && dbStockConfigs.length >=0) {
+        setIsLoading(true); // Ativa o loading para a fase de combinação
+        const combinedConfigs: DisplayStockConfig[] = [];
 
         firestoreItems.forEach(item => {
             // Armazém Central
-            const centralDbConfig = dbStockConfigs.find(c => c.itemId === item.id && !c.unitId);
+            const centralDbConfigId = `${item.id}_central`;
+            const centralDbConfig = dbStockConfigs.find(c => c.id === centralDbConfigId);
             combinedConfigs.push({
-                id: `config_central_${item.id}`, 
+                id: centralDbConfigId, 
                 itemId: item.id,
                 itemName: item.name,
                 unitName: 'Armazém Central',
                 strategicStockLevel: centralDbConfig?.strategicStockLevel || 0,
                 minQuantity: centralDbConfig?.minQuantity ?? item.minQuantity, 
+                // currentQuantity não é relevante para configuração aqui
             });
 
             allServedUnits.forEach(unit => {
-                const unitDbConfig = dbStockConfigs.find(c => c.itemId === item.id && c.unitId === unit.id);
+                const unitDbConfigId = `${item.id}_${unit.id}`;
+                const unitDbConfig = dbStockConfigs.find(c => c.id === unitDbConfigId);
                 const hospital = allHospitals.find(h => h.id === unit.hospitalId);
                 combinedConfigs.push({
-                    id: `config_${item.id}_${unit.id}`, 
+                    id: unitDbConfigId, 
                     itemId: item.id,
                     itemName: item.name,
                     unitId: unit.id,
@@ -109,16 +122,21 @@ export default function StockLevelsConfigPage() {
                     hospitalName: hospital?.name || 'N/A',
                     strategicStockLevel: unitDbConfig?.strategicStockLevel || 0,
                     minQuantity: unitDbConfig?.minQuantity || 0,
+                     // currentQuantity não é relevante para configuração aqui
                 });
             });
         });
         setStockConfigsForDisplay(combinedConfigs.sort((a,b) => (a.hospitalName || '').localeCompare(b.hospitalName || '') || (a.unitName || '').localeCompare(b.unitName || '') || (a.itemName || '').localeCompare(b.itemName || '')));
+        setIsLoading(false); // Finaliza o loading após combinar
+    } else if (firestoreItems.length === 0 && !isLoading) {
+        // Caso onde não há itens no catálogo, mas outros dados podem ter chegado.
+        setStockConfigsForDisplay([]); // Limpa para evitar mostrar dados antigos
         setIsLoading(false);
     }
   }, [firestoreItems, allServedUnits, allHospitals, dbStockConfigs, isLoading]);
 
 
-  const handleInputChange = (configId: string, field: keyof StockItemConfig, value: string) => {
+  const handleInputChange = (configId: string, field: keyof DisplayStockConfig, value: string) => {
     setStockConfigsForDisplay(prevConfigs =>
       prevConfigs.map(config =>
         config.id === configId ? { ...config, [field]: Number(value) < 0 ? 0 : Number(value) } : config
@@ -131,21 +149,22 @@ export default function StockLevelsConfigPage() {
     const batch = writeBatch(firestore);
 
     stockConfigsForDisplay.forEach(config => {
-      const firestoreDocId = `${config.itemId}_${config.unitId || 'central'}`;
-      const configDocRef = doc(firestore, "stockConfigs", firestoreDocId); // Nome da coleção alterado
+      // O config.id já é o ID do Firestore (itemId_unitId ou itemId_central)
+      const configDocRef = doc(firestore, "stockConfigs", config.id); 
       
-      const dataToSave: FirestoreStockConfig = {
+      // Salvar apenas os campos relevantes para configuração, omitindo currentQuantity
+      const dataToSave: Omit<FirestoreStockConfig, 'currentQuantity' | 'id'> & { itemId: string; unitId?: string; hospitalId?:string; strategicStockLevel: number; minQuantity: number; } = {
         itemId: config.itemId,
         strategicStockLevel: config.strategicStockLevel,
         minQuantity: config.minQuantity,
       };
+
       if (config.unitId) {
         dataToSave.unitId = config.unitId;
+        dataToSave.hospitalId = config.hospitalId; // Certifique-se de que hospitalId está presente
       }
-      if (config.hospitalId) {
-        dataToSave.hospitalId = config.hospitalId;
-      }
-      batch.set(configDocRef, dataToSave);
+      
+      batch.set(configDocRef, dataToSave, { merge: true }); // Usar merge:true para não sobrescrever currentQuantity acidentalmente
     });
 
     try {
@@ -154,13 +173,7 @@ export default function StockLevelsConfigPage() {
         title: "Configurações Salvas",
         description: "Todos os níveis estratégicos de estoque foram atualizados no banco de dados.",
       });
-      // Para atualizar a visualização com os IDs corretos do Firestore após um novo save (se um config não existia antes),
-      // precisamos recarregar `dbStockConfigs`.
-      const stockConfigsCollectionRef = collection(firestore, "stockConfigs"); // Nome da coleção alterado
-      const stockConfigsSnapshot = await getDocs(stockConfigsCollectionRef);
-      const dbConfigsData = stockConfigsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig & {id: string}));
-      setDbStockConfigs(dbConfigsData);
-
+      // Não é necessário recarregar dbStockConfigs manualmente, pois o onSnapshot já fará isso.
     } catch (error) {
       console.error('Erro ao salvar configurações de nível de estoque:', error);
       toast({
@@ -187,7 +200,8 @@ export default function StockLevelsConfigPage() {
         icon={Settings2}
         actions={
           <Button onClick={handleSaveAll} disabled={isLoading}>
-            <Save className="mr-2 h-4 w-4" /> Salvar Todas as Alterações
+            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+             Salvar Todas as Alterações
           </Button>
         }
       />
@@ -287,6 +301,4 @@ export default function StockLevelsConfigPage() {
     </div>
   );
 }
-    
-
     

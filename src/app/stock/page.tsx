@@ -8,47 +8,50 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Warehouse, Search, Printer, Package as PackageIcon, Loader2 } from 'lucide-react';
-import type { Item, ServedUnit, Hospital } from '@/types';
-// mockServedUnits e mockHospitals ainda são usados para a lógica de filtragem e nomes de unidades/hospitais.
-// Isso pode ser migrado para Firestore no futuro se necessário para esta página.
-import { mockServedUnits, mockHospitals } from '@/data/mockData';
+import type { Item, ServedUnit, Hospital, StockItemConfig as GlobalStockItemConfig } from '@/types'; // Renomeado para evitar conflito
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { firestore } from '@/lib/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 
-// Interface para o que é armazenado no Firestore para stockConfigs
+// Interface para configurações de estoque do Firestore
 interface FirestoreStockConfig {
-  id?: string; // ID do documento do Firestore (itemId_unitId ou itemId_central)
+  id?: string; 
   itemId: string;
   unitId?: string;
   hospitalId?: string;
   strategicStockLevel: number;
   minQuantity: number;
+  currentQuantity?: number; // Quantidade atual na unidade
 }
 
-// Interface para exibição na tabela
-interface DisplayStockItem {
-  id: string; // ID único para a linha da tabela
-  itemId: string;
-  itemName?: string;
-  itemCode?: string;
-  hospitalId?: string;
-  hospitalName?: string;
-  unitId?: string;
-  unitName?: string;
-  currentQuantity?: number;
-  minQuantity: number;
-  strategicStockLevel: number;
+// Interface para exibição na tabela (derivada de GlobalStockItemConfig)
+interface DisplayStockItem extends GlobalStockItemConfig {
+  itemCode?: string; // Adicionado para exibição
   status?: 'Optimal' | 'Low' | 'Alert';
 }
 
+// Função auxiliar para obter detalhes da unidade e hospital (pode ser movida para utils se usada em mais lugares)
+const getUnitDetails = (unitId: string | undefined, allServedUnits: ServedUnit[], allHospitals: Hospital[]) => {
+    if (!unitId) return { unitName: 'Armazém Central', hospitalId: undefined, hospitalName: undefined };
+    const unit = allServedUnits.find(u => u.id === unitId);
+    if (!unit) return { unitName: 'Unidade Desconhecida', hospitalId: undefined, hospitalName: undefined };
+    const hospital = allHospitals.find(h => h.id === unit.hospitalId);
+    return {
+        unitName: unit.name,
+        hospitalId: unit.hospitalId,
+        hospitalName: hospital?.name || 'Hospital Desconhecido'
+    };
+};
+
+
 export default function StockPage() {
   const [firestoreItems, setFirestoreItems] = useState<Item[]>([]);
-  const [allServedUnits, setAllServedUnits] = useState<ServedUnit[]>([]);
-  const [allHospitals, setAllHospitals] = useState<Hospital[]>([]);
+  const [allServedUnitsData, setAllServedUnitsData] = useState<ServedUnit[]>([]);
+  const [allHospitalsData, setAllHospitalsData] = useState<Hospital[]>([]);
   const [firestoreStockConfigs, setFirestoreStockConfigs] = useState<FirestoreStockConfig[]>([]);
+  
   const [stockData, setStockData] = useState<DisplayStockItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
@@ -60,85 +63,82 @@ export default function StockPage() {
 
   useEffect(() => {
     setIsLoading(true);
-    let itemsLoaded = false;
-    let configsLoaded = false;
+    let itemsUnsubscribe = () => {};
+    let configsUnsubscribe = () => {};
+    let unitsUnsubscribe = () => {};
+    let hospitalsUnsubscribe = () => {};
 
-    const checkAllDataLoaded = () => {
-      // Chamará setIsLoading(false) no useEffect que combina os dados
-      // quando firestoreItems e firestoreStockConfigs tiverem sido populados.
-    };
+    try {
+      const itemsQuery = query(collection(firestore, "items"), orderBy("name", "asc"));
+      itemsUnsubscribe = onSnapshot(itemsQuery, (snapshot) => {
+        setFirestoreItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item)));
+      }, (error) => {
+        console.error("Erro ao buscar itens: ", error);
+        toast({ title: "Erro ao Carregar Itens", variant: "destructive" });
+      });
 
-    const itemsCollectionRef = collection(firestore, "items");
-    const qItems = query(itemsCollectionRef, orderBy("name", "asc"));
-    const unsubscribeItems = onSnapshot(qItems, (querySnapshot) => {
-      const itemsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item));
-      setFirestoreItems(itemsData);
-      itemsLoaded = true;
-      checkAllDataLoaded();
-    }, (error) => {
-      console.error("Erro ao buscar itens do Firestore: ", error);
-      toast({ title: "Erro ao Carregar Itens", description: "Não foi possível carregar os itens.", variant: "destructive" });
-      itemsLoaded = true;
-      checkAllDataLoaded();
-    });
-    
-    const stockConfigsCollectionRef = collection(firestore, "stockConfigs");
-    const unsubscribeStockConfigs = onSnapshot(stockConfigsCollectionRef, (querySnapshot) => {
-      const configsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig));
-      setFirestoreStockConfigs(configsData);
-      configsLoaded = true;
-      checkAllDataLoaded();
-    }, (error) => {
-      console.error("Erro ao buscar configurações de estoque: ", error);
-      toast({ title: "Erro ao Carregar Config. de Estoque", description: "Não foi possível carregar as config. de estoque.", variant: "destructive" });
-      configsLoaded = true;
-      checkAllDataLoaded();
-    });
+      const configsQuery = query(collection(firestore, "stockConfigs"));
+      configsUnsubscribe = onSnapshot(configsQuery, (snapshot) => {
+        setFirestoreStockConfigs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig)));
+      }, (error) => {
+        console.error("Erro ao buscar configs de estoque: ", error);
+        toast({ title: "Erro ao Carregar Configs de Estoque", variant: "destructive" });
+      });
 
-    // Dados mock para unidades e hospitais (pode ser migrado para Firestore se necessário)
-    const enrichedServedUnits = mockServedUnits.map(su => ({
-        ...su,
-        hospitalName: mockHospitals.find(h => h.id === su.hospitalId)?.name || 'N/A'
-    }));
-    setAllServedUnits(enrichedServedUnits);
-    setAllHospitals(mockHospitals);
+      const unitsQuery = query(collection(firestore, "servedUnits"), orderBy("name", "asc"));
+      unitsUnsubscribe = onSnapshot(unitsQuery, (snapshot) => {
+        setAllServedUnitsData(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServedUnit)));
+      }, (error) => {
+        console.error("Erro ao buscar unidades: ", error);
+        toast({ title: "Erro ao Carregar Unidades", variant: "destructive" });
+      });
+
+      const hospitalsQuery = query(collection(firestore, "hospitals"), orderBy("name", "asc"));
+      hospitalsUnsubscribe = onSnapshot(hospitalsQuery, (snapshot) => {
+        setAllHospitalsData(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital)));
+      }, (error) => {
+        console.error("Erro ao buscar hospitais: ", error);
+        toast({ title: "Erro ao Carregar Hospitais", variant: "destructive" });
+      });
+
+    } catch (e) {
+        console.error("Erro ao configurar listeners do Firestore: ", e);
+        toast({ title: "Erro de Conexão", description: "Não foi possível conectar ao banco de dados.", variant: "destructive" });
+        setIsLoading(false);
+    }
     
     return () => {
-      unsubscribeItems();
-      unsubscribeStockConfigs();
+      itemsUnsubscribe();
+      configsUnsubscribe();
+      unitsUnsubscribe();
+      hospitalsUnsubscribe();
     };
   }, [toast]);
 
   useEffect(() => {
-    // Este useEffect agora combina os dados após serem carregados
-    if (firestoreItems.length > 0 || (firestoreItems.length === 0 && firestoreStockConfigs.length >= 0 && !isLoading) ) {
-        setIsLoading(true); // Reinicia o loading para a fase de combinação
-        const getUnitDetails = (unitId?: string) => {
-            if (!unitId) return { unitName: 'Armazém Central', hospitalId: undefined, hospitalName: undefined };
-            const unit = allServedUnits.find(u => u.id === unitId);
-            if (!unit) return { unitName: 'Unidade Desconhecida', hospitalId: undefined, hospitalName: undefined };
-            return {
-              unitName: unit.name,
-              hospitalId: unit.hospitalId,
-              hospitalName: unit.hospitalName
-            };
-        };
-
+    // Verifica se todos os dados necessários foram carregados antes de processar
+    if (firestoreItems.length > 0 && allServedUnitsData.length >= 0 && allHospitalsData.length >= 0 && firestoreStockConfigs.length >= 0) {
+        setIsLoading(true); 
         const combinedData: DisplayStockItem[] = [];
 
+        // Processar itens do Armazém Central
         firestoreItems.forEach(item => {
-          const configId = `${item.id}_central`;
-          const config = firestoreStockConfigs.find(sc => sc.id === configId);
-          const currentQuantity = item.currentQuantityCentral;
+          const centralConfigId = `${item.id}_central`;
+          const config = firestoreStockConfigs.find(sc => sc.id === centralConfigId);
           
+          const currentQuantity = item.currentQuantityCentral;
           const strategicLvl = config?.strategicStockLevel || 0;
           const minQty = config?.minQuantity ?? item.minQuantity;
 
           let status: DisplayStockItem['status'] = 'Optimal';
-          if (minQty > 0 && currentQuantity < minQty) {
-              status = 'Low';
-          } else if (strategicLvl > 0 && currentQuantity < strategicLvl) { // Só alerta se strategicLvl for > 0
-              status = 'Alert';
+          if (typeof currentQuantity === 'number') {
+            if (minQty > 0 && currentQuantity < minQty) {
+                status = 'Low';
+            } else if (strategicLvl > 0 && currentQuantity < strategicLvl) {
+                status = 'Alert';
+            }
+          } else {
+            status = undefined; 
           }
 
           combinedData.push({
@@ -146,7 +146,7 @@ export default function StockPage() {
             itemId: item.id,
             itemName: item.name,
             itemCode: item.code,
-            ...getUnitDetails(undefined), // Armazém Central
+            ...getUnitDetails(undefined, allServedUnitsData, allHospitalsData),
             strategicStockLevel: strategicLvl,
             minQuantity: minQty,
             currentQuantity: currentQuantity,
@@ -154,15 +154,25 @@ export default function StockPage() {
           });
         });
 
+        // Processar configurações de unidades (que podem ou não ter itens correspondentes em firestoreItems se o catálogo for menor)
         firestoreStockConfigs.forEach(config => {
-          if (config.unitId) {
+          if (config.unitId) { 
             const itemDetail = firestoreItems.find(i => i.id === config.itemId);
-            if (!itemDetail) return;
+            if (!itemDetail) return; // Pula se o item da config não existe mais no catálogo
 
-            const unitDetails = getUnitDetails(config.unitId);
-            const currentUnitQuantity = undefined; // Não temos qtde atual por unidade aqui
+            const unitDetails = getUnitDetails(config.unitId, allServedUnitsData, allHospitalsData);
+            const currentUnitQuantity = config.currentQuantity; // Vem da config
 
-            let status: DisplayStockItem['status'] = undefined; // Indefinido pois não há qtde atual
+            let status: DisplayStockItem['status'] = 'Optimal';
+             if (typeof currentUnitQuantity === 'number') {
+                if (config.minQuantity > 0 && currentUnitQuantity < config.minQuantity) {
+                    status = 'Low';
+                } else if (config.strategicStockLevel > 0 && currentUnitQuantity < config.strategicStockLevel) {
+                    status = 'Alert';
+                }
+            } else {
+                status = undefined;
+            }
             
             combinedData.push({
               id: config.id || `${config.itemId}_${config.unitId}`,
@@ -180,21 +190,25 @@ export default function StockPage() {
         
         setStockData(combinedData.sort((a, b) => 
             (a.hospitalName || '').localeCompare(b.hospitalName || '') || 
-            a.unitName!.localeCompare(b.unitName!) || 
+            (a.unitName || '').localeCompare(b.unitName || '') || 
             (a.itemName || '').localeCompare(b.itemName || '')
         ));
-        setIsLoading(false); // Finaliza o carregamento após combinar os dados
-    } else if (!isLoading && firestoreItems.length === 0 && firestoreStockConfigs.length === 0) {
-        // Caso especial: Firestore retornou vazio, mas não está mais carregando
+        setIsLoading(false); 
+    } else if (
+        !isLoading && // Evita rodar se ainda estiver no ciclo inicial de isLoading=true
+        (firestoreItems.length === 0 && allServedUnitsData.length === 0 && allHospitalsData.length === 0 )
+        // Condição para quando os dados são realmente vazios, não apenas no estado inicial de carregamento
+    ) {
         setStockData([]);
         setIsLoading(false);
     }
-  }, [firestoreItems, firestoreStockConfigs, allServedUnits, allHospitals, isLoading]);
+  // Adicionar allServedUnitsData e allHospitalsData às dependências
+  }, [firestoreItems, firestoreStockConfigs, allServedUnitsData, allHospitalsData, isLoading]);
 
 
   const filteredUnitsForSelect = hospitalFilter === 'all' || hospitalFilter === 'central' 
-    ? allServedUnits 
-    : allServedUnits.filter(u => u.hospitalId === hospitalFilter);
+    ? allServedUnitsData
+    : allServedUnitsData.filter(u => u.hospitalId === hospitalFilter);
 
   useEffect(() => {
     if (unitFilter !== 'all' && !filteredUnitsForSelect.find(u => u.id === unitFilter)) {
@@ -208,12 +222,12 @@ export default function StockPage() {
     
     const hospitalMatchLogic = () => {
         if (hospitalFilter === 'all') return true;
-        if (hospitalFilter === 'central') return !item.unitId; // Apenas Armazém Central
+        if (hospitalFilter === 'central') return !item.unitId; 
         return item.hospitalId === hospitalFilter;
     };
     const unitMatchLogic = () => {
-        if (!item.unitId && hospitalFilter === 'central') return true; // Armazém central com filtro 'central'
-        if (hospitalFilter === 'central' && item.unitId) return false; // Unidade não deve aparecer com filtro 'central'
+        if (!item.unitId && hospitalFilter === 'central') return true; 
+        if (hospitalFilter === 'central' && item.unitId) return false; 
 
         if (unitFilter === 'all') return hospitalMatchLogic(); 
         return item.unitId === unitFilter && hospitalMatchLogic(); 
@@ -227,7 +241,7 @@ export default function StockPage() {
   const getStatusBadgeVariant = (status?: DisplayStockItem['status']) => {
     if (status === 'Alert' || status === 'Low') return 'destructive'; 
     if (status === 'Optimal') return 'default';
-    return 'outline'; // Para status indefinido (ex: unidades sem qtde atual)
+    return 'outline'; 
   }
   
   const getStatusBadgeText = (status?: DisplayStockItem['status']) => {
@@ -277,7 +291,7 @@ export default function StockPage() {
               <SelectContent>
                 <SelectItem value="all">Todos os Hospitais/Armazém</SelectItem>
                 <SelectItem value="central">Apenas Armazém Central</SelectItem>
-                {allHospitals.map(hospital => (
+                {allHospitalsData.map(hospital => (
                   <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -307,7 +321,7 @@ export default function StockPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading && stockData.length === 0 ? ( // Mostrar loading apenas se stockData estiver vazio também
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="ml-3 text-muted-foreground">Carregando dados de estoque...</p>
@@ -335,7 +349,7 @@ export default function StockPage() {
                       <TableCell>{item.itemCode || 'N/A'}</TableCell>
                       <TableCell>{item.hospitalName || (item.unitId ? 'N/A' : '-')}</TableCell>
                       <TableCell>{item.unitName}</TableCell>
-                      <TableCell className="text-right">{item.currentQuantity ?? 'N/D'}</TableCell> {/* N/D para unidades */}
+                      <TableCell className="text-right">{typeof item.currentQuantity === 'number' ? item.currentQuantity : 'N/D'}</TableCell>
                       <TableCell className="text-right">{item.minQuantity}</TableCell>
                       <TableCell className="text-right">{item.strategicStockLevel}</TableCell>
                       <TableCell className="text-center">
