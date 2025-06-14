@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { ArrowRightLeft, User, Loader2 } from 'lucide-react';
-import type { Item, ServedUnit, Hospital, Patient } from '@/types';
+import type { Item, ServedUnit, Hospital, Patient, StockMovement } from '@/types';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
@@ -167,44 +167,40 @@ export default function StockMovementsPage() {
 
     try {
       await runTransaction(firestore, async (transaction) => {
-        // ---- START OF READ PHASE ----
         const itemDocRef = doc(firestore, "items", processedData.itemId);
-        const itemSnap = await transaction.get(itemDocRef);
+        let unitConfigDocRef = null;
+        let unitConfigDocId = null;
 
+        // ---- START OF READ PHASE ----
+        const itemSnap = await transaction.get(itemDocRef);
         if (!itemSnap.exists()) {
           throw new Error("Item não encontrado no banco de dados.");
         }
-        const currentItemData = itemSnap.data() as Item;
         
         let unitConfigSnap = null;
-        let unitConfigDocRef = null; 
-
         if ((processedData.type === 'exit' || processedData.type === 'consumption') && 
             processedData.hospitalId && processedData.unitId) {
-          const unitConfigDocId = `${processedData.itemId}_${processedData.unitId}`;
+          unitConfigDocId = `${processedData.itemId}_${processedData.unitId}`;
           unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
           unitConfigSnap = await transaction.get(unitConfigDocRef);
         }
         // ---- END OF READ PHASE ----
 
         // ---- START OF WRITE PHASE ----
+        const currentItemData = itemSnap.data() as Item;
         let newQuantityCentral = currentItemData.currentQuantityCentral;
 
         if (processedData.type === 'entry') {
           newQuantityCentral += processedData.quantity;
           transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
         } else if (processedData.type === 'exit' || processedData.type === 'consumption') {
-          if (processedData.hospitalId && processedData.unitId) { // Transfer to unit
-            if (!unitConfigDocRef || unitConfigSnap === null) { 
-                throw new Error("Erro interno: Configuração da unidade não foi lida corretamente para a transferência.");
-            }
-
+          if (processedData.hospitalId && processedData.unitId && unitConfigDocRef) { // Transfer to unit
             if (newQuantityCentral < processedData.quantity) {
               throw new Error("Estoque insuficiente no Armazém Central para esta transferência.");
             }
             const newCentralQuantityAfterTransfer = newQuantityCentral - processedData.quantity;
 
-            if (unitConfigSnap.exists()) {
+            if (unitConfigSnap && unitConfigSnap.exists()) {
               const currentUnitConfigData = unitConfigSnap.data();
               const newUnitQuantity = (currentUnitConfigData.currentQuantity || 0) + processedData.quantity;
               transaction.update(unitConfigDocRef, { currentQuantity: newUnitQuantity });
@@ -215,46 +211,43 @@ export default function StockMovementsPage() {
                 unitId: processedData.unitId,
                 hospitalId: unitDetails?.hospitalId,
                 currentQuantity: processedData.quantity,
-                strategicStockLevel: 0,
-                minQuantity: 0,
+                strategicStockLevel: 0, // Default, should be configured later
+                minQuantity: 0, // Default, should be configured later
               });
             }
             transaction.update(itemDocRef, { currentQuantityCentral: newCentralQuantityAfterTransfer });
-          } else if (!processedData.hospitalId) { // Direct exit from central
+          } else if (!processedData.hospitalId) { // Direct exit/consumption from central
             if (newQuantityCentral < processedData.quantity) {
-              throw new Error("Estoque insuficiente no Armazém Central para esta baixa.");
+              throw new Error("Estoque insuficiente no Armazém Central para esta baixa/consumo.");
             }
             newQuantityCentral -= processedData.quantity;
             transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
           } else {
-            // Este caso deve ser prevenido pela validação Zod, mas como fallback:
-            throw new Error("Configuração de saída inválida. Uma unidade é necessária se um hospital específico for selecionado (e não for baixa direta).");
+            throw new Error("Configuração de saída/consumo inválida. Uma unidade é necessária se um hospital específico for selecionado (e não for baixa/consumo direto).");
           }
         }
 
-        // Log the movement
-        // Estas buscas são feitas em arrays no estado do componente, não são leituras do Firestore dentro da transação.
         const itemDetailsForLog = items.find(i => i.id === processedData.itemId);
         const hospitalDetailsForLog = hospitals.find(h => h.id === processedData.hospitalId);
         const unitDetailsForLog = servedUnits.find(u => u.id === processedData.unitId);
         const patientDetailsForLog = patients.find(p => p.id === processedData.patientId);
 
-        const movementLog = {
+        const movementLog: Omit<StockMovement, 'id'> = {
           itemId: processedData.itemId,
           itemName: itemDetailsForLog?.name || 'Desconhecido',
           type: processedData.type,
           quantity: processedData.quantity,
           date: processedData.date,
           notes: processedData.notes || '',
-          hospitalId: processedData.hospitalId,
-          hospitalName: hospitalDetailsForLog?.name,
-          unitId: processedData.unitId,
-          unitName: unitDetailsForLog?.name,
-          patientId: processedData.patientId,
-          patientName: patientDetailsForLog?.name,
+          hospitalId: processedData.hospitalId || null,
+          hospitalName: hospitalDetailsForLog?.name || null,
+          unitId: processedData.unitId || null,
+          unitName: unitDetailsForLog?.name || null,
+          patientId: processedData.patientId || null,
+          patientName: patientDetailsForLog?.name || null,
         };
         const stockMovementsCollectionRef = collection(firestore, "stockMovements");
-        transaction.set(doc(stockMovementsCollectionRef), movementLog); // Adiciona como novo documento com ID automático
+        transaction.set(doc(stockMovementsCollectionRef), movementLog);
         // ---- END OF WRITE PHASE ----
       });
       
@@ -268,7 +261,7 @@ export default function StockMovementsPage() {
           if (unitDesc && hospitalDesc) { 
               description += ` para ${unitDesc.name} (${hospitalDesc.name}).`;
           } else if (!processedData.hospitalId) { 
-              description += ` (Baixa direta do Armazém Central).`;
+              description += ` (Baixa/Consumo direto do Armazém Central).`;
           }
       }
       if (patient) {
