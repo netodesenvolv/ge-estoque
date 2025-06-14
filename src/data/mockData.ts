@@ -30,9 +30,4 @@ export const mockStockConfigs: StockItemConfig[] = [];
 
 export const mockStockMovements: StockMovement[] = [];
 
-export const mockUsers: User[] = [
-  { id: 'user1', name: 'Alice Admin', email: 'alice@example.com', role: 'admin', status: 'active' },
-  { id: 'user2', name: 'Bob Usuário', email: 'bob@example.com', role: 'user', status: 'active' },
-  { id: 'user3', name: 'Charlie Inativo', email: 'charlie@example.com', role: 'user', status: 'inactive' },
-];
-
+export const mockUsers: User[] = [];

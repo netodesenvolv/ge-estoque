@@ -86,11 +86,15 @@ export interface HistoricalDataEntry {
 export type UserRole = 'admin' | 'user';
 export type UserStatus = 'active' | 'inactive';
 
-export interface User {
-  id: string;
+// Represents the user profile stored in Firestore
+export interface UserProfile {
   name: string;
-  email: string;
+  email: string; // Email is also stored in Auth, but useful here for display
   role: UserRole;
   status: UserStatus;
-  // Password is not stored in the client-side mock data for security simulation
+}
+
+// Represents the user object used throughout the app, including the id (uid from Auth)
+export interface User extends UserProfile {
+  id: string; // Firebase Auth UID
 }

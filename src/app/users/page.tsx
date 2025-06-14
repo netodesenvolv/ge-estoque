@@ -3,47 +3,81 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users as UsersIcon, PlusCircle, Edit3, Trash2, Search } from 'lucide-react'; // Renomeado Users para UsersIcon
-import type { User } from '@/types';
-import { mockUsers } from '@/data/mockData';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Users as UsersIcon, PlusCircle, Edit3, Trash2, Search, Loader2 } from 'lucide-react';
+import type { UserProfile, User } from '@/types'; // UserProfile for Firestore data, User for full type if needed
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
+import { firestore } from '@/lib/firebase';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<User[]>([]);
+  const [userProfiles, setUserProfiles] = useState<User[]>([]); // UserProfile with id (uid)
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const { toast } = useToast();
+  const router = useRouter();
 
   useEffect(() => {
-    // Em uma aplicação real, você buscaria isso de uma API
-    setUsers(mockUsers);
-  }, []);
+    setIsLoading(true);
+    const usersCollectionRef = collection(firestore, "user_profiles");
+    const q = query(usersCollectionRef, orderBy("name", "asc"));
 
-  const filteredUsers = users.filter(user =>
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const profilesData = querySnapshot.docs.map(docSnap => ({
+        id: docSnap.id, // This will be the Firebase Auth UID
+        ...docSnap.data(),
+      } as User)); // Casting to User, assuming UserProfile aligns and id is uid
+      setUserProfiles(profilesData);
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Erro ao buscar perfis de usuários: ", error);
+      toast({
+        title: "Erro ao Carregar Usuários",
+        description: "Não foi possível carregar os perfis de usuários do banco de dados.",
+        variant: "destructive",
+      });
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [toast]);
+
+  const filteredUsers = userProfiles.filter(user =>
     user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const handleEdit = (id: string) => {
     toast({
-      title: "Ação Simulada",
-      description: `Editar usuário com ID: ${id}. Funcionalidade de edição não implementada.`,
+      title: "Funcionalidade Pendente",
+      description: `A edição do usuário com ID: ${id} ainda não foi implementada.`,
     });
     // router.push(`/users/${id}/edit`); // Futuramente
   };
 
-  const handleDelete = (id: string) => {
-    // Simulação de exclusão
-    setUsers(prevUsers => prevUsers.filter(user => user.id !== id));
-    toast({
-      title: "Usuário Excluído (Simulado)",
-      description: `Usuário com ID: ${id} foi excluído da lista.`,
-    });
+  const handleDelete = async (userId: string, userName: string) => {
+    const userProfileDocRef = doc(firestore, "user_profiles", userId);
+    try {
+      await deleteDoc(userProfileDocRef);
+      toast({
+        title: "Perfil de Usuário Excluído",
+        description: `O perfil de ${userName} foi removido do banco de dados. A conta de autenticação do Firebase permanece.`,
+      });
+    } catch (error) {
+      console.error("Erro ao excluir perfil de usuário: ", error);
+      toast({
+        title: "Erro ao Excluir Perfil",
+        description: "Não foi possível excluir o perfil do usuário. Tente novamente.",
+        variant: "destructive",
+      });
+    }
   };
 
   const getRoleText = (role: User['role']) => {
@@ -87,6 +121,12 @@ export default function UsersPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {isLoading ? (
+             <div className="flex items-center justify-center h-24">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                <p className="ml-2 text-muted-foreground">Carregando usuários...</p>
+            </div>
+          ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
@@ -112,9 +152,27 @@ export default function UsersPage() {
                         <Button variant="ghost" size="icon" onClick={() => handleEdit(user.id)} className="hover:text-primary mr-2">
                           <Edit3 className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(user.id)} className="hover:text-destructive">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="hover:text-destructive">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Confirmar Exclusão</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Tem certeza que deseja excluir o perfil de {user.name}? Esta ação removerá o perfil do banco de dados, mas não a conta de autenticação do Firebase.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => handleDelete(user.id, user.name)} className={buttonVariants({variant: "destructive"})}>
+                                Excluir Perfil
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </TableCell>
                     </TableRow>
                   ))
@@ -128,6 +186,7 @@ export default function UsersPage() {
               </TableBody>
             </Table>
           </div>
+          )}
         </CardContent>
       </Card>
     </div>

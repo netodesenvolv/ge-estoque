@@ -14,8 +14,10 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import AppLogo from '@/components/AppLogo';
 import { Loader2 } from 'lucide-react';
-import type { AuthError } from 'firebase/auth';
-
+import type { AuthError, User as FirebaseUser } from 'firebase/auth';
+import { firestore } from '@/lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
+import type { UserProfile } from '@/types'; // Assuming UserProfile exists or is similar to User type
 
 const signupSchema = z.object({
   email: z.string().email({ message: "Por favor, insira um email válido." }),
@@ -23,7 +25,7 @@ const signupSchema = z.object({
   confirmPassword: z.string(),
 }).refine(data => data.password === data.confirmPassword, {
   message: "As senhas não coincidem.",
-  path: ["confirmPassword"], // Atribui o erro ao campo confirmPassword
+  path: ["confirmPassword"],
 });
 
 type SignupFormValues = z.infer<typeof signupSchema>;
@@ -47,9 +49,10 @@ export default function SignupPage() {
     setError(null);
     setLoading(true);
     const result = await signUpWithEmailAndPassword(data.email, data.password);
-    setLoading(false);
+    
 
     if ('code' in result) { // Check if it's an AuthError
+      setLoading(false);
       const authError = result as AuthError;
       if (authError.code === 'auth/email-already-in-use') {
         setError("Este email já está em uso. Tente outro ou faça login.");
@@ -60,7 +63,24 @@ export default function SignupPage() {
         setError(`Erro ao criar conta: ${authError.message}`);
       }
     } else {
-      router.push('/'); // Redirect to dashboard or desired page
+      // User created in Firebase Auth, now create profile in Firestore
+      const firebaseUser = result as FirebaseUser;
+      const userProfile: UserProfile = {
+        name: firebaseUser.displayName || data.email.split('@')[0], // Use displayName or part of email as name
+        email: firebaseUser.email!, // Email is guaranteed here
+        role: 'user',
+        status: 'active',
+      };
+      try {
+        await setDoc(doc(firestore, "user_profiles", firebaseUser.uid), userProfile);
+        setLoading(false);
+        router.push('/'); // Redirect to dashboard or desired page
+      } catch (firestoreError) {
+        setLoading(false);
+        console.error("Erro ao criar perfil do usuário no Firestore:", firestoreError);
+        setError("Conta criada, mas houve um erro ao salvar o perfil. Contate o suporte.");
+        // Potentially log out the user or handle this state if critical
+      }
     }
   };
 
