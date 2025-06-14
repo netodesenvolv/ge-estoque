@@ -13,7 +13,8 @@ import type { ServedUnit, Hospital } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { useEffect, useState } from 'react';
-import { mockHospitals } from '@/data/mockData'; // Import mockHospitals
+import { firestore } from '@/lib/firebase';
+import { collection, onSnapshot, query, orderBy, addDoc } from 'firebase/firestore';
 
 const servedUnitSchema = z.object({
   name: z.string().min(2, { message: "O nome da unidade deve ter pelo menos 2 caracteres." }),
@@ -24,7 +25,7 @@ const servedUnitSchema = z.object({
 type ServedUnitFormData = z.infer<typeof servedUnitSchema>;
 
 interface ServedUnitFormProps {
-  initialData?: ServedUnit;
+  initialData?: ServedUnit; // ID será usado para edição no futuro
   onSubmitSuccess?: (data: ServedUnit) => void;
 }
 
@@ -34,8 +35,20 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
 
   useEffect(() => {
-    setHospitals(mockHospitals);
-  }, []);
+    const hospitalsCollectionRef = collection(firestore, "hospitals");
+    const q = query(hospitalsCollectionRef, orderBy("name", "asc"));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      setHospitals(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital)));
+    }, (error) => {
+      console.error("Erro ao buscar hospitais: ", error);
+      toast({
+        title: "Erro ao Carregar Hospitais",
+        description: "Não foi possível carregar a lista de hospitais.",
+        variant: "destructive",
+      });
+    });
+    return () => unsubscribe();
+  }, [toast]);
 
   const form = useForm<ServedUnitFormData>({
     resolver: zodResolver(servedUnitSchema),
@@ -50,20 +63,37 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
     },
   });
 
-  const onSubmit = (data: ServedUnitFormData) => {
-    console.log('Formulário de unidade servida submetido:', data);
-    const unitId = initialData?.id || Math.random().toString(36).substring(2, 15);
-    const hospitalName = hospitals.find(h => h.id === data.hospitalId)?.name;
-    const submittedUnit: ServedUnit = { ...data, id: unitId, hospitalName };
-    
-    if (onSubmitSuccess) {
-      onSubmitSuccess(submittedUnit);
-    } else {
+  const onSubmit = async (data: ServedUnitFormData) => {
+    const hospital = hospitals.find(h => h.id === data.hospitalId);
+    const servedUnitDataToSave: Omit<ServedUnit, 'id' | 'hospitalName'> = {
+      name: data.name,
+      location: data.location,
+      hospitalId: data.hospitalId,
+    };
+
+    try {
+      // TODO: Adicionar lógica de edição se initialData.id estiver presente
+      const servedUnitsCollectionRef = collection(firestore, "servedUnits");
+      await addDoc(servedUnitsCollectionRef, servedUnitDataToSave);
+      
       toast({
         title: initialData ? "Unidade Servida Atualizada" : "Unidade Servida Adicionada",
-        description: `${data.name} (${hospitalName}) foi ${initialData ? 'atualizada' : 'adicionada'} com sucesso.`,
+        description: `${data.name} (${hospital?.name || 'Hospital não encontrado'}) foi ${initialData ? 'atualizada' : 'adicionada'} com sucesso.`,
       });
-      router.push('/served-units');
+
+      if (onSubmitSuccess) {
+        // @ts-ignore
+        onSubmitSuccess({ ...servedUnitDataToSave, id: 'new_id_placeholder', hospitalName: hospital?.name });
+      } else {
+        router.push('/served-units');
+      }
+    } catch (error) {
+      console.error("Erro ao salvar unidade servida: ", error);
+      toast({
+        title: `Erro ao ${initialData ? 'Atualizar' : 'Adicionar'} Unidade`,
+        description: "Não foi possível salvar a unidade servida. Verifique o console.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -81,13 +111,14 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Hospital</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                  <Select onValueChange={field.onChange} defaultValue={field.value} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Selecione um hospital" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
+                      {hospitals.length === 0 && <SelectItem value="" disabled>Carregando hospitais...</SelectItem>}
                       {hospitals.map(hospital => (
                         <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>
                       ))}
@@ -128,7 +159,7 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
             <Button type="button" variant="outline" onClick={() => router.back()}>
               Cancelar
             </Button>
-            <Button type="submit">
+            <Button type="submit" disabled={hospitals.length === 0}>
               {initialData ? 'Salvar Alterações' : 'Adicionar Unidade'}
             </Button>
           </CardFooter>

@@ -3,15 +3,18 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, PlusCircle, Edit3, Trash2, TrendingUp } from 'lucide-react';
+import { Users, PlusCircle, Edit3, Trash2, TrendingUp, Search } from 'lucide-react';
 import type { ServedUnit, Hospital } from '@/types';
-import { mockServedUnits, mockHospitals } from '@/data/mockData';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { firestore } from '@/lib/firebase';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
+import { useToast } from '@/hooks/use-toast';
 
 
 export default function ServedUnitsPage() {
@@ -19,31 +22,77 @@ export default function ServedUnitsPage() {
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [hospitalFilter, setHospitalFilter] = useState('all');
+  const router = useRouter();
+  const { toast } = useToast();
 
 
   useEffect(() => {
-    setServedUnits(mockServedUnits.map(unit => ({
-      ...unit,
-      hospitalName: mockHospitals.find(h => h.id === unit.hospitalId)?.name || 'Hospital Desconhecido'
-    })));
-    setHospitals(mockHospitals);
-  }, []);
+    const hospitalsCollectionRef = collection(firestore, "hospitals");
+    const qHospitals = query(hospitalsCollectionRef, orderBy("name", "asc"));
+    const unsubscribeHospitals = onSnapshot(qHospitals, (querySnapshot) => {
+      setHospitals(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital)));
+    }, (error) => {
+      console.error("Erro ao buscar hospitais: ", error);
+      toast({ title: "Erro ao Carregar Hospitais", variant: "destructive" });
+    });
+
+    const servedUnitsCollectionRef = collection(firestore, "servedUnits");
+    const qServedUnits = query(servedUnitsCollectionRef, orderBy("name", "asc"));
+    const unsubscribeServedUnits = onSnapshot(qServedUnits, (querySnapshot) => {
+      const unitsData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      } as ServedUnit));
+      setServedUnits(unitsData);
+    }, (error) => {
+      console.error("Erro ao buscar unidades servidas: ", error);
+      toast({ title: "Erro ao Carregar Unidades Servidas", variant: "destructive" });
+    });
+
+    return () => {
+      unsubscribeHospitals();
+      unsubscribeServedUnits();
+    };
+  }, [toast]);
 
   const handleEdit = (id: string) => {
-    console.log('Editar unidade servida:', id);
     // router.push(`/served-units/${id}/edit`); // Futuramente
+     toast({
+      title: "Funcionalidade Pendente",
+      description: `A edição da unidade com ID: ${id} ainda não foi implementada.`,
+    });
   };
 
-  const handleDelete = (id: string) => {
-    console.log('Excluir unidade servida:', id);
-    setServedUnits(prevUnits => prevUnits.filter(unit => unit.id !== id));
+  const handleDelete = async (id: string) => {
+    const unitDocRef = doc(firestore, "servedUnits", id);
+    try {
+      await deleteDoc(unitDocRef);
+      toast({
+        title: "Unidade Servida Excluída",
+        description: "A unidade foi removida do banco de dados.",
+      });
+    } catch (error) {
+      console.error("Erro ao excluir unidade: ", error);
+      toast({
+        title: "Erro ao Excluir",
+        description: "Não foi possível excluir a unidade. Tente novamente.",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  const getHospitalName = (hospitalId: string) => {
+    return hospitals.find(h => h.id === hospitalId)?.name || 'Hospital Desconhecido';
   };
 
   const filteredUnits = servedUnits.filter(unit => {
     const nameMatch = unit.name.toLowerCase().includes(searchTerm.toLowerCase());
     const hospitalMatch = hospitalFilter === 'all' || unit.hospitalId === hospitalFilter;
     return nameMatch && hospitalMatch;
-  });
+  }).map(unit => ({
+      ...unit,
+      hospitalName: getHospitalName(unit.hospitalId)
+  }));
 
 
   return (
@@ -64,13 +113,16 @@ export default function ServedUnitsPage() {
         <CardHeader>
           <CardTitle className="font-headline">Todas as Unidades Servidas</CardTitle>
            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Input
-              type="search"
-              placeholder="Buscar por nome da unidade..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full"
-            />
+            <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <Input
+                  type="search"
+                  placeholder="Buscar por nome da unidade..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10"
+                />
+            </div>
             <Select value={hospitalFilter} onValueChange={setHospitalFilter}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Filtrar por Hospital" />
