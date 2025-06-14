@@ -14,9 +14,11 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { ArrowRightLeft, User } from 'lucide-react';
 import type { Item, ServedUnit, Hospital, Patient } from '@/types';
-import { mockItems, mockServedUnits, mockHospitals, mockPatients } from '@/data/mockData';
+import { mockServedUnits, mockHospitals, mockPatients } from '@/data/mockData'; // Itens serão buscados do Firestore
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { firestore } from '@/lib/firebase';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 
 const CENTRAL_WAREHOUSE_EXIT_VALUE = "CENTRAL_WAREHOUSE_DIRECT_EXIT";
 
@@ -76,6 +78,7 @@ export default function StockMovementsPage() {
       hospitalId: undefined,
       unitId: undefined,
       patientId: undefined,
+      itemId: undefined,
     },
   });
 
@@ -84,11 +87,27 @@ export default function StockMovementsPage() {
   const selectedUnitId = form.watch('unitId');
 
   useEffect(() => {
-    setItems(mockItems);
-    setServedUnits(mockServedUnits);
-    setHospitals(mockHospitals);
-    setPatients(mockPatients);
-  }, []);
+    // Buscar Itens
+    const itemsCollectionRef = collection(firestore, "items");
+    const qItems = query(itemsCollectionRef, orderBy("name", "asc"));
+    const unsubscribeItems = onSnapshot(qItems, (querySnapshot) => {
+      const itemsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item));
+      setItems(itemsData);
+    }, (error) => {
+      console.error("Erro ao buscar itens: ", error);
+      toast({ title: "Erro ao Carregar Itens", description: "Não foi possível carregar a lista de itens.", variant: "destructive" });
+    });
+
+    // Mock data para outras entidades (serão substituídas por chamadas ao Firestore conforme necessário)
+    setServedUnits(mockServedUnits); // Manter mock ou buscar do Firestore se já implementado
+    setHospitals(mockHospitals);     // Manter mock ou buscar do Firestore se já implementado
+    setPatients(mockPatients);       // Manter mock ou buscar do Firestore se já implementado
+    
+    return () => {
+      unsubscribeItems();
+      // Adicionar unsubscribes para outras coleções se forem adicionados listeners
+    };
+  }, [toast]);
 
   useEffect(() => {
     if (movementType === 'entry') {
@@ -97,16 +116,10 @@ export default function StockMovementsPage() {
         form.setValue('patientId', undefined);
     } else if (movementType === 'exit') {
         form.setValue('patientId', undefined);
-        // Se mudou para 'exit' e hospitalId era algo, mas agora 'Nenhum' é uma opção,
-        // pode ser necessário resetar hospitalId se a opção 'Nenhum' não existir para 'consumption'.
-        // A lógica atual de resetar unitId quando hospitalId muda já cobre parte disso.
     }
-    // Reset unitId sempre que o tipo de movimento muda, a menos que o hospital já exija um.
-    // A lógica abaixo (useEffect em selectedHospitalId) já trata o reset de unitId.
   }, [movementType, form]);
 
    useEffect(() => {
-    // Sempre reseta unitId e patientId quando hospitalId muda.
     form.setValue('unitId', undefined, { shouldValidate: true });
     form.setValue('patientId', undefined);
   }, [selectedHospitalId, form]);
@@ -131,9 +144,8 @@ export default function StockMovementsPage() {
     
     let processedData = {...data};
     if (data.hospitalId === CENTRAL_WAREHOUSE_EXIT_VALUE) {
-        processedData.hospitalId = undefined; // Trata a string especial como undefined para lógica de negócio
+        processedData.hospitalId = undefined;
     }
-
 
     let description = `Movimentação de ${processedData.quantity} unidade(s) do item ${item?.name || processedData.itemId} registrada como ${processedData.type}.`;
 
@@ -142,7 +154,7 @@ export default function StockMovementsPage() {
         const unit = servedUnits.find(u => u.id === processedData.unitId);
         if (unit && hospital) {
             description += ` para ${unit.name} (${hospital.name}).`;
-        } else if (processedData.hospitalId === undefined) { // Modificado para usar processedData
+        } else if (processedData.hospitalId === undefined) { 
             description += ` (Baixa direta do Armazém Central).`;
         }
     }
@@ -217,6 +229,7 @@ export default function StockMovementsPage() {
                     <Select onValueChange={field.onChange} value={field.value ?? undefined}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Selecione um item" /></SelectTrigger></FormControl>
                       <SelectContent>
+                        {items.length === 0 && <SelectItem value="loading" disabled>Carregando itens...</SelectItem>}
                         {items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} ({item.code})</SelectItem>)}
                       </SelectContent>
                     </Select>
@@ -236,9 +249,8 @@ export default function StockMovementsPage() {
                         <Select
                             onValueChange={(value) => {
                                 field.onChange(value === CENTRAL_WAREHOUSE_EXIT_VALUE ? undefined : value);
-                                // O useEffect para selectedHospitalId cuidará de resetar unitId e patientId
                             }}
-                            value={field.value ?? undefined} // Use field.value direto, Select lida com undefined para placeholder
+                            value={field.value ?? undefined} 
                         >
                           <FormControl><SelectTrigger><SelectValue placeholder="Selecione um hospital ou baixa direta" /></SelectTrigger></FormControl>
                           <SelectContent>
