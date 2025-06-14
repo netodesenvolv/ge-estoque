@@ -109,15 +109,12 @@ const BatchImportPatientForm = () => {
             
             let birthDate: string | undefined = undefined;
             if (birthDateStr) {
-                // Tenta parsear a data. Assume AAAA-MM-DD ou formatos que o Date.parse consiga entender.
-                // É uma validação simples; para formatos mais estritos, bibliotecas como date-fns seriam melhores.
-                const parsedDate = new Date(birthDateStr);
+                const parsedDate = new Date(birthDateStr); // Interpreta "YYYY-MM-DD" como YYYY-MM-DDT00:00:00Z (UTC)
                 if (!isNaN(parsedDate.getTime())) {
-                    // Formata para YYYY-MM-DD para consistência, ajustando o fuso se necessário.
-                    // O input type="date" espera YYYY-MM-DD. Se o CSV tiver outro formato, ajuste aqui.
-                    const year = parsedDate.getFullYear();
-                    const month = (parsedDate.getMonth() + 1).toString().padStart(2, '0');
-                    const day = parsedDate.getDate().toString().padStart(2, '0'); // Usa getDate para evitar problemas de fuso no dia
+                    // Usar componentes UTC para evitar deslocamento de fuso
+                    const year = parsedDate.getUTCFullYear();
+                    const month = (parsedDate.getUTCMonth() + 1).toString().padStart(2, '0'); // getUTCMonth é 0-indexed
+                    const day = parsedDate.getUTCDate().toString().padStart(2, '0');
                     birthDate = `${year}-${month}-${day}`;
                 } else {
                     importErrors.push(`Linha ${rowIndex}: Data de Nascimento inválida ('${birthDateStr}'). Use AAAA-MM-DD ou deixe em branco.`);
@@ -300,4 +297,3 @@ export default function AddPatientPage() {
     </div>
   );
 }
-
