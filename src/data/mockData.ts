@@ -6,22 +6,9 @@ const today = new Date();
 
 export const mockItems: Item[] = [];
 
-export const mockHospitals: Hospital[] = [
-  { id: 'hosp1', name: 'Hospital Central da Cidade', address: 'Rua Principal, 123, Centro' },
-  { id: 'hosp2', name: 'Hospital Regional Norte', address: 'Av. das Palmeiras, 456, Zona Norte' },
-  { id: 'hosp3', name: 'Hospital Infantil Sul', address: 'Rua dos Girassóis, 789, Zona Sul' },
-  { id: 'ubs1', name: 'UBS Vila Esperança', address: 'Rua da Saúde, 10, Vila Esperança' },
-];
+export const mockHospitals: Hospital[] = [];
 
-export const mockServedUnits: ServedUnit[] = [
-  { id: 'su1', name: 'Sala de Emergência', location: 'Piso 1, Ala A', hospitalId: 'hosp1', hospitalName: mockHospitals.find(h => h.id === 'hosp1')?.name },
-  { id: 'su2', name: 'Ala Pediátrica', location: 'Piso 2, Ala B', hospitalId: 'hosp1', hospitalName: mockHospitals.find(h => h.id === 'hosp1')?.name },
-  { id: 'su3', name: 'Farmácia Principal', location: 'Térreo', hospitalId: 'hosp2', hospitalName: mockHospitals.find(h => h.id === 'hosp2')?.name },
-  { id: 'su4', name: 'UTI Neonatal', location: 'Piso 3, Ala C', hospitalId: 'hosp3', hospitalName: mockHospitals.find(h => h.id === 'hosp3')?.name },
-  { id: 'su5', name: 'Centro Cirúrgico', location: 'Subsolo', hospitalId: 'hosp1', hospitalName: mockHospitals.find(h => h.id === 'hosp1')?.name },
-  { id: 'su6', name: 'Consultório 1 - Clínica Geral', location: 'Térreo', hospitalId: 'ubs1', hospitalName: mockHospitals.find(h => h.id === 'ubs1')?.name },
-  { id: 'su7', name: 'Sala de Vacinação', location: 'Piso Superior', hospitalId: 'ubs1', hospitalName: mockHospitals.find(h => h.id === 'ubs1')?.name },
-];
+export const mockServedUnits: ServedUnit[] = [];
 
 export const mockPatients: Patient[] = [];
 
