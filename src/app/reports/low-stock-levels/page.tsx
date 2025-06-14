@@ -24,7 +24,6 @@ interface FirestoreStockConfig {
   itemId: string;
   strategicStockLevel: number;
   minQuantity: number;
-  // unitId e hospitalId não são usados neste relatório, pois focamos no central
 }
 
 // Interface para exibição no relatório
@@ -110,7 +109,7 @@ export default function LowStockLevelsReportPage() {
 
     const checkDoneLoading = () => {
       if (itemsLoaded && configsLoaded) {
-        // O setIsLoading(false) será chamado no useEffect que processa os dados
+        // setIsLoading(false) será chamado no useEffect que processa os dados
       }
     };
 
@@ -128,8 +127,6 @@ export default function LowStockLevelsReportPage() {
 
     const configsQuery = query(collection(firestore, "stockConfigs"));
     const unsubscribeConfigs = onSnapshot(configsQuery, (snapshot) => {
-      // Filtramos aqui para pegar apenas configs do armazém central ou configs que tenham itemId
-      // Na verdade, a lógica de combinação usará todas as configs e fará a correspondência
       setFirestoreStockConfigs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig)));
       configsLoaded = true;
       checkDoneLoading();
@@ -147,8 +144,8 @@ export default function LowStockLevelsReportPage() {
   }, [toast]);
 
   useEffect(() => {
-    if (firestoreItems.length > 0 || (firestoreItems.length === 0 && firestoreStockConfigs.length >=0 && !isLoading)) {
-      setIsLoading(true); // Para fase de processamento
+    if (firestoreItems.length > 0 || (!isLoading && firestoreItems.length === 0 && firestoreStockConfigs.length >=0 )) {
+      setIsLoading(true);
       const processed: LowStockReportItem[] = firestoreItems.map(item => {
         const centralConfigId = `${item.id}_central`;
         const config = firestoreStockConfigs.find(sc => sc.id === centralConfigId);
@@ -158,18 +155,17 @@ export default function LowStockLevelsReportPage() {
         const currentQuantity = item.currentQuantityCentral;
         const strategicLvl = config?.strategicStockLevel;
         const minQtyConfig = config?.minQuantity;
-        // effectiveMinQuantity usa o minQuantity da config se existir, senão o minQuantity do item (do catálogo)
         const effectiveMinQuantity = minQtyConfig ?? item.minQuantity;
 
 
-        if (config) { // Se existe uma configuração para o armazém central
-          statusLabel = 'Ótimo'; // Default
+        if (config) {
+          statusLabel = 'Ótimo';
           statusVariant = 'default';
           if (currentQuantity < effectiveMinQuantity) {
-            statusLabel = 'Baixo'; // Abaixo do mínimo (configurado ou do item)
-            statusVariant = 'secondary';
+            statusLabel = 'Baixo';
+            statusVariant = 'destructive'; // Alterado para 'destructive' para status Baixo
           } else if (strategicLvl !== undefined && currentQuantity < strategicLvl) {
-            statusLabel = 'Alerta'; // Abaixo do estratégico, mas acima ou igual ao mínimo
+            statusLabel = 'Alerta';
             statusVariant = 'destructive';
           }
         }
@@ -185,14 +181,12 @@ export default function LowStockLevelsReportPage() {
       setProcessedReportItems(processed.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
       setIsLoading(false);
     } else if (!isLoading && firestoreItems.length === 0) {
-        // Se não há itens, não há o que processar.
         setProcessedReportItems([]);
         setIsLoading(false);
     }
 
   }, [firestoreItems, firestoreStockConfigs, isLoading]);
 
-  // Efeito para atualizar o relatório quando os filtros ou os itens processados mudam
   useEffect(() => {
     if (!isLoading) {
       onSubmit(form.getValues());
@@ -202,8 +196,7 @@ export default function LowStockLevelsReportPage() {
 
 
   const onSubmit = (filters: ReportFiltersFormData) => {
-    console.log("Gerando relatório de níveis de estoque baixos/alerta com filtros:", filters);
-    if (isLoading) return; // Não gerar se ainda estiver carregando dados primários
+    if (isLoading) return;
 
     const filtered = processedReportItems.filter(item => {
       const itemMatch = filters.itemId === 'all' || !filters.itemId || item.id === filters.itemId;
@@ -318,7 +311,7 @@ export default function LowStockLevelsReportPage() {
               </TableHeader>
               <TableBody>
                 {reportData.map((item) => (
-                  <TableRow key={item.id} className={item.statusVariant === 'destructive' ? 'bg-red-500/5' : item.statusVariant === 'secondary' ? 'bg-yellow-500/5' : ''}>
+                  <TableRow key={item.id} className={item.statusVariant === 'destructive' ? 'bg-red-500/5' : ''}>
                     <TableCell className="font-medium">{item.name}</TableCell>
                     <TableCell>{item.code}</TableCell>
                     <TableCell className="text-right">{item.currentQuantityCentral}</TableCell>
@@ -345,4 +338,6 @@ export default function LowStockLevelsReportPage() {
     </div>
   );
 }
+    
+
     
