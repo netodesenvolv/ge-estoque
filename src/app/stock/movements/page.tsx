@@ -172,7 +172,7 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
                 minQuantity: 0, 
               });
             }
-          } else if (!processedData.hospitalId) { 
+          } else if (!processedData.hospitalId && !processedData.unitId) { 
             if (newQuantityCentral < processedData.quantity) {
               throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Armazém Central para ${currentItemData.name} para baixa/consumo direto. Necessário: ${processedData.quantity}`);
             }
@@ -215,7 +215,7 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
           
           if (unitDesc && hospitalDesc) { 
               description += ` para ${unitDesc.name} (${hospitalDesc.name}).`;
-          } else if (!processedData.hospitalId) { 
+          } else if (!processedData.hospitalId && !processedData.unitId) { 
               description += ` (Baixa/Consumo direto do Armazém Central).`;
           }
       }
@@ -564,11 +564,22 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 const itemCode = row["Código do Item"]?.trim();
                 itemCodeForRow = itemCode || "N/A";
                 
-                const typeStrRaw = row["Tipo"]?.trim();
-                const typeStr = typeStrRaw?.toLowerCase() as MovementFormData['type'];
+                const typeStrRaw = row["Tipo"]; // Não fazer trim inicial aqui para inspecionar BOM
+                
+                let typeStr = typeStrRaw;
+                if (typeStr) {
+                    // Remover BOM explicitamente se estiver no início da string
+                    if (typeStr.charCodeAt(0) === 0xFEFF) { // 0xFEFF é o código do BOM
+                        console.log(`Linha ${rowIndex} (${itemCodeForRow}): BOM detectado e removido do início da string de tipo.`);
+                        typeStr = typeStr.substring(1);
+                    }
+                    // Normalizar espaços (substituir múltiplos/vários por um único espaço padrão) e depois trim e toLowerCase
+                    typeStr = typeStr.replace(/\s+/g, ' ').trim().toLowerCase();
+                }
+
 
                 // Log detalhado do tipo
-                console.log(`Linha ${rowIndex} (${itemCodeForRow}): Tipo lido do CSV (raw): '${typeStrRaw}', Após trim/toLowerCase: '${typeStr}', Tipo JS: ${typeof typeStr}`);
+                console.log(`Linha ${rowIndex} (${itemCodeForRow}): Tipo lido do CSV (original): '${row["Tipo"]}', Após remoção de BOM e sanitização: '${typeStr}', Tipo JS: ${typeof typeStr}`);
                 if (typeStr) {
                   console.log(`Linha ${rowIndex} (${itemCodeForRow}): typeStr length: ${typeStr.length}`);
                   for (let k = 0; k < typeStr.length; k++) {
@@ -584,27 +595,38 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 const notesCsv = row["Observações"]?.trim();
 
                 if (!itemCode || !quantityStr || !dateStr) {
-                  importErrors.push(`Linha ${rowIndex}: Código do Item, Quantidade e Data são obrigatórios.`);
+                  importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Código do Item, Quantidade e Data são obrigatórios.`);
                   console.warn(`Linha ${rowIndex}: Validação falhou - campos obrigatórios (item, qtd, data). Item: ${itemCodeForRow}`);
                   continue;
                 }
                 
-                // VALIDAÇÃO DO TIPO REVISADA
-                if (typeStr === undefined || typeStr === null || typeStr.trim() === "" || (typeStr !== 'entry' && typeStr !== 'exit' && typeStr !== 'consumption')) {
-                  importErrors.push(`Linha ${rowIndex}: Tipo de movimentação inválido ('${typeStrRaw || 'VAZIO'}'). Use 'entrada', 'saida' ou 'consumo'.`);
-                  console.warn(`Linha ${rowIndex}: Validação falhou - tipo inválido. Item: ${itemCodeForRow}, Tipo CSV: '${row["Tipo"]?.trim()}', Tipo Processado: '${typeStr}'`);
-                  continue;
+                if (typeStr === undefined || typeStr === null || typeStr.trim() === "" ) {
+                    importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Tipo de movimentação é obrigatório.`);
+                    console.warn(`Linha ${rowIndex}: Validação falhou - tipo está vazio ou undefined. Item: ${itemCodeForRow}`);
+                    continue;
+                }
+
+                const isValidType = typeStr === 'entry' || typeStr === 'saida' || typeStr === 'consumption';
+                if (!isValidType) {
+                    importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Tipo de movimentação inválido ('${typeStrRaw || 'VAZIO'}'). Use 'entrada', 'saida' ou 'consumo'.`);
+                    console.warn(`Linha ${rowIndex}: Validação falhou - tipo não corresponde a entry/saida/consumption. Item: ${itemCodeForRow}, Tipo CSV Original: '${row["Tipo"]}', Tipo Processado Final: '${typeStr}'`);
+                     if (typeStr) {
+                        for (let k = 0; k < typeStr.length; k++) {
+                            console.log(`Linha ${rowIndex} (${itemCodeForRow}): FAILED_TYPE_VALIDATION charCodeAt(${k}) ('${typeStr[k]}'): ${typeStr.charCodeAt(k)}`);
+                        }
+                    }
+                    continue;
                 }
 
 
                 const quantity = parseInt(quantityStr, 10);
                 if (isNaN(quantity) || quantity <= 0) {
-                  importErrors.push(`Linha ${rowIndex}: Quantidade inválida ('${quantityStr}'). Deve ser um número positivo.`);
+                  importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Quantidade inválida ('${quantityStr}'). Deve ser um número positivo.`);
                   console.warn(`Linha ${rowIndex}: Validação falhou - quantidade inválida. Item: ${itemCodeForRow}, Qtd: ${quantityStr}`);
                   continue;
                 }
                 if (isNaN(Date.parse(dateStr))) {
-                    importErrors.push(`Linha ${rowIndex}: Data inválida ('${dateStr}'). Use o formato AAAA-MM-DD.`);
+                    importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Data inválida ('${dateStr}'). Use o formato AAAA-MM-DD.`);
                     console.warn(`Linha ${rowIndex}: Validação falhou - data inválida. Item: ${itemCodeForRow}, Data: ${dateStr}`);
                     continue;
                 }
@@ -622,11 +644,11 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 let selectedHospital: Hospital | undefined = undefined;
                 let selectedUnit: ServedUnit | undefined = undefined;
 
-                if (typeStr === 'exit' || typeStr === 'consumption') {
+                if (typeStr === 'saida' || typeStr === 'consumption') {
                     if (hospitalNameCsv) {
                         selectedHospital = hospitals.find(h => h.name.toLowerCase() === hospitalNameCsv.toLowerCase());
                         if (!selectedHospital) {
-                            importErrors.push(`Linha ${rowIndex}: Hospital '${hospitalNameCsv}' não encontrado.`);
+                            importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Hospital '${hospitalNameCsv}' não encontrado.`);
                             console.warn(`Linha ${rowIndex}: Validação falhou - hospital não encontrado. Hospital CSV: ${hospitalNameCsv}`);
                             continue; 
                         }
@@ -635,13 +657,13 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                         if (unitNameCsv) {
                             selectedUnit = servedUnits.find(u => u.name.toLowerCase() === unitNameCsv.toLowerCase() && u.hospitalId === hospitalId);
                             if (!selectedUnit) {
-                                importErrors.push(`Linha ${rowIndex}: Unidade '${unitNameCsv}' não encontrada ou não pertence ao hospital '${hospitalNameCsv}'.`);
+                                importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Unidade '${unitNameCsv}' não encontrada ou não pertence ao hospital '${hospitalNameCsv}'.`);
                                 console.warn(`Linha ${rowIndex}: Validação falhou - unidade não encontrada/não pertence. Unidade CSV: ${unitNameCsv}, Hospital: ${hospitalNameCsv}`);
                                 continue; 
                             }
                             unitId = selectedUnit.id;
                         } else { 
-                             importErrors.push(`Linha ${rowIndex}: Nome da Unidade é obrigatório se o Nome do Hospital ('${hospitalNameCsv}') for especificado para tipo '${typeStr}'. Para baixa direta do armazém, deixe ambos em branco.`);
+                             importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Nome da Unidade é obrigatório se o Nome do Hospital ('${hospitalNameCsv}') for especificado para tipo '${typeStr}'. Para baixa direta do armazém, deixe ambos em branco.`);
                              console.warn(`Linha ${rowIndex}: Validação falhou - unidade obrigatória não fornecida. Hospital CSV: ${hospitalNameCsv}, Tipo: ${typeStr}`);
                              continue;
                         }
@@ -651,7 +673,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 if (typeStr === 'consumption' && patientSUS) {
                     const patient = patients.find(p => p.susCardNumber === patientSUS);
                     if (!patient) {
-                        importErrors.push(`Linha ${rowIndex}: Paciente com Cartão SUS '${patientSUS}' não encontrado.`);
+                        importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Paciente com Cartão SUS '${patientSUS}' não encontrado.`);
                         console.warn(`Linha ${rowIndex}: Validação falhou - paciente não encontrado. SUS: ${patientSUS}`);
                         continue;
                     }
@@ -660,7 +682,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 
                 const movementData: MovementFormData = {
                     itemId: item.id,
-                    type: typeStr,
+                    type: typeStr as MovementFormData['type'], // Cast é seguro aqui devido à validação anterior
                     quantity: quantity,
                     date: dateStr,
                     hospitalId: hospitalId,
