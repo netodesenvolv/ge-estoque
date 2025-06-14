@@ -11,18 +11,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import type { Patient } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
-import { CalendarIcon } from 'lucide-react';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Calendar } from '@/components/ui/calendar';
-import { format } from 'date-fns';
-import { cn } from '@/lib/utils';
 import { firestore } from '@/lib/firebase';
 import { collection, addDoc, doc, setDoc } from 'firebase/firestore';
 import { useEffect } from 'react';
 
 const patientSchema = z.object({
   name: z.string().min(3, { message: "O nome do paciente deve ter pelo menos 3 caracteres." }),
-  birthDate: z.date({ required_error: "A data de nascimento é obrigatória.", invalid_type_error: "Data de nascimento inválida."}),
+  birthDate: z.string().optional(), // Alterado: string opcional para input type="date"
   susCardNumber: z.string()
     .min(15, { message: "O número do Cartão SUS deve ter 15 dígitos." })
     .max(15, { message: "O número do Cartão SUS deve ter 15 dígitos." })
@@ -45,11 +40,11 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
     resolver: zodResolver(patientSchema),
     defaultValues: initialData ? {
       ...initialData,
-      birthDate: initialData.birthDate ? new Date(initialData.birthDate) : new Date(), // Garante que seja um objeto Date
+      birthDate: initialData.birthDate || '', // Se for null/undefined, usa string vazia
     } : {
       name: '',
       susCardNumber: '',
-      birthDate: undefined,
+      birthDate: '', // String vazia para input type="date"
     },
   });
 
@@ -57,15 +52,16 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
     if (initialData) {
       form.reset({
         ...initialData,
-        birthDate: initialData.birthDate ? new Date(initialData.birthDate) : new Date(),
+        birthDate: initialData.birthDate || '',
       });
     }
   }, [initialData, form]);
 
   const onSubmit = async (data: PatientFormData) => {
-    const patientDataToSave = {
-      ...data,
-      birthDate: format(data.birthDate, 'yyyy-MM-dd'), // Formata para string ISO antes de salvar
+    const patientDataToSave: Omit<Patient, 'id'> = {
+      name: data.name,
+      susCardNumber: data.susCardNumber,
+      birthDate: data.birthDate ? data.birthDate : undefined, // Converte string vazia para undefined
     };
 
     try {
@@ -75,7 +71,7 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
         await setDoc(patientDocRef, patientDataToSave, { merge: true });
         toast({
           title: "Paciente Atualizado",
-          description: `${data.name} foi atualizado(a) com sucesso.`,
+          description: `${patientDataToSave.name} foi atualizado(a) com sucesso.`,
           variant: "default",
         });
       } else {
@@ -84,7 +80,7 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
         await addDoc(patientsCollectionRef, patientDataToSave);
         toast({
           title: "Paciente Adicionado",
-          description: `${data.name} foi adicionado(a) com sucesso ao banco de dados.`,
+          description: `${patientDataToSave.name} foi adicionado(a) com sucesso ao banco de dados.`,
           variant: "default",
         });
       }
@@ -131,38 +127,11 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
               name="birthDate"
               render={({ field }) => (
                 <FormItem className="flex flex-col">
-                  <FormLabel>Data de Nascimento</FormLabel>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <FormControl>
-                        <Button
-                          variant={"outline"}
-                          className={cn(
-                            "w-full pl-3 text-left font-normal",
-                            !field.value && "text-muted-foreground"
-                          )}
-                        >
-                          {field.value ? (
-                            format(field.value, "dd/MM/yyyy")
-                          ) : (
-                            <span>Selecione uma data</span>
-                          )}
-                          <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                        </Button>
-                      </FormControl>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={field.value}
-                        onSelect={field.onChange}
-                        disabled={(date) =>
-                          date > new Date() || date < new Date("1900-01-01")
-                        }
-                        initialFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
+                  <FormLabel>Data de Nascimento (Opcional)</FormLabel>
+                  <FormControl>
+                    <Input type="date" {...field} />
+                  </FormControl>
+                  <FormDescription>Formato AAAA-MM-DD.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

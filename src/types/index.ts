@@ -59,7 +59,7 @@ export interface StockMovement {
 export interface Patient {
   id: string;
   name: string;
-  birthDate: string; // ISO date string, e.g., "YYYY-MM-DD"
+  birthDate?: string; // ISO date string, e.g., "YYYY-MM-DD", agora opcional
   susCardNumber: string;
 }
 
