@@ -20,7 +20,7 @@ import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
 import { collection, query, orderBy, onSnapshot, doc, runTransaction, addDoc, getDocs, writeBatch } from 'firebase/firestore';
-import Papa from 'papaparse';
+import Papa, { type ParseError } from 'papaparse';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 
@@ -129,6 +129,7 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
         let unitConfigSnap = null;
         let unitConfigDocId = null;
         
+        // READS FIRST
         const itemSnap = await transaction.get(itemDocRef);
         if (!itemSnap.exists()) {
           throw new Error("Item não encontrado no banco de dados.");
@@ -138,9 +139,10 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
             processedData.hospitalId && processedData.unitId) {
           unitConfigDocId = `${processedData.itemId}_${processedData.unitId}`;
           unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
-          unitConfigSnap = await transaction.get(unitConfigDocRef);
+          unitConfigSnap = await transaction.get(unitConfigDocRef); // Read unit config
         }
         
+        // PREPARE WRITES
         const currentItemData = itemSnap.data() as Item;
         let newQuantityCentral = currentItemData.currentQuantityCentral;
 
@@ -515,7 +517,20 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
           const { data: rows, errors: parseErrors } = results;
 
           if (parseErrors.length > 0) {
-            toast({ title: "Erro ao Processar CSV", description: `Houve ${parseErrors.length} erro(s) ao ler o arquivo. Verifique o console.`, variant: "destructive" });
+             const errorMessages = parseErrors.map((err: ParseError) => `Linha ${err.row + 2}: ${err.message} (Código: ${err.code})`).join('\n');
+            toast({ 
+                title: "Erro ao Processar CSV", 
+                description: (
+                    <div className="max-h-60 overflow-y-auto text-xs">
+                        <p className="font-semibold mb-1">Houve {parseErrors.length} erro(s) ao ler o arquivo:</p>
+                        {parseErrors.map((err, i) => <p key={i}>Linha {err.row + 2}: {err.message} (Tipo: {err.type}, Código: {err.code})</p>)}
+                        <p className="mt-2">Verifique o console para mais detalhes técnicos.</p>
+                    </div>
+                ), 
+                variant: "destructive",
+                duration: 15000 
+            });
+            console.error("Erros de parsing do CSV:", parseErrors);
             setIsProcessing(false);
             return;
           }
@@ -576,7 +591,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                     selectedHospital = hospitals.find(h => h.name.toLowerCase() === hospitalNameCsv.toLowerCase());
                     if (!selectedHospital) {
                         importErrors.push(`Linha ${rowIndex}: Hospital '${hospitalNameCsv}' não encontrado.`);
-                        continue;
+                        continue; 
                     }
                     hospitalId = selectedHospital.id;
 
@@ -584,11 +599,11 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                         selectedUnit = servedUnits.find(u => u.name.toLowerCase() === unitNameCsv.toLowerCase() && u.hospitalId === hospitalId);
                         if (!selectedUnit) {
                             importErrors.push(`Linha ${rowIndex}: Unidade '${unitNameCsv}' não encontrada ou não pertence ao hospital '${hospitalNameCsv}'.`);
-                            continue;
+                            continue; 
                         }
                         unitId = selectedUnit.id;
-                    } else if (hospitalId) { 
-                         importErrors.push(`Linha ${rowIndex}: Unidade é obrigatória se o hospital '${hospitalNameCsv}' for especificado para saída/consumo.`);
+                    } else { 
+                         importErrors.push(`Linha ${rowIndex}: Nome da Unidade é obrigatório se o Nome do Hospital ('${hospitalNameCsv}') for especificado para tipo '${typeStr}'. Para baixa direta do armazém, deixe ambos em branco.`);
                          continue;
                     }
                 }
@@ -622,7 +637,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                     let unitConfigDocId = null;
                     
                     const itemSnap = await transaction.get(itemDocRef); 
-                    if (!itemSnap.exists()) throw new Error(`Item ${item.name} não encontrado na transação.`);
+                    if (!itemSnap.exists()) throw new Error(`Item ${item.name} não encontrado na transação (linha ${rowIndex}).`);
                     
                     if ((movementData.type === 'exit' || movementData.type === 'consumption') && movementData.hospitalId && movementData.unitId) {
                         unitConfigDocId = `${movementData.itemId}_${movementData.unitId}`;
@@ -638,7 +653,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                         transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
                     } else if (movementData.type === 'exit' || movementData.type === 'consumption') {
                         if (movementData.hospitalId && movementData.unitId && unitConfigDocRef) { 
-                            if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity})`);
+                            if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
                             
                             const newCentralQuantityAfterTransfer = newQuantityCentral - movementData.quantity;
                             transaction.update(itemDocRef, { currentQuantityCentral: newCentralQuantityAfterTransfer });
@@ -657,11 +672,11 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                                 });
                             }
                         } else if (!movementData.hospitalId) { 
-                            if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity})`);
+                            if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
                             newQuantityCentral -= movementData.quantity;
                             transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
                         } else {
-                            throw new Error("Configuração de saída/consumo inválida na planilha.");
+                            throw new Error(`Configuração de saída/consumo inválida na planilha (linha ${rowIndex}).`);
                         }
                     }
                     
@@ -705,10 +720,8 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
               duration: 10000,
             });
           }
-          if (successfulImports === 0 && importErrors.length === 0 && rows.length > 0) {
+          if (successfulImports === 0 && importErrors.length === 0 && rows.length > 0) { // Nenhuma válida, mas sem erros de parsing
             toast({ title: "Nenhuma Movimentação Válida", description: "Nenhuma movimentação válida encontrada na planilha ou todas falharam na validação inicial.", variant: "default" });
-          } else if (rows.length === 0) {
-             toast({ title: "Arquivo Vazio", description: "O arquivo CSV não contém dados para importar.", variant: "default" });
           }
           
           setIsProcessing(false);
@@ -716,13 +729,14 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
           const fileInput = document.getElementById('batch-movements-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
         },
-        error: (err) => {
-          toast({ title: "Erro de Leitura do CSV", description: `Não foi possível processar o arquivo CSV: ${err.message}`, variant: "destructive" });
+        error: (err) => { // Erro do PapaParse antes do 'complete'
+          toast({ title: "Erro Crítico de Leitura do CSV", description: `Não foi possível processar o arquivo CSV: ${err.message}. Verifique o formato do arquivo e o console.`, variant: "destructive" });
+          console.error("Erro crítico de parsing PapaParse:", err);
           setIsProcessing(false);
         }
       });
     };
-    reader.readAsText(file, 'UTF-8');
+    reader.readAsText(file, 'UTF-8'); // Especificando UTF-8
   };
 
 
@@ -884,4 +898,3 @@ export default function StockMovementsPage() {
   );
 }
     
-
