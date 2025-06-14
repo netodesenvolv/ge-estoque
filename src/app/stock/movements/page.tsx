@@ -166,7 +166,7 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
               transaction.set(unitConfigDocRef, {
                 itemId: processedData.itemId,
                 unitId: processedData.unitId,
-                hospitalId: unitDetails?.hospitalId || null, // Usar null se undefined
+                hospitalId: unitDetails?.hospitalId || null, 
                 currentQuantity: processedData.quantity,
                 strategicStockLevel: 0, 
                 minQuantity: 0, 
@@ -566,8 +566,15 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 
                 const typeStrRaw = row["Tipo"]?.trim();
                 const typeStr = typeStrRaw?.toLowerCase() as MovementFormData['type'];
-                console.log(`Linha ${rowIndex} (${itemCodeForRow}): Tipo lido do CSV (raw): '${typeStrRaw}', Após trim/toLowerCase: '${typeStr}', Tipo JS: ${typeof typeStr}`);
 
+                // Log detalhado do tipo
+                console.log(`Linha ${rowIndex} (${itemCodeForRow}): Tipo lido do CSV (raw): '${typeStrRaw}', Após trim/toLowerCase: '${typeStr}', Tipo JS: ${typeof typeStr}`);
+                if (typeStr) {
+                  console.log(`Linha ${rowIndex} (${itemCodeForRow}): typeStr length: ${typeStr.length}`);
+                  for (let k = 0; k < typeStr.length; k++) {
+                    console.log(`Linha ${rowIndex} (${itemCodeForRow}): charCodeAt(${k}) ('${typeStr[k]}'): ${typeStr.charCodeAt(k)}`);
+                  }
+                }
 
                 const quantityStr = row["Quantidade"]?.trim();
                 const dateStr = row["Data"]?.trim(); 
@@ -576,17 +583,19 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 const patientSUS = row["Cartão SUS Paciente"]?.trim();
                 const notesCsv = row["Observações"]?.trim();
 
-                if (!itemCode || !typeStr || !quantityStr || !dateStr) {
-                  importErrors.push(`Linha ${rowIndex}: Código do Item, Tipo, Quantidade e Data são obrigatórios.`);
-                  console.warn(`Linha ${rowIndex}: Validação falhou - campos obrigatórios. Item: ${itemCodeForRow}`);
+                if (!itemCode || !quantityStr || !dateStr) {
+                  importErrors.push(`Linha ${rowIndex}: Código do Item, Quantidade e Data são obrigatórios.`);
+                  console.warn(`Linha ${rowIndex}: Validação falhou - campos obrigatórios (item, qtd, data). Item: ${itemCodeForRow}`);
                   continue;
                 }
-
-                if (!typeStr || !['entry', 'exit', 'consumption'].includes(typeStr)) {
-                  importErrors.push(`Linha ${rowIndex}: Tipo de movimentação inválido ('${typeStr || typeStrRaw || 'VAZIO'}'). Use 'entrada', 'saida' ou 'consumo'.`);
+                
+                // VALIDAÇÃO DO TIPO REVISADA
+                if (typeStr === undefined || typeStr === null || typeStr.trim() === "" || (typeStr !== 'entry' && typeStr !== 'exit' && typeStr !== 'consumption')) {
+                  importErrors.push(`Linha ${rowIndex}: Tipo de movimentação inválido ('${typeStrRaw || 'VAZIO'}'). Use 'entrada', 'saida' ou 'consumo'.`);
                   console.warn(`Linha ${rowIndex}: Validação falhou - tipo inválido. Item: ${itemCodeForRow}, Tipo CSV: '${row["Tipo"]?.trim()}', Tipo Processado: '${typeStr}'`);
                   continue;
                 }
+
 
                 const quantity = parseInt(quantityStr, 10);
                 if (isNaN(quantity) || quantity <= 0) {
@@ -636,7 +645,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                              console.warn(`Linha ${rowIndex}: Validação falhou - unidade obrigatória não fornecida. Hospital CSV: ${hospitalNameCsv}, Tipo: ${typeStr}`);
                              continue;
                         }
-                    } // Se hospitalNameCsv for undefined/vazio, é baixa direta (hospitalId e unitId permanecem undefined)
+                    } 
                 }
                 
                 if (typeStr === 'consumption' && patientSUS) {
@@ -669,7 +678,6 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                         let unitConfigSnap = null;
                         let unitConfigDocId = null;
                         
-                        // --- LEITURAS PRIMEIRO ---
                         const itemSnap = await transaction.get(itemDocRef); 
                         if (!itemSnap.exists()) throw new Error(`Item ${item.name} não encontrado na transação (linha ${rowIndex}).`);
                         
@@ -678,7 +686,6 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                             unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
                             unitConfigSnap = await transaction.get(unitConfigDocRef); 
                         }
-                        // --- FIM DAS LEITURAS ---
 
                         const currentItemData = itemSnap.data() as Item;
                         let newQuantityCentral = currentItemData.currentQuantityCentral;
@@ -688,7 +695,6 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                             transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
                         } else if (movementData.type === 'exit' || movementData.type === 'consumption') {
                             if (movementData.hospitalId && movementData.unitId && unitConfigDocRef) { 
-                                // Saída/Consumo para uma unidade específica
                                 if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
                                 
                                 const newCentralQuantityAfterTransfer = newQuantityCentral - movementData.quantity;
@@ -698,28 +704,24 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                                     const currentUnitConfigData = unitConfigSnap.data();
                                     const newUnitQuantity = (currentUnitConfigData.currentQuantity || 0) + movementData.quantity;
                                     transaction.update(unitConfigDocRef, { currentQuantity: newUnitQuantity });
-                                } else { // Unidade não tem configuração de estoque ainda, criar uma
+                                } else { 
                                     transaction.set(unitConfigDocRef, {
                                         itemId: movementData.itemId,
                                         unitId: movementData.unitId,
                                         hospitalId: movementData.hospitalId || null,
                                         currentQuantity: movementData.quantity,
-                                        strategicStockLevel: 0, minQuantity: 0, // Padrões, ajustar depois
+                                        strategicStockLevel: 0, minQuantity: 0, 
                                     });
                                 }
                             } else if (!movementData.hospitalId && !movementData.unitId) { 
-                                // Baixa/Consumo direto do Armazém Central
                                 if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
                                 newQuantityCentral -= movementData.quantity;
                                 transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
                             } else {
-                                // Caso inválido (e.g. hospitalId sem unitId, ou vice-versa se não for baixa direta)
-                                // Esta validação já deveria ter pego antes, mas é uma salvaguarda.
                                 throw new Error(`Configuração de saída/consumo inválida na planilha (linha ${rowIndex}). Hospital/Unidade inconsistente.`);
                             }
                         }
                         
-                        // Registrar a movimentação
                         const patientDetailsForLog = patientId ? patients.find(p => p.id === patientId) : null;
                         const movementLog: Omit<StockMovement, 'id'> = {
                             itemId: item.id, itemName: item.name || null,
@@ -742,7 +744,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                     importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Erro na transação - ${transactionError.message}`);
                 }
 
-            } catch (syncError: any) { // Erros na preparação/validação da linha antes da transação
+            } catch (syncError: any) { 
                 console.error(`Linha ${rowIndex} (${itemCodeForRow}): Erro de preparação/validação da linha - `, syncError);
                 importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Erro de preparação/validação - ${syncError.message}`);
             }
@@ -758,7 +760,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 </div>
               ),
               variant: "destructive",
-              duration: successfulImports > 0 ? 15000 : 20000, // Aumentado
+              duration: successfulImports > 0 ? 15000 : 20000, 
             });
           }
           if (successfulImports > 0) {
@@ -948,3 +950,4 @@ export default function StockMovementsPage() {
   );
 }
     
+
