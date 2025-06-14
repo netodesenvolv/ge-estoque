@@ -18,7 +18,7 @@ import { mockServedUnits, mockHospitals, mockPatients } from '@/data/mockData';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, runTransaction, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, runTransaction } from 'firebase/firestore';
 
 const CENTRAL_WAREHOUSE_EXIT_VALUE = "CENTRAL_WAREHOUSE_DIRECT_EXIT";
 
@@ -32,9 +32,7 @@ const movementSchema = z.object({
   date: z.string().refine((date) => !isNaN(Date.parse(date)), { message: "Data inválida." }),
   notes: z.string().optional(),
 }).refine(data => {
-  if (data.type === 'consumption' && data.unitId && !data.patientId) {
-    // Para consumo em unidade, o paciente pode ser obrigatório dependendo da regra de negócio.
-  }
+  // Validação para Saída ou Consumo: se um hospital específico é selecionado, a unidade é obrigatória.
   if ((data.type === 'exit' || data.type === 'consumption') &&
       data.hospitalId && data.hospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE &&
       !data.unitId) {
@@ -45,13 +43,16 @@ const movementSchema = z.object({
   message: "Para Saída ou Consumo com um Hospital específico selecionado, a Unidade Servida também deve ser selecionada.",
   path: ["unitId"],
 }).refine(data => {
-    if((data.type === 'exit' || data.type === 'consumption') && !data.hospitalId && data.unitId && data.hospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE){
-        return false;
-    }
-    return true;
+  // Validação para Saída ou Consumo: se a baixa é direta do armazém central, não pode haver unidade selecionada.
+  if ((data.type === 'exit' || data.type === 'consumption') &&
+      data.hospitalId === CENTRAL_WAREHOUSE_EXIT_VALUE &&
+      data.unitId) {
+    return false;
+  }
+  return true;
 }, {
-    message: "A Unidade Servida não pode ser selecionada sem um Hospital.",
-    path: ["hospitalId"],
+  message: "Unidade Servida não deve ser selecionada para Baixa/Consumo direto do Armazém Central.",
+  path: ["unitId"],
 });
 
 
@@ -96,6 +97,7 @@ export default function StockMovementsPage() {
       toast({ title: "Erro ao Carregar Itens", description: "Não foi possível carregar a lista de itens.", variant: "destructive" });
     });
 
+    // TODO: Carregar servedUnits, hospitals, e patients do Firestore se necessário
     setServedUnits(mockServedUnits);
     setHospitals(mockHospitals);
     setPatients(mockPatients);
@@ -111,13 +113,15 @@ export default function StockMovementsPage() {
         form.setValue('unitId', undefined);
         form.setValue('patientId', undefined);
     } else if (movementType === 'exit') {
-        form.setValue('patientId', undefined);
+        form.setValue('patientId', undefined); // Saídas não têm paciente
     }
+    // Se for 'consumption', os campos podem ser mantidos para edição ou limpos pelo useEffect de selectedHospitalId
   }, [movementType, form]);
 
    useEffect(() => {
     form.setValue('unitId', undefined, { shouldValidate: true });
-    form.setValue('patientId', undefined);
+    // A lógica de visibilidade/obrigatoriedade de patientId é tratada por isConsumptionInUBS e pelo schema Zod.
+    // Não limpar patientId automaticamente aqui para permitir que o usuário ajuste o local de um consumo existente sem perder o paciente.
   }, [selectedHospitalId, form]);
 
 
@@ -140,8 +144,10 @@ export default function StockMovementsPage() {
     const patient = data.patientId ? patients.find(p => p.id === data.patientId) : null;
     
     let processedData = {...data};
+    // Se a opção "Baixa direta do Armazém Central" foi selecionada, hospitalId no backend deve ser undefined.
     if (data.hospitalId === CENTRAL_WAREHOUSE_EXIT_VALUE) {
-        processedData.hospitalId = undefined; // Clear hospital if it's the direct exit placeholder
+        processedData.hospitalId = undefined;
+        processedData.unitId = undefined; // Garante que unitId também seja undefined
     }
 
     try {
@@ -159,17 +165,19 @@ export default function StockMovementsPage() {
         if (processedData.type === 'entry') {
           newQuantityCentral += processedData.quantity;
         } else if (processedData.type === 'exit' || processedData.type === 'consumption') {
-          // For now, only handle direct exits/consumptions from Central Warehouse
-          if (!processedData.hospitalId && !processedData.unitId) {
+          // Apenas saídas/consumos diretos do Armazém Central alteram o estoque central nesta lógica.
+          // Saídas para unidades específicas não debitam o estoque central aqui (lógica futura).
+          if (!processedData.hospitalId && !processedData.unitId) { 
             if (newQuantityCentral < processedData.quantity) {
               throw new Error("Estoque insuficiente no Armazém Central para esta operação.");
             }
             newQuantityCentral -= processedData.quantity;
           } else {
-            // Logic for updating unit-specific stock would go here in the future
-            // For now, we assume unit-level consumption/exit doesn't directly debit central stock in this transaction.
-            // Or, if it should, the logic would be more complex, potentially involving StockItemConfig.
-            console.log("Movimentação para unidade/hospital, não alterando estoque central diretamente nesta lógica.");
+            // Lógica para debitar do estoque central ao transferir para unidade (se aplicável)
+            // ou para debitar estoque da unidade (requer gerenciamento de estoque por unidade).
+            // Por ora, se for para unidade, não alteramos o estoque central diretamente aqui,
+            // assumindo que a transferência será rastreada e o estoque da unidade gerenciado separadamente.
+             console.log("Movimentação para unidade/hospital. Estoque central não alterado diretamente nesta transação.");
           }
         }
         transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
@@ -182,13 +190,15 @@ export default function StockMovementsPage() {
 
       let description = `Movimentação de ${processedData.quantity} unidade(s) do item ${item?.name || processedData.itemId} registrada como ${processedData.type}.`;
       if (processedData.type !== 'entry') {
-          const hospital = hospitals.find(h => h.id === processedData.hospitalId);
-          const unit = servedUnits.find(u => u.id === processedData.unitId);
-          if (unit && hospital) {
+          const hospital = hospitals.find(h => h.id === processedData.hospitalId); // Usa o processedData.hospitalId
+          const unit = servedUnits.find(u => u.id === processedData.unitId); // Usa o processedData.unitId
+          
+          if (unit && hospital) { // Se foi para uma unidade específica
               description += ` para ${unit.name} (${hospital.name}).`;
-          } else if (!processedData.hospitalId) { 
+          } else if (!processedData.hospitalId) { // Se foi baixa direta (processedData.hospitalId é undefined)
               description += ` (Baixa direta do Armazém Central).`;
           }
+          // Se um hospital foi selecionado mas não uma unidade (e não é baixa direta), o schema Zod já deve ter barrado.
       }
       if (patient) {
         description += ` Paciente: ${patient.name}.`;
@@ -290,23 +300,24 @@ export default function StockMovementsPage() {
                         <FormLabel>Hospital de Destino/Consumo</FormLabel>
                         <Select
                             onValueChange={field.onChange}
-                            value={field.value ?? CENTRAL_WAREHOUSE_EXIT_VALUE}
+                            value={field.value ?? CENTRAL_WAREHOUSE_EXIT_VALUE} // Garante que o placeholder seja o valor padrão
                         >
                           <FormControl><SelectTrigger><SelectValue placeholder="Selecione um hospital ou baixa direta" /></SelectTrigger></FormControl>
                           <SelectContent>
-                             <SelectItem value={CENTRAL_WAREHOUSE_EXIT_VALUE}>Nenhum (Baixa/Consumo do Armazém Central)</SelectItem>
+                             <SelectItem value={CENTRAL_WAREHOUSE_EXIT_VALUE}>Nenhum (Baixa/Consumo direto do Armazém Central)</SelectItem>
                             {hospitals.map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
                           </SelectContent>
                         </Select>
                          <FormDescription>
-                            {movementType === 'exit' && "Selecione 'Nenhum' para baixa direta do Armazém Central. Para transferir, selecione o hospital."}
-                            {movementType === 'consumption' && "Selecione 'Nenhum' se o consumo for diretamente do Armazém Central, ou o hospital onde o item foi consumido."}
+                            {movementType === 'exit' && "Para transferir, selecione o hospital de destino. Para baixa direta do estoque central, escolha 'Nenhum'."}
+                            {movementType === 'consumption' && "Selecione o hospital onde o item foi consumido. Se o consumo foi do estoque central, escolha 'Nenhum'."}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                  {selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE && (movementType === 'exit' || movementType === 'consumption') && (
+                  {/* O campo Unidade Servida só aparece se um hospital específico for selecionado */}
+                  {selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_EXIT_VALUE && (
                     <FormField
                       control={form.control}
                       name="unitId"
@@ -316,7 +327,7 @@ export default function StockMovementsPage() {
                           <Select
                             onValueChange={field.onChange}
                             value={field.value ?? undefined}
-                            disabled={!selectedHospitalId || availableUnits.length === 0 || selectedHospitalId === CENTRAL_WAREHOUSE_EXIT_VALUE}
+                            disabled={!selectedHospitalId || availableUnits.length === 0}
                           >
                             <FormControl><SelectTrigger>
                                 <SelectValue placeholder={availableUnits.length > 0 ? "Selecione uma unidade" : "Nenhuma unidade para este hospital"} />
@@ -412,3 +423,4 @@ export default function StockMovementsPage() {
     </div>
   );
 }
+
