@@ -7,6 +7,7 @@ import * as z from 'zod';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label'; // Adicionada importação
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
@@ -125,8 +126,8 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
       await runTransaction(firestore, async (transaction) => {
         const itemDocRef = doc(firestore, "items", processedData.itemId);
         let unitConfigDocRef = null;
-        let unitConfigDocId = null;
         let unitConfigSnap = null;
+        let unitConfigDocId = null;
         
         // ---- START OF READ PHASE ----
         const itemSnap = await transaction.get(itemDocRef);
@@ -194,7 +195,7 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
           type: processedData.type,
           quantity: processedData.quantity,
           date: processedData.date,
-          notes: processedData.notes || '',
+          notes: processedData.notes || null,
           hospitalId: processedData.hospitalId || null,
           hospitalName: hospitalDetailsForLog?.name || null,
           unitId: processedData.unitId || null,
@@ -629,12 +630,13 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients }: {
                     const itemDocRef = doc(firestore, "items", movementData.itemId);
                     let unitConfigDocRef = null;
                     let unitConfigSnap = null;
+                    let unitConfigDocId = null;
                     
                     const itemSnap = await transaction.get(itemDocRef); // Read item first
                     if (!itemSnap.exists()) throw new Error(`Item ${item.name} não encontrado na transação.`);
                     
                     if ((movementData.type === 'exit' || movementData.type === 'consumption') && movementData.hospitalId && movementData.unitId) {
-                        const unitConfigDocId = `${movementData.itemId}_${movementData.unitId}`;
+                        unitConfigDocId = `${movementData.itemId}_${movementData.unitId}`;
                         unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
                         unitConfigSnap = await transaction.get(unitConfigDocRef); // Read unit config
                     }
@@ -678,7 +680,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients }: {
                     const movementLog: Omit<StockMovement, 'id'> = {
                         itemId: item.id, itemName: item.name,
                         type: movementData.type, quantity: movementData.quantity, date: movementData.date,
-                        notes: movementData.notes || '',
+                        notes: movementData.notes || null,
                         hospitalId: movementData.hospitalId || null,
                         hospitalName: selectedHospital?.name || null,
                         unitId: movementData.unitId || null,
