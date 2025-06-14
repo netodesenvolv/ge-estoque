@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { firestore } from '@/lib/firebase';
 import { collection, query, orderBy, onSnapshot, doc, writeBatch, getDocs, setDoc, where } from 'firebase/firestore';
 
-// Interface para o que é armazenado no Firestore para stock_configs
+// Interface para o que é armazenado no Firestore para stockConfigs
 interface FirestoreStockConfig {
   itemId: string;
   unitId?: string;
@@ -60,7 +60,7 @@ export default function StockLevelsConfigPage() {
         setAllHospitals(hospitalsData);
         
         // Fetch existing stock configurations
-        const stockConfigsCollectionRef = collection(firestore, "stock_configs");
+        const stockConfigsCollectionRef = collection(firestore, "stockConfigs"); // Nome da coleção alterado
         const stockConfigsSnapshot = await getDocs(stockConfigsCollectionRef);
         const dbConfigsData = stockConfigsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig & {id: string}));
         setDbStockConfigs(dbConfigsData);
@@ -80,28 +80,27 @@ export default function StockLevelsConfigPage() {
   }, [toast]);
 
   useEffect(() => {
-    if (firestoreItems.length > 0 || (!isLoading && firestoreItems.length === 0)) { // Processa se tiver itens ou se o carregamento inicial (sem itens) terminou
-        setIsLoading(true); // Inicia o carregamento para a montagem das configs
+    if (firestoreItems.length > 0 || (!isLoading && firestoreItems.length === 0)) { 
+        setIsLoading(true); 
         const combinedConfigs: StockItemConfig[] = [];
 
         firestoreItems.forEach(item => {
             // Armazém Central
             const centralDbConfig = dbStockConfigs.find(c => c.itemId === item.id && !c.unitId);
             combinedConfigs.push({
-                id: `config_central_${item.id}`, // ID para o estado local/display
+                id: `config_central_${item.id}`, 
                 itemId: item.id,
                 itemName: item.name,
                 unitName: 'Armazém Central',
                 strategicStockLevel: centralDbConfig?.strategicStockLevel || 0,
-                minQuantity: centralDbConfig?.minQuantity ?? item.minQuantity, // Usa minQuantity do item como fallback
-                // currentQuantity: item.currentQuantityCentral, // Removido, não é configurável aqui
+                minQuantity: centralDbConfig?.minQuantity ?? item.minQuantity, 
             });
 
             allServedUnits.forEach(unit => {
                 const unitDbConfig = dbStockConfigs.find(c => c.itemId === item.id && c.unitId === unit.id);
                 const hospital = allHospitals.find(h => h.id === unit.hospitalId);
                 combinedConfigs.push({
-                    id: `config_${item.id}_${unit.id}`, // ID para o estado local/display
+                    id: `config_${item.id}_${unit.id}`, 
                     itemId: item.id,
                     itemName: item.name,
                     unitId: unit.id,
@@ -110,14 +109,13 @@ export default function StockLevelsConfigPage() {
                     hospitalName: hospital?.name || 'N/A',
                     strategicStockLevel: unitDbConfig?.strategicStockLevel || 0,
                     minQuantity: unitDbConfig?.minQuantity || 0,
-                    // currentQuantity: undefined, // Removido
                 });
             });
         });
         setStockConfigsForDisplay(combinedConfigs.sort((a,b) => (a.hospitalName || '').localeCompare(b.hospitalName || '') || (a.unitName || '').localeCompare(b.unitName || '') || (a.itemName || '').localeCompare(b.itemName || '')));
         setIsLoading(false);
     }
-  }, [firestoreItems, allServedUnits, allHospitals, dbStockConfigs, isLoading]); // Adicionado isLoading aqui também para re-trigger quando os dados base mudam
+  }, [firestoreItems, allServedUnits, allHospitals, dbStockConfigs, isLoading]);
 
 
   const handleInputChange = (configId: string, field: keyof StockItemConfig, value: string) => {
@@ -134,7 +132,7 @@ export default function StockLevelsConfigPage() {
 
     stockConfigsForDisplay.forEach(config => {
       const firestoreDocId = `${config.itemId}_${config.unitId || 'central'}`;
-      const configDocRef = doc(firestore, "stock_configs", firestoreDocId);
+      const configDocRef = doc(firestore, "stockConfigs", firestoreDocId); // Nome da coleção alterado
       
       const dataToSave: FirestoreStockConfig = {
         itemId: config.itemId,
@@ -156,9 +154,13 @@ export default function StockLevelsConfigPage() {
         title: "Configurações Salvas",
         description: "Todos os níveis estratégicos de estoque foram atualizados no banco de dados.",
       });
-      // Recarregar configs do DB para refletir possíveis novas entradas que não existiam antes (ou apenas confiar no estado)
-      // Para simplicidade, vamos assumir que o estado local está correto e não recarregaremos imediatamente.
-      // Poderia-se adicionar `setDbStockConfigs` aqui se houvesse chance de configs serem criadas e precisarem de um ID do DB.
+      // Para atualizar a visualização com os IDs corretos do Firestore após um novo save (se um config não existia antes),
+      // precisamos recarregar `dbStockConfigs`.
+      const stockConfigsCollectionRef = collection(firestore, "stockConfigs"); // Nome da coleção alterado
+      const stockConfigsSnapshot = await getDocs(stockConfigsCollectionRef);
+      const dbConfigsData = stockConfigsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig & {id: string}));
+      setDbStockConfigs(dbConfigsData);
+
     } catch (error) {
       console.error('Erro ao salvar configurações de nível de estoque:', error);
       toast({
@@ -212,7 +214,7 @@ export default function StockLevelsConfigPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading && stockConfigsForDisplay.length === 0 ? ( // Mostra loader apenas se realmente estiver carregando dados iniciais
+          {isLoading && stockConfigsForDisplay.length === 0 ? ( 
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="ml-3 text-muted-foreground">Carregando itens e configurações...</p>
@@ -285,5 +287,6 @@ export default function StockLevelsConfigPage() {
     </div>
   );
 }
+    
 
     
