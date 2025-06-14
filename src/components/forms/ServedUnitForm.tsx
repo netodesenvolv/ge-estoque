@@ -29,16 +29,21 @@ interface ServedUnitFormProps {
   onSubmitSuccess?: (data: ServedUnit) => void;
 }
 
+const LOADING_HOSPITALS_VALUE = "__LOADING_HOSPITALS__"; // Unique non-empty value
+
 export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedUnitFormProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
+  const [isLoadingHospitals, setIsLoadingHospitals] = useState(true);
 
   useEffect(() => {
+    setIsLoadingHospitals(true);
     const hospitalsCollectionRef = collection(firestore, "hospitals");
     const q = query(hospitalsCollectionRef, orderBy("name", "asc"));
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       setHospitals(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital)));
+      setIsLoadingHospitals(false);
     }, (error) => {
       console.error("Erro ao buscar hospitais: ", error);
       toast({
@@ -46,6 +51,7 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
         description: "Não foi possível carregar a lista de hospitais.",
         variant: "destructive",
       });
+      setIsLoadingHospitals(false);
     });
     return () => unsubscribe();
   }, [toast]);
@@ -59,7 +65,7 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
     } : {
       name: '',
       location: '',
-      hospitalId: '',
+      hospitalId: undefined, // Use undefined for no selection
     },
   });
 
@@ -111,15 +117,20 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Hospital</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value} value={field.value || ""}>
+                  <Select
+                    onValueChange={field.onChange}
+                    value={field.value} // Use field.value directly
+                    disabled={isLoadingHospitals}
+                  >
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Selecione um hospital" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {hospitals.length === 0 && <SelectItem value="" disabled>Carregando hospitais...</SelectItem>}
-                      {hospitals.map(hospital => (
+                      {isLoadingHospitals && <SelectItem value={LOADING_HOSPITALS_VALUE} disabled>Carregando hospitais...</SelectItem>}
+                      {!isLoadingHospitals && hospitals.length === 0 && <SelectItem value="__NO_HOSPITALS__" disabled>Nenhum hospital cadastrado</SelectItem>}
+                      {!isLoadingHospitals && hospitals.map(hospital => (
                         <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>
                       ))}
                     </SelectContent>
@@ -159,7 +170,7 @@ export default function ServedUnitForm({ initialData, onSubmitSuccess }: ServedU
             <Button type="button" variant="outline" onClick={() => router.back()}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={hospitals.length === 0}>
+            <Button type="submit" disabled={isLoadingHospitals || hospitals.length === 0 && !isLoadingHospitals}>
               {initialData ? 'Salvar Alterações' : 'Adicionar Unidade'}
             </Button>
           </CardFooter>
