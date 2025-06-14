@@ -11,9 +11,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import type { Hospital } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
+import { firestore } from '@/lib/firebase';
+import { collection, addDoc, doc, setDoc } from 'firebase/firestore';
+import { useEffect } from 'react';
 
 const hospitalSchema = z.object({
-  name: z.string().min(3, { message: "O nome do hospital deve ter pelo menos 3 caracteres." }),
+  name: z.string().min(3, { message: "O nome do hospital/UBS deve ter pelo menos 3 caracteres." }),
   address: z.string().optional(),
 });
 
@@ -21,10 +24,11 @@ type HospitalFormData = z.infer<typeof hospitalSchema>;
 
 interface HospitalFormProps {
   initialData?: Hospital;
+  hospitalId?: string; // ID do hospital para modo de edição
   onSubmitSuccess?: (data: Hospital) => void;
 }
 
-export default function HospitalForm({ initialData, onSubmitSuccess }: HospitalFormProps) {
+export default function HospitalForm({ initialData, hospitalId, onSubmitSuccess }: HospitalFormProps) {
   const router = useRouter();
   const { toast } = useToast();
 
@@ -36,26 +40,57 @@ export default function HospitalForm({ initialData, onSubmitSuccess }: HospitalF
     },
   });
 
-  const onSubmit = (data: HospitalFormData) => {
-    console.log('Formulário de hospital submetido:', data);
-    const hospitalId = initialData?.id || Math.random().toString(36).substring(2, 15);
-    const submittedHospital: Hospital = { ...data, id: hospitalId };
-    
-    if (onSubmitSuccess) {
-      onSubmitSuccess(submittedHospital);
-    } else {
+  useEffect(() => {
+    if (initialData) {
+      form.reset(initialData);
+    }
+  }, [initialData, form]);
+
+  const onSubmit = async (data: HospitalFormData) => {
+    const hospitalDataToSave: Omit<Hospital, 'id'> = {
+      name: data.name,
+      address: data.address || '', // Garante que address seja uma string
+    };
+
+    try {
+      if (hospitalId) {
+        // Modo de Edição
+        const hospitalDocRef = doc(firestore, "hospitals", hospitalId);
+        await setDoc(hospitalDocRef, hospitalDataToSave, { merge: true });
+        toast({
+          title: "Hospital Atualizado",
+          description: `${hospitalDataToSave.name} foi atualizado com sucesso.`,
+        });
+      } else {
+        // Modo de Adição
+        const hospitalsCollectionRef = collection(firestore, "hospitals");
+        await addDoc(hospitalsCollectionRef, hospitalDataToSave);
+        toast({
+          title: "Hospital Adicionado",
+          description: `${hospitalDataToSave.name} foi adicionado com sucesso ao banco de dados.`,
+        });
+      }
+      
+      if (onSubmitSuccess) {
+        // @ts-ignore
+        onSubmitSuccess({ ...hospitalDataToSave, id: hospitalId || 'new_id_placeholder' });
+      } else {
+        router.push('/hospitals'); 
+      }
+    } catch (error) {
+      console.error("Erro ao salvar hospital: ", error);
       toast({
-        title: initialData ? "Hospital Atualizado" : "Hospital Adicionado",
-        description: `${data.name} foi ${initialData ? 'atualizado' : 'adicionado'} com sucesso.`,
+        title: `Erro ao ${hospitalId ? 'Atualizar' : 'Adicionar'} Hospital`,
+        description: `Não foi possível ${hospitalId ? 'atualizar' : 'adicionar'} o hospital/UBS. Verifique o console.`,
+        variant: "destructive",
       });
-      router.push('/hospitals');
     }
   };
 
   return (
     <Card className="max-w-lg mx-auto shadow-lg">
       <CardHeader>
-        <CardTitle className="font-headline">{initialData ? 'Editar Hospital' : 'Adicionar Novo Hospital'}</CardTitle>
+        <CardTitle className="font-headline">{hospitalId ? 'Editar Hospital/UBS' : 'Adicionar Novo Hospital/UBS'}</CardTitle>
       </CardHeader>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -65,7 +100,7 @@ export default function HospitalForm({ initialData, onSubmitSuccess }: HospitalF
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Nome do Hospital</FormLabel>
+                  <FormLabel>Nome do Hospital/UBS</FormLabel>
                   <FormControl>
                     <Input placeholder="ex: Hospital Central da Cidade" {...field} />
                   </FormControl>
@@ -80,7 +115,7 @@ export default function HospitalForm({ initialData, onSubmitSuccess }: HospitalF
                 <FormItem>
                   <FormLabel>Endereço (Opcional)</FormLabel>
                   <FormControl>
-                    <Input placeholder="ex: Rua Principal, 123, Centro" {...field} />
+                    <Input placeholder="ex: Rua Principal, 123, Centro" {...field} value={field.value ?? ''} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -92,7 +127,7 @@ export default function HospitalForm({ initialData, onSubmitSuccess }: HospitalF
               Cancelar
             </Button>
             <Button type="submit">
-              {initialData ? 'Salvar Alterações' : 'Adicionar Hospital'}
+              {hospitalId ? 'Salvar Alterações' : 'Adicionar Hospital/UBS'}
             </Button>
           </CardFooter>
         </form>
