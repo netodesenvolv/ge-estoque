@@ -7,58 +7,93 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Settings2, Save, AlertCircle } from 'lucide-react';
+import { Settings2, Save, AlertCircle, Loader2 } from 'lucide-react';
 import type { StockItemConfig, Item, ServedUnit, Hospital } from '@/types';
-import { mockStockConfigs, mockItems, mockServedUnits, mockHospitals } from '@/data/mockData';
+import { mockStockConfigs, mockServedUnits, mockHospitals } from '@/data/mockData'; // mockItems removido
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { firestore } from '@/lib/firebase';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 
 export default function StockLevelsConfigPage() {
+  const [firestoreItems, setFirestoreItems] = useState<Item[]>([]);
   const [stockConfigs, setStockConfigs] = useState<StockItemConfig[]>([]);
-  const [allItems, setAllItems] = useState<Item[]>([]);
   const [allServedUnits, setAllServedUnits] = useState<ServedUnit[]>([]);
   const [allHospitals, setAllHospitals] = useState<Hospital[]>([]);
   const [hospitalFilter, setHospitalFilter] = useState<string>('all');
+  const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
 
   useEffect(() => {
-    setAllItems(mockItems);
-    setAllServedUnits(mockServedUnits);
-    setAllHospitals(mockHospitals);
-    
+    setIsLoading(true);
+    const itemsCollectionRef = collection(firestore, "items");
+    const qItems = query(itemsCollectionRef, orderBy("name", "asc"));
+
+    const unsubscribeItems = onSnapshot(qItems, (querySnapshot) => {
+      const itemsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item));
+      setFirestoreItems(itemsData);
+      // Manter mockServedUnits e mockHospitals por enquanto
+      setAllServedUnits(mockServedUnits.map(su => ({
+        ...su,
+        hospitalName: mockHospitals.find(h => h.id === su.hospitalId)?.name || 'N/A'
+      })));
+      setAllHospitals(mockHospitals);
+      setIsLoading(false); // Itens carregados
+    }, (error) => {
+      console.error("Erro ao buscar itens do Firestore: ", error);
+      toast({
+        title: "Erro ao Carregar Itens",
+        description: "Não foi possível carregar os itens do banco de dados.",
+        variant: "destructive",
+      });
+      setIsLoading(false);
+    });
+
+    return () => {
+      unsubscribeItems();
+    };
+  }, [toast]);
+
+  useEffect(() => {
+    // Recalcula stockConfigs quando firestoreItems ou os mocks de configs/units/hospitals mudarem
+    // Ou quando o carregamento inicial dos itens estiver concluído
+    if (isLoading && firestoreItems.length === 0) return; // Aguarda o carregamento inicial
+
     const combinedConfigs: StockItemConfig[] = [];
-    mockItems.forEach(item => {
+    firestoreItems.forEach(item => {
       // Armazém Central
       const centralConfig = mockStockConfigs.find(c => c.itemId === item.id && !c.unitId);
-      combinedConfigs.push(centralConfig || {
-        id: `cfg-central-${item.id}`,
+      combinedConfigs.push({
+        id: centralConfig?.id || `cfg-central-${item.id}`,
         itemId: item.id,
         itemName: item.name,
         unitName: 'Armazém Central',
-        strategicStockLevel: 0,
-        minQuantity: item.minQuantity,
+        strategicStockLevel: centralConfig?.strategicStockLevel || 0,
+        minQuantity: centralConfig?.minQuantity || item.minQuantity, // Usa minQuantity do item como fallback
+        currentQuantity: item.currentQuantityCentral, // Pega do item do Firestore
       });
 
-      // Unidades Servidas
-      mockServedUnits.forEach(unit => {
+      // Unidades Servidas (ainda usa mockServedUnits e mockStockConfigs para a lógica de unidades)
+      allServedUnits.forEach(unit => {
         const unitConfig = mockStockConfigs.find(c => c.itemId === item.id && c.unitId === unit.id);
-        const hospital = mockHospitals.find(h => h.id === unit.hospitalId);
-        combinedConfigs.push(unitConfig || {
-          id: `cfg-${item.id}-${unit.id}`,
+        const hospital = allHospitals.find(h => h.id === unit.hospitalId);
+        combinedConfigs.push({
+          id: unitConfig?.id || `cfg-${item.id}-${unit.id}`,
           itemId: item.id,
           itemName: item.name,
           unitId: unit.id,
           unitName: unit.name,
           hospitalId: unit.hospitalId,
           hospitalName: hospital?.name || 'N/A',
-          strategicStockLevel: 0,
-          minQuantity: 0, 
+          strategicStockLevel: unitConfig?.strategicStockLevel || 0,
+          minQuantity: unitConfig?.minQuantity || 0, // Para unidades, minQuantity da config ou 0
+          currentQuantity: unitConfig?.currentQuantity, // Da config mockada por enquanto
         });
       });
     });
     setStockConfigs(combinedConfigs);
 
-  }, []);
+  }, [firestoreItems, allServedUnits, allHospitals, isLoading]); // Adicionado isLoading
 
   const handleInputChange = (configId: string, field: keyof StockItemConfig, value: string) => {
     setStockConfigs(prevConfigs =>
@@ -71,8 +106,8 @@ export default function StockLevelsConfigPage() {
   const handleSaveAll = () => {
     console.log('Salvando todas as configurações de nível de estoque:', stockConfigs);
     toast({
-      title: "Configurações Salvas",
-      description: "Todos os níveis estratégicos de estoque foram atualizados.",
+      title: "Configurações Salvas (Simulação)",
+      description: "Todos os níveis estratégicos de estoque foram atualizados (simulação no console).",
     });
   };
 
@@ -89,7 +124,7 @@ export default function StockLevelsConfigPage() {
         description="Configure os níveis estratégicos e mínimos para itens no armazém central e unidades servidas por hospital."
         icon={Settings2}
         actions={
-          <Button onClick={handleSaveAll}>
+          <Button onClick={handleSaveAll} disabled={isLoading}>
             <Save className="mr-2 h-4 w-4" /> Salvar Todas as Alterações
           </Button>
         }
@@ -102,7 +137,7 @@ export default function StockLevelsConfigPage() {
             Quantidade mínima é o menor nível absoluto antes de um alerta crítico.
           </CardDescription>
           <div className="mt-4">
-            <Select value={hospitalFilter} onValueChange={setHospitalFilter}>
+            <Select value={hospitalFilter} onValueChange={setHospitalFilter} disabled={isLoading}>
                 <SelectTrigger className="w-full md:w-1/3">
                     <SelectValue placeholder="Filtrar por Hospital/Armazém" />
                 </SelectTrigger>
@@ -117,54 +152,61 @@ export default function StockLevelsConfigPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nome do Item</TableHead>
-                  <TableHead>Hospital</TableHead>
-                  <TableHead>Unidade/Localização</TableHead>
-                  <TableHead className="text-right">Qtde. Mínima</TableHead>
-                  <TableHead className="text-right">Nível Estratégico</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredConfigs.length > 0 ? (
-                  filteredConfigs.map((config) => (
-                    <TableRow key={config.id}>
-                      <TableCell className="font-medium">{config.itemName}</TableCell>
-                      <TableCell>{config.hospitalName || (config.unitId ? 'N/A' : '-')}</TableCell>
-                      <TableCell>{config.unitName}</TableCell>
-                      <TableCell className="text-right">
-                        <Input
-                          type="number"
-                          value={config.minQuantity}
-                          onChange={(e) => handleInputChange(config.id, 'minQuantity', e.target.value)}
-                          className="w-24 text-right ml-auto"
-                          min="0"
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Input
-                          type="number"
-                          value={config.strategicStockLevel}
-                          onChange={(e) => handleInputChange(config.id, 'strategicStockLevel', e.target.value)}
-                          className="w-24 text-right ml-auto"
-                          min="0"
-                        />
+          {isLoading ? (
+            <div className="flex items-center justify-center h-64">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="ml-3 text-muted-foreground">Carregando itens e configurações...</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nome do Item</TableHead>
+                    <TableHead>Hospital</TableHead>
+                    <TableHead>Unidade/Localização</TableHead>
+                    <TableHead className="text-right">Qtde. Mínima</TableHead>
+                    <TableHead className="text-right">Nível Estratégico</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredConfigs.length > 0 ? (
+                    filteredConfigs.map((config) => (
+                      <TableRow key={config.id}>
+                        <TableCell className="font-medium">{config.itemName}</TableCell>
+                        <TableCell>{config.hospitalName || (config.unitId ? 'N/A' : '-')}</TableCell>
+                        <TableCell>{config.unitName}</TableCell>
+                        <TableCell className="text-right">
+                          <Input
+                            type="number"
+                            value={config.minQuantity}
+                            onChange={(e) => handleInputChange(config.id, 'minQuantity', e.target.value)}
+                            className="w-24 text-right ml-auto"
+                            min="0"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Input
+                            type="number"
+                            value={config.strategicStockLevel}
+                            onChange={(e) => handleInputChange(config.id, 'strategicStockLevel', e.target.value)}
+                            className="w-24 text-right ml-auto"
+                            min="0"
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center h-24">
+                        Nenhum item ou unidade encontrada para configurar com o filtro atual.
                       </TableCell>
                     </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center h-24">
-                      Nenhum item ou unidade encontrada para configurar com o filtro atual.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
        <Card className="mt-6 bg-accent/30 border-accent shadow-lg">
