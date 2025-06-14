@@ -500,6 +500,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
     }
     
     setIsProcessing(true);
+    console.log("Iniciando processamento do CSV...");
     const reader = new FileReader();
 
     reader.onload = async (e) => {
@@ -514,12 +515,13 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
         header: true,
         skipEmptyLines: true,
         complete: async (results) => {
+          console.log("PapaParse 'complete' callback iniciado.");
           const { data: rows, errors: parseErrors } = results;
 
           if (parseErrors.length > 0) {
             console.error("Erros de parsing do CSV (objetos completos):", JSON.stringify(parseErrors, null, 2));
             const errorMessages = parseErrors.map((err: Papa.ParseError, index: number) => {
-              const rowInfo = typeof err.row === 'number' ? `Linha ${err.row + 2}: ` : `Erro genérico ${index + 1}: `;
+              const rowInfo = typeof err.row === 'number' ? `Linha CSV ${err.row + 2} (dados linha ${err.row +1}): ` : `Erro genérico ${index + 1}: `;
               const message = err.message || "Mensagem de erro não disponível";
               const type = err.type ? ` (Tipo: ${err.type}` : "";
               const code = err.code ? `, Código: ${err.code})` : (type ? ")" : "");
@@ -538,173 +540,200 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 duration: 20000 
             });
             setIsProcessing(false);
+            console.log("Processamento interrompido devido a erros de parsing.");
             return;
           }
           if (rows.length === 0) {
             toast({ title: "Arquivo Vazio", description: "O arquivo CSV não contém dados.", variant: "destructive" });
             setIsProcessing(false);
+            console.log("Arquivo CSV vazio.");
             return;
           }
 
           let successfulImports = 0;
           const importErrors: string[] = [];
+          console.log(`Iniciando processamento de ${rows.length} linhas do CSV.`);
 
           for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
-            const rowIndex = i + 2; // +1 for header, +1 for 0-indexed
-
-            const itemCode = row["Código do Item"]?.trim();
-            const typeStr = row["Tipo"]?.trim().toLowerCase() as MovementFormData['type'];
-            const quantityStr = row["Quantidade"]?.trim();
-            const dateStr = row["Data"]?.trim(); // AAAA-MM-DD
-            const hospitalNameCsv = row["Nome do Hospital Destino/Consumo"]?.trim();
-            const unitNameCsv = row["Nome da Unidade Destino/Consumo"]?.trim();
-            const patientSUS = row["Cartão SUS Paciente"]?.trim();
-            const notesCsv = row["Observações"]?.trim();
-
-            if (!itemCode || !typeStr || !quantityStr || !dateStr) {
-              importErrors.push(`Linha ${rowIndex}: Código do Item, Tipo, Quantidade e Data são obrigatórios.`);
-              continue;
-            }
-            if (!['entry', 'exit', 'consumption'].includes(typeStr)) {
-              importErrors.push(`Linha ${rowIndex}: Tipo de movimentação inválido ('${typeStr}'). Use 'entrada', 'saida' ou 'consumo'.`);
-              continue;
-            }
-            const quantity = parseInt(quantityStr, 10);
-            if (isNaN(quantity) || quantity <= 0) {
-              importErrors.push(`Linha ${rowIndex}: Quantidade inválida ('${quantityStr}'). Deve ser um número positivo.`);
-              continue;
-            }
-            if (isNaN(Date.parse(dateStr))) {
-                importErrors.push(`Linha ${rowIndex}: Data inválida ('${dateStr}'). Use o formato AAAA-MM-DD.`);
-                continue;
-            }
-
-            const item = items.find(it => it.code === itemCode);
-            if (!item) {
-              importErrors.push(`Linha ${rowIndex}: Item com código '${itemCode}' não encontrado.`);
-              continue;
-            }
-
-            let hospitalId: string | undefined = undefined;
-            let unitId: string | undefined = undefined;
-            let patientId: string | undefined = undefined;
-            let selectedHospital: Hospital | undefined = undefined;
-            let selectedUnit: ServedUnit | undefined = undefined;
-
-            if (typeStr === 'exit' || typeStr === 'consumption') {
-                if (hospitalNameCsv) {
-                    selectedHospital = hospitals.find(h => h.name.toLowerCase() === hospitalNameCsv.toLowerCase());
-                    if (!selectedHospital) {
-                        importErrors.push(`Linha ${rowIndex}: Hospital '${hospitalNameCsv}' não encontrado.`);
-                        continue; 
-                    }
-                    hospitalId = selectedHospital.id;
-
-                    if (unitNameCsv) {
-                        selectedUnit = servedUnits.find(u => u.name.toLowerCase() === unitNameCsv.toLowerCase() && u.hospitalId === hospitalId);
-                        if (!selectedUnit) {
-                            importErrors.push(`Linha ${rowIndex}: Unidade '${unitNameCsv}' não encontrada ou não pertence ao hospital '${hospitalNameCsv}'.`);
-                            continue; 
-                        }
-                        unitId = selectedUnit.id;
-                    } else { 
-                         importErrors.push(`Linha ${rowIndex}: Nome da Unidade é obrigatório se o Nome do Hospital ('${hospitalNameCsv}') for especificado para tipo '${typeStr}'. Para baixa direta do armazém, deixe ambos em branco.`);
-                         continue;
-                    }
-                }
-            }
-            
-            if (typeStr === 'consumption' && patientSUS) {
-                const patient = patients.find(p => p.susCardNumber === patientSUS);
-                if (!patient) {
-                    importErrors.push(`Linha ${rowIndex}: Paciente com Cartão SUS '${patientSUS}' não encontrado.`);
-                    continue;
-                }
-                patientId = patient.id;
-            }
-            
-            const movementData: MovementFormData = {
-                itemId: item.id,
-                type: typeStr,
-                quantity: quantity,
-                date: dateStr,
-                hospitalId: hospitalId,
-                unitId: unitId,
-                patientId: patientId,
-                notes: notesCsv,
-            };
+            const rowIndex = i + 2; 
+            let itemCodeForRow = "N/A"; 
+            console.log(`Processando linha ${rowIndex} do CSV:`, row);
 
             try {
-                await runTransaction(firestore, async (transaction) => {
-                    const itemDocRef = doc(firestore, "items", movementData.itemId);
-                    let unitConfigDocRef = null;
-                    let unitConfigSnap = null;
-                    let unitConfigDocId = null;
-                    
-                    const itemSnap = await transaction.get(itemDocRef); 
-                    if (!itemSnap.exists()) throw new Error(`Item ${item.name} não encontrado na transação (linha ${rowIndex}).`);
-                    
-                    if ((movementData.type === 'exit' || movementData.type === 'consumption') && movementData.hospitalId && movementData.unitId) {
-                        unitConfigDocId = `${movementData.itemId}_${movementData.unitId}`;
-                        unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
-                        unitConfigSnap = await transaction.get(unitConfigDocRef); 
-                    }
+                const itemCode = row["Código do Item"]?.trim();
+                itemCodeForRow = itemCode || "N/A";
+                const typeStr = row["Tipo"]?.trim().toLowerCase() as MovementFormData['type'];
+                const quantityStr = row["Quantidade"]?.trim();
+                const dateStr = row["Data"]?.trim(); 
+                const hospitalNameCsv = row["Nome do Hospital Destino/Consumo"]?.trim();
+                const unitNameCsv = row["Nome da Unidade Destino/Consumo"]?.trim();
+                const patientSUS = row["Cartão SUS Paciente"]?.trim();
+                const notesCsv = row["Observações"]?.trim();
 
-                    const currentItemData = itemSnap.data() as Item;
-                    let newQuantityCentral = currentItemData.currentQuantityCentral;
+                if (!itemCode || !typeStr || !quantityStr || !dateStr) {
+                  importErrors.push(`Linha ${rowIndex}: Código do Item, Tipo, Quantidade e Data são obrigatórios.`);
+                  console.warn(`Linha ${rowIndex}: Validação falhou - campos obrigatórios. Item: ${itemCodeForRow}`);
+                  continue;
+                }
+                if (!['entry', 'exit', 'consumption'].includes(typeStr)) {
+                  importErrors.push(`Linha ${rowIndex}: Tipo de movimentação inválido ('${typeStr}'). Use 'entrada', 'saida' ou 'consumo'.`);
+                  console.warn(`Linha ${rowIndex}: Validação falhou - tipo inválido. Item: ${itemCodeForRow}, Tipo: ${typeStr}`);
+                  continue;
+                }
+                const quantity = parseInt(quantityStr, 10);
+                if (isNaN(quantity) || quantity <= 0) {
+                  importErrors.push(`Linha ${rowIndex}: Quantidade inválida ('${quantityStr}'). Deve ser um número positivo.`);
+                  console.warn(`Linha ${rowIndex}: Validação falhou - quantidade inválida. Item: ${itemCodeForRow}, Qtd: ${quantityStr}`);
+                  continue;
+                }
+                if (isNaN(Date.parse(dateStr))) {
+                    importErrors.push(`Linha ${rowIndex}: Data inválida ('${dateStr}'). Use o formato AAAA-MM-DD.`);
+                    console.warn(`Linha ${rowIndex}: Validação falhou - data inválida. Item: ${itemCodeForRow}, Data: ${dateStr}`);
+                    continue;
+                }
 
-                    if (movementData.type === 'entry') {
-                        newQuantityCentral += movementData.quantity;
-                        transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
-                    } else if (movementData.type === 'exit' || movementData.type === 'consumption') {
-                        if (movementData.hospitalId && movementData.unitId && unitConfigDocRef) { 
-                            if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
-                            
-                            const newCentralQuantityAfterTransfer = newQuantityCentral - movementData.quantity;
-                            transaction.update(itemDocRef, { currentQuantityCentral: newCentralQuantityAfterTransfer });
+                const item = items.find(it => it.code === itemCode);
+                if (!item) {
+                  importErrors.push(`Linha ${rowIndex}: Item com código '${itemCode}' não encontrado.`);
+                  console.warn(`Linha ${rowIndex}: Validação falhou - item não encontrado. Código: ${itemCodeForRow}`);
+                  continue;
+                }
 
-                            if (unitConfigSnap && unitConfigSnap.exists()) {
-                                const currentUnitConfigData = unitConfigSnap.data();
-                                const newUnitQuantity = (currentUnitConfigData.currentQuantity || 0) + movementData.quantity;
-                                transaction.update(unitConfigDocRef, { currentQuantity: newUnitQuantity });
-                            } else {
-                                transaction.set(unitConfigDocRef, {
-                                    itemId: movementData.itemId,
-                                    unitId: movementData.unitId,
-                                    hospitalId: movementData.hospitalId || null,
-                                    currentQuantity: movementData.quantity,
-                                    strategicStockLevel: 0, minQuantity: 0,
-                                });
+                let hospitalId: string | undefined = undefined;
+                let unitId: string | undefined = undefined;
+                let patientId: string | undefined = undefined;
+                let selectedHospital: Hospital | undefined = undefined;
+                let selectedUnit: ServedUnit | undefined = undefined;
+
+                if (typeStr === 'exit' || typeStr === 'consumption') {
+                    if (hospitalNameCsv) {
+                        selectedHospital = hospitals.find(h => h.name.toLowerCase() === hospitalNameCsv.toLowerCase());
+                        if (!selectedHospital) {
+                            importErrors.push(`Linha ${rowIndex}: Hospital '${hospitalNameCsv}' não encontrado.`);
+                            console.warn(`Linha ${rowIndex}: Validação falhou - hospital não encontrado. Hospital CSV: ${hospitalNameCsv}`);
+                            continue; 
+                        }
+                        hospitalId = selectedHospital.id;
+
+                        if (unitNameCsv) {
+                            selectedUnit = servedUnits.find(u => u.name.toLowerCase() === unitNameCsv.toLowerCase() && u.hospitalId === hospitalId);
+                            if (!selectedUnit) {
+                                importErrors.push(`Linha ${rowIndex}: Unidade '${unitNameCsv}' não encontrada ou não pertence ao hospital '${hospitalNameCsv}'.`);
+                                console.warn(`Linha ${rowIndex}: Validação falhou - unidade não encontrada/não pertence. Unidade CSV: ${unitNameCsv}, Hospital: ${hospitalNameCsv}`);
+                                continue; 
                             }
-                        } else if (!movementData.hospitalId) { 
-                            if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
-                            newQuantityCentral -= movementData.quantity;
-                            transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
-                        } else {
-                            throw new Error(`Configuração de saída/consumo inválida na planilha (linha ${rowIndex}).`);
+                            unitId = selectedUnit.id;
+                        } else { 
+                             importErrors.push(`Linha ${rowIndex}: Nome da Unidade é obrigatório se o Nome do Hospital ('${hospitalNameCsv}') for especificado para tipo '${typeStr}'. Para baixa direta do armazém, deixe ambos em branco.`);
+                             console.warn(`Linha ${rowIndex}: Validação falhou - unidade obrigatória não fornecida. Hospital CSV: ${hospitalNameCsv}, Tipo: ${typeStr}`);
+                             continue;
                         }
                     }
-                    
-                    const patientDetailsForLog = patientId ? patients.find(p => p.id === patientId) : null;
-                    const movementLog: Omit<StockMovement, 'id'> = {
-                        itemId: item.id, itemName: item.name || null,
-                        type: movementData.type, quantity: movementData.quantity, date: movementData.date,
-                        notes: movementData.notes || null,
-                        hospitalId: movementData.hospitalId || null,
-                        hospitalName: selectedHospital?.name || null,
-                        unitId: movementData.unitId || null,
-                        unitName: selectedUnit?.name || null,
-                        patientId: movementData.patientId || null,
-                        patientName: patientDetailsForLog?.name || null,
-                    };
-                    transaction.set(doc(collection(firestore, "stockMovements")), movementLog);
-                });
-                successfulImports++;
-            } catch (err: any) {
-                importErrors.push(`Linha ${rowIndex} (${itemCode}): Erro ao processar - ${err.message}`);
+                }
+                
+                if (typeStr === 'consumption' && patientSUS) {
+                    const patient = patients.find(p => p.susCardNumber === patientSUS);
+                    if (!patient) {
+                        importErrors.push(`Linha ${rowIndex}: Paciente com Cartão SUS '${patientSUS}' não encontrado.`);
+                        console.warn(`Linha ${rowIndex}: Validação falhou - paciente não encontrado. SUS: ${patientSUS}`);
+                        continue;
+                    }
+                    patientId = patient.id;
+                }
+                
+                const movementData: MovementFormData = {
+                    itemId: item.id,
+                    type: typeStr,
+                    quantity: quantity,
+                    date: dateStr,
+                    hospitalId: hospitalId,
+                    unitId: unitId,
+                    patientId: patientId,
+                    notes: notesCsv,
+                };
+
+                console.log(`Linha ${rowIndex} (${itemCodeForRow}): Antes da transação.`);
+                try {
+                    await runTransaction(firestore, async (transaction) => {
+                        console.log(`Linha ${rowIndex} (${itemCodeForRow}): DENTRO da transação.`);
+                        const itemDocRef = doc(firestore, "items", movementData.itemId);
+                        let unitConfigDocRef = null;
+                        let unitConfigSnap = null;
+                        let unitConfigDocId = null;
+                        
+                        const itemSnap = await transaction.get(itemDocRef); 
+                        if (!itemSnap.exists()) throw new Error(`Item ${item.name} não encontrado na transação (linha ${rowIndex}).`);
+                        
+                        if ((movementData.type === 'exit' || movementData.type === 'consumption') && movementData.hospitalId && movementData.unitId) {
+                            unitConfigDocId = `${movementData.itemId}_${movementData.unitId}`;
+                            unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
+                            unitConfigSnap = await transaction.get(unitConfigDocRef); 
+                        }
+
+                        const currentItemData = itemSnap.data() as Item;
+                        let newQuantityCentral = currentItemData.currentQuantityCentral;
+
+                        if (movementData.type === 'entry') {
+                            newQuantityCentral += movementData.quantity;
+                            transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
+                        } else if (movementData.type === 'exit' || movementData.type === 'consumption') {
+                            if (movementData.hospitalId && movementData.unitId && unitConfigDocRef) { 
+                                if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
+                                
+                                const newCentralQuantityAfterTransfer = newQuantityCentral - movementData.quantity;
+                                transaction.update(itemDocRef, { currentQuantityCentral: newCentralQuantityAfterTransfer });
+
+                                if (unitConfigSnap && unitConfigSnap.exists()) {
+                                    const currentUnitConfigData = unitConfigSnap.data();
+                                    const newUnitQuantity = (currentUnitConfigData.currentQuantity || 0) + movementData.quantity;
+                                    transaction.update(unitConfigDocRef, { currentQuantity: newUnitQuantity });
+                                } else {
+                                    transaction.set(unitConfigDocRef, {
+                                        itemId: movementData.itemId,
+                                        unitId: movementData.unitId,
+                                        hospitalId: movementData.hospitalId || null,
+                                        currentQuantity: movementData.quantity,
+                                        strategicStockLevel: 0, minQuantity: 0,
+                                    });
+                                }
+                            } else if (!movementData.hospitalId) { 
+                                if (newQuantityCentral < movementData.quantity) throw new Error(`Estoque insuficiente (${newQuantityCentral}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
+                                newQuantityCentral -= movementData.quantity;
+                                transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
+                            } else {
+                                throw new Error(`Configuração de saída/consumo inválida na planilha (linha ${rowIndex}).`);
+                            }
+                        }
+                        
+                        const patientDetailsForLog = patientId ? patients.find(p => p.id === patientId) : null;
+                        const movementLog: Omit<StockMovement, 'id'> = {
+                            itemId: item.id, itemName: item.name || null,
+                            type: movementData.type, quantity: movementData.quantity, date: movementData.date,
+                            notes: movementData.notes || null,
+                            hospitalId: movementData.hospitalId || null,
+                            hospitalName: selectedHospital?.name || null,
+                            unitId: movementData.unitId || null,
+                            unitName: selectedUnit?.name || null,
+                            patientId: movementData.patientId || null,
+                            patientName: patientDetailsForLog?.name || null,
+                        };
+                        transaction.set(doc(collection(firestore, "stockMovements")), movementLog);
+                        console.log(`Linha ${rowIndex} (${itemCodeForRow}): Transação preparada para commit.`);
+                    });
+                    console.log(`Linha ${rowIndex} (${itemCodeForRow}): Transação concluída com sucesso.`);
+                    successfulImports++;
+                } catch (transactionError: any) {
+                    console.error(`Linha ${rowIndex} (${itemCodeForRow}): Erro na transação - `, transactionError);
+                    importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Erro na transação - ${transactionError.message}`);
+                }
+
+            } catch (syncError: any) {
+                console.error(`Linha ${rowIndex} (${itemCodeForRow}): Erro de preparação - `, syncError);
+                importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Erro de preparação - ${syncError.message}`);
             }
           } 
+          console.log("Processamento de todas as linhas concluído.");
 
           if (importErrors.length > 0) {
             toast({
@@ -731,6 +760,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
           }
           
           setIsProcessing(false);
+          console.log("Estado isProcessing definido como false.");
           setFile(null);
           const fileInput = document.getElementById('batch-movements-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
