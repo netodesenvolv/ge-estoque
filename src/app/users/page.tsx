@@ -5,44 +5,50 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
-import { Button, buttonVariants } from '@/components/ui/button'; // Importar buttonVariants
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Users as UsersIcon, PlusCircle, Edit3, Trash2, Search, Loader2 } from 'lucide-react';
-import type { UserProfile, User } from '@/types'; // UserProfile for Firestore data, User for full type if needed
+import { Users as UsersIcon, PlusCircle, Edit3, Trash2, Search, Loader2, ShieldAlert } from 'lucide-react';
+import type { UserProfile, User } from '@/types';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
 import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
+import type { FirestoreError } from 'firebase/firestore';
 
 export default function UsersPage() {
-  const [userProfiles, setUserProfiles] = useState<User[]>([]); // UserProfile with id (uid)
+  const [userProfiles, setUserProfiles] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [permissionDeniedError, setPermissionDeniedError] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
   useEffect(() => {
     setIsLoading(true);
+    setPermissionDeniedError(false); // Reset on each load attempt
     const usersCollectionRef = collection(firestore, "user_profiles");
     const q = query(usersCollectionRef, orderBy("name", "asc"));
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const profilesData = querySnapshot.docs.map(docSnap => ({
-        id: docSnap.id, // This will be the Firebase Auth UID
+        id: docSnap.id,
         ...docSnap.data(),
-      } as User)); // Casting to User, assuming UserProfile aligns and id is uid
+      } as User));
       setUserProfiles(profilesData);
       setIsLoading(false);
-    }, (error) => {
-      console.error("Firestore onSnapshot error in UsersPage:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2)); // Log mais detalhado
+    }, (error: FirestoreError) => {
+      console.error("Firestore onSnapshot error in UsersPage:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
       toast({
         title: "Erro ao Carregar Usuários",
-        description: `Não foi possível carregar os perfis: ${error.message}`, // Mensagem de erro mais específica
+        description: `Não foi possível carregar os perfis: ${error.message}`,
         variant: "destructive",
       });
+      if (error.code === 'permission-denied') {
+        setPermissionDeniedError(true);
+      }
       setIsLoading(false);
     });
 
@@ -125,6 +131,15 @@ export default function UsersPage() {
              <div className="flex items-center justify-center h-24">
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
                 <p className="ml-2 text-muted-foreground">Carregando usuários...</p>
+            </div>
+          ) : permissionDeniedError ? (
+            <div className="flex flex-col items-center justify-center h-40 text-center">
+              <ShieldAlert className="h-12 w-12 text-destructive mb-3" />
+              <h3 className="text-lg font-semibold text-destructive">Acesso Negado</h3>
+              <p className="text-muted-foreground">
+                Você não tem permissão para visualizar a lista de usuários.
+                Verifique se sua conta possui o perfil de 'Administrador' e se as regras de segurança do Firestore estão configuradas corretamente.
+              </p>
             </div>
           ) : (
           <div className="overflow-x-auto">
