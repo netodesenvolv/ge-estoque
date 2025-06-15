@@ -40,7 +40,7 @@ export default function UsersPage() {
       setUserProfiles(profilesData);
       setIsLoading(false);
     }, (error: FirestoreError) => {
-      console.error("Firestore onSnapshot error in UsersPage:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+      console.error("Firestore onSnapshot error in UsersPage. Code:", error.code, "Message:", error.message, "Stack:", error.stack);
       toast({
         title: "Erro ao Carregar Usuários",
         description: `Não foi possível carregar os perfis: ${error.message}`,
@@ -133,12 +133,12 @@ export default function UsersPage() {
                 <p className="ml-2 text-muted-foreground">Carregando usuários...</p>
             </div>
           ) : permissionDeniedError ? (
-            <div className="flex flex-col items-center justify-center h-40 text-center">
+            <div className="flex flex-col items-center justify-center h-40 text-center p-4">
               <ShieldAlert className="h-12 w-12 text-destructive mb-3" />
               <h3 className="text-lg font-semibold text-destructive">Acesso Negado</h3>
               <p className="text-muted-foreground">
                 Você não tem permissão para visualizar a lista de usuários.
-                Verifique se sua conta possui o perfil de 'Administrador' e se as regras de segurança do Firestore estão configuradas corretamente.
+                Verifique se sua conta possui o perfil de 'Administrador' e se as regras de segurança do Firestore estão configuradas corretamente para permitir a leitura da coleção 'user_profiles'.
               </p>
             </div>
           ) : (
@@ -194,7 +194,7 @@ export default function UsersPage() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center h-24">
-                      Nenhum usuário encontrado.
+                      Nenhum usuário encontrado. Verifique se há usuários cadastrados ou se há permissão para listá-los.
                     </TableCell>
                   </TableRow>
                 )}
