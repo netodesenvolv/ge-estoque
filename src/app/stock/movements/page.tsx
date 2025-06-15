@@ -564,28 +564,25 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 const itemCode = row["Código do Item"]?.trim();
                 itemCodeForRow = itemCode || "N/A";
                 
-                const typeStrRaw = row["Tipo"]; // Não fazer trim inicial aqui para inspecionar BOM
-                
+                let typeStrRaw = row["Tipo"];
                 let typeStr = typeStrRaw;
+
+                if (typeStr && typeStr.charCodeAt(0) === 0xFEFF) { // BOM
+                    console.log(`Linha ${rowIndex} (${itemCodeForRow}): BOM detectado e removido do início da string de tipo: '${typeStrRaw}'`);
+                    typeStr = typeStr.substring(1);
+                }
                 if (typeStr) {
-                    // Remover BOM explicitamente se estiver no início da string
-                    if (typeStr.charCodeAt(0) === 0xFEFF) { // 0xFEFF é o código do BOM
-                        console.log(`Linha ${rowIndex} (${itemCodeForRow}): BOM detectado e removido do início da string de tipo.`);
-                        typeStr = typeStr.substring(1);
-                    }
-                    // Normalizar espaços (substituir múltiplos/vários por um único espaço padrão) e depois trim e toLowerCase
                     typeStr = typeStr.replace(/\s+/g, ' ').trim().toLowerCase();
                 }
-
-
-                // Log detalhado do tipo
-                console.log(`Linha ${rowIndex} (${itemCodeForRow}): Tipo lido do CSV (original): '${row["Tipo"]}', Após remoção de BOM e sanitização: '${typeStr}', Tipo JS: ${typeof typeStr}`);
+                
+                console.log(`Linha ${rowIndex} (${itemCodeForRow}): Tipo lido do CSV (original): '${row["Tipo"]}', Após sanitização: '${typeStr}', Tipo JS: ${typeof typeStr}`);
                 if (typeStr) {
                   console.log(`Linha ${rowIndex} (${itemCodeForRow}): typeStr length: ${typeStr.length}`);
                   for (let k = 0; k < typeStr.length; k++) {
-                    console.log(`Linha ${rowIndex} (${itemCodeForRow}): charCodeAt(${k}) ('${typeStr[k]}'): ${typeStr.charCodeAt(k)}`);
+                    console.log(`Linha ${rowIndex} (${itemCodeForRow}): CHAR_CODE_LOG charCodeAt(${k}) ('${typeStr[k]}'): ${typeStr.charCodeAt(k)}`);
                   }
                 }
+
 
                 const quantityStr = row["Quantidade"]?.trim();
                 const dateStr = row["Data"]?.trim(); 
@@ -600,17 +597,17 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                   continue;
                 }
                 
-                if (typeStr === undefined || typeStr === null || typeStr.trim() === "" ) {
+                if (!typeStr) { // Verifica se typeStr é falsy (undefined, null, "" depois do trim)
                     importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Tipo de movimentação é obrigatório.`);
                     console.warn(`Linha ${rowIndex}: Validação falhou - tipo está vazio ou undefined. Item: ${itemCodeForRow}`);
                     continue;
                 }
 
-                const isValidType = typeStr === 'entry' || typeStr === 'saida' || typeStr === 'consumption';
+                const isValidType = typeStr === 'entrada' || typeStr === 'saida' || typeStr === 'consumo';
                 if (!isValidType) {
                     importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Tipo de movimentação inválido ('${typeStrRaw || 'VAZIO'}'). Use 'entrada', 'saida' ou 'consumo'.`);
-                    console.warn(`Linha ${rowIndex}: Validação falhou - tipo não corresponde a entry/saida/consumption. Item: ${itemCodeForRow}, Tipo CSV Original: '${row["Tipo"]}', Tipo Processado Final: '${typeStr}'`);
-                     if (typeStr) {
+                    console.warn(`Linha ${rowIndex}: Validação falhou - tipo não corresponde. Item: ${itemCodeForRow}, Tipo CSV Original: '${row["Tipo"]}', Tipo Processado Final: '${typeStr}'`);
+                     if (typeStr) { // Log para debug se a validação falhar
                         for (let k = 0; k < typeStr.length; k++) {
                             console.log(`Linha ${rowIndex} (${itemCodeForRow}): FAILED_TYPE_VALIDATION charCodeAt(${k}) ('${typeStr[k]}'): ${typeStr.charCodeAt(k)}`);
                         }
@@ -644,7 +641,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 let selectedHospital: Hospital | undefined = undefined;
                 let selectedUnit: ServedUnit | undefined = undefined;
 
-                if (typeStr === 'saida' || typeStr === 'consumption') {
+                if (typeStr === 'saida' || typeStr === 'consumo') {
                     if (hospitalNameCsv) {
                         selectedHospital = hospitals.find(h => h.name.toLowerCase() === hospitalNameCsv.toLowerCase());
                         if (!selectedHospital) {
@@ -670,7 +667,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                     } 
                 }
                 
-                if (typeStr === 'consumption' && patientSUS) {
+                if (typeStr === 'consumo' && patientSUS) {
                     const patient = patients.find(p => p.susCardNumber === patientSUS);
                     if (!patient) {
                         importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Paciente com Cartão SUS '${patientSUS}' não encontrado.`);
@@ -682,7 +679,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 
                 const movementData: MovementFormData = {
                     itemId: item.id,
-                    type: typeStr as MovementFormData['type'], // Cast é seguro aqui devido à validação anterior
+                    type: typeStr as MovementFormData['type'], 
                     quantity: quantity,
                     date: dateStr,
                     hospitalId: hospitalId,
@@ -972,4 +969,3 @@ export default function StockMovementsPage() {
   );
 }
     
-
