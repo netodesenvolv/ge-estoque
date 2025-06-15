@@ -558,7 +558,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
             const row = rows[i];
             const rowIndex = i + 2; 
             let itemCodeForRow = "N/A"; 
-            console.log(`BATCH IMPORT: Processando linha ${rowIndex} do CSV:`, JSON.stringify(row));
+            console.log(`BATCH IMPORT: Linha ${rowIndex} do CSV:`, JSON.stringify(row));
 
             try {
                 const itemCode = row["Código do Item"]?.trim();
@@ -567,18 +567,17 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 let typeStrRaw = row["Tipo"];
                 let typeStr = typeStrRaw;
 
-                if (typeStr && typeStr.charCodeAt(0) === 0xFEFF) { // BOM
+                if (typeStr && typeStr.charCodeAt(0) === 0xFEFF) { 
                     console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): BOM detectado e removido do início da string de tipo: '${typeStrRaw}'`);
                     typeStr = typeStr.substring(1);
                 }
                 if (typeStr) {
                     typeStr = typeStr.replace(/\s+/g, ' ').trim().toLowerCase();
                 } else {
-                    // Se typeStr for undefined ou null após a leitura, definimos como string vazia para evitar erros no toLowerCase
                     typeStr = ""; 
                 }
                 
-                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Tipo lido do CSV (original): '${row["Tipo"]}', Após sanitização: '${typeStr}', Tipo JS: ${typeof typeStr}`);
+                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Tipo lido (original): '${row["Tipo"]}', Sanitizado: '${typeStr}', Tipo JS: ${typeof typeStr}`);
                 if (typeStr) {
                   console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): typeStr length: ${typeStr.length}`);
                   for (let k = 0; k < typeStr.length; k++) {
@@ -600,7 +599,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                   continue;
                 }
                 
-                if (!typeStr) { // Verifica se typeStr é falsy (undefined, null, "" depois do trim)
+                if (!typeStr) { 
                     importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Tipo de movimentação é obrigatório.`);
                     console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - tipo está vazio ou undefined. Item: ${itemCodeForRow}`);
                     continue;
@@ -610,7 +609,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 if (!isValidType) {
                     importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Tipo de movimentação inválido ('${typeStrRaw || 'VAZIO'}'). Use 'entrada', 'saida' ou 'consumo'.`);
                     console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - tipo não corresponde. Item: ${itemCodeForRow}, Tipo CSV Original: '${row["Tipo"]}', Tipo Processado Final: '${typeStr}'`);
-                     if (typeStr) { // Log para debug se a validação falhar
+                     if (typeStr) { 
                         for (let k = 0; k < typeStr.length; k++) {
                             console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): FAILED_TYPE_VALIDATION charCodeAt(${k}) ('${typeStr[k]}'): ${typeStr.charCodeAt(k)}`);
                         }
@@ -684,14 +683,15 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                     itemId: item.id,
                     type: typeStr as MovementFormData['type'], 
                     quantity: quantity,
-                    date: dateStr,
+                    date: dateStr, // Deve ser AAAA-MM-DD
                     hospitalId: hospitalId,
                     unitId: unitId,
                     patientId: patientId,
                     notes: notesCsv,
                 };
 
-                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Dados validados e preparados para transação:`, JSON.stringify(movementData));
+                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): PRÉ-TRANSAÇÃO - Dados para movimentação:`, JSON.stringify(movementData));
+                
                 try {
                     console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Iniciando runTransaction.`);
                     await runTransaction(firestore, async (transaction) => {
@@ -703,20 +703,20 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                         
                         const itemSnap = await transaction.get(itemDocRef); 
                         if (!itemSnap.exists()) {
-                            console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Item ${item.name} não encontrado na transação.`);
+                            console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Item ${item.name} (ID: ${movementData.itemId}) não encontrado na transação.`);
                             throw new Error(`Item ${item.name} não encontrado na transação (linha ${rowIndex}).`);
                         }
                         
+                        const currentItemData = itemSnap.data() as Item;
+                        let newQuantityCentral = currentItemData.currentQuantityCentral;
+                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Item ${item.name}, Qtde Central ATUAL: ${newQuantityCentral}. Movimentação: ${movementData.quantity}`);
+
                         if ((movementData.type === 'exit' || movementData.type === 'consumption') && movementData.hospitalId && movementData.unitId) {
                             unitConfigDocId = `${movementData.itemId}_${movementData.unitId}`;
                             unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
                             console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Verificando config unidade ${unitConfigDocRef.path}.`);
                             unitConfigSnap = await transaction.get(unitConfigDocRef); 
                         }
-
-                        const currentItemData = itemSnap.data() as Item;
-                        let newQuantityCentral = currentItemData.currentQuantityCentral;
-                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Item ${item.name}, Qtde Central Atual: ${newQuantityCentral}.`);
 
 
                         if (movementData.type === 'entry') {
@@ -740,14 +740,16 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                                     console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Atualizando config unidade ${unitConfigDocRef.path}. Nova Qtde Unidade: ${newUnitQuantity}`);
                                     transaction.update(unitConfigDocRef, { currentQuantity: newUnitQuantity });
                                 } else { 
+                                    const unitDetails = servedUnits.find(u => u.id === movementData.unitId);
                                     const dataToSet = {
                                         itemId: movementData.itemId,
                                         unitId: movementData.unitId,
-                                        hospitalId: movementData.hospitalId || null,
+                                        hospitalId: unitDetails?.hospitalId || null,
                                         currentQuantity: movementData.quantity,
-                                        strategicStockLevel: 0, minQuantity: 0, 
+                                        strategicStockLevel: 0, 
+                                        minQuantity: 0, 
                                     };
-                                    console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Criando config unidade ${unitConfigDocRef.path} com dados:`, dataToSet);
+                                    console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Criando config unidade ${unitConfigDocRef.path} com dados:`, JSON.stringify(dataToSet));
                                     transaction.set(unitConfigDocRef, dataToSet);
                                 }
                             } else if (!movementData.hospitalId && !movementData.unitId) { 
@@ -766,8 +768,11 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                         
                         const patientDetailsForLog = patientId ? patients.find(p => p.id === patientId) : null;
                         const movementLog: Omit<StockMovement, 'id'> = {
-                            itemId: item.id, itemName: item.name || null,
-                            type: movementData.type, quantity: movementData.quantity, date: movementData.date,
+                            itemId: item.id, 
+                            itemName: item.name || null,
+                            type: movementData.type, 
+                            quantity: movementData.quantity, 
+                            date: movementData.date,
                             notes: movementData.notes || null,
                             hospitalId: movementData.hospitalId || null,
                             hospitalName: selectedHospital?.name || null,
@@ -776,16 +781,15 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                             patientId: movementData.patientId || null,
                             patientName: patientDetailsForLog?.name || null,
                         };
-                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Criando log de movimentação:`, movementLog);
+                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Criando log de movimentação:`, JSON.stringify(movementLog));
                         transaction.set(doc(collection(firestore, "stockMovements")), movementLog);
-                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Transação Firestore preparada para commit.`);
+                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): DENTRO DA TRANSAÇÃO - Todas as operações da transação foram adicionadas. Preparando para commit implícito.`);
                     });
-                    console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Transação Firestore concluída com sucesso (após await).`);
                     successfulImports++;
-                    console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): successfulImports incrementado para ${successfulImports}.`);
-                } catch (transactionError: any) {
-                    console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Erro DENTRO da transação Firestore - `, transactionError.message, transactionError.stack);
-                    importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Erro na transação Firestore - ${transactionError.message}`);
+                    console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): PÓS-TRANSAÇÃO - runTransaction CONCLUÍDO com sucesso (resolved). successfulImports: ${successfulImports}`);
+                } catch (transactionError: any) { 
+                    console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): ERRO NA TRANSAÇÃO - `, transactionError.message, transactionError.stack);
+                    importErrors.push(`Linha ${rowIndex} (${itemCodeForRow}): Erro ao processar no banco: ${transactionError.message}`);
                 }
 
             } catch (syncError: any) { 
