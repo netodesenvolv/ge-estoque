@@ -17,6 +17,7 @@ import { useAuth } from '@/contexts/AuthContext'; // For signUp
 import { firestore } from '@/lib/firebase';
 import { doc, setDoc } from 'firebase/firestore';
 import type { AuthError, User as FirebaseUser } from 'firebase/auth';
+import { Loader2 } from 'lucide-react'; // Added import
 
 const userSchema = z.object({
   name: z.string().min(3, { message: "O nome completo deve ter pelo menos 3 caracteres." }),
