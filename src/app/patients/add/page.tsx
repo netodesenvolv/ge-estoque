@@ -12,9 +12,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import Papa from 'papaparse';
+import Papa, { type ParseError } from 'papaparse';
 import { firestore } from '@/lib/firebase';
-import { collection, writeBatch, doc, getDocs, query, orderBy, onSnapshot } from 'firebase/firestore'; // Added onSnapshot
+import { collection, writeBatch, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
 import type { Patient, Hospital, PatientSex } from '@/types';
 
 const BatchImportPatientForm = () => {
@@ -94,8 +94,23 @@ const BatchImportPatientForm = () => {
           const { data, errors: parseErrors } = results;
 
           if (parseErrors.length > 0) {
-            console.error("Erros de parsing do CSV:", parseErrors);
-            toast({ title: "Erro ao Processar CSV", description: `Houve ${parseErrors.length} erro(s) ao ler o arquivo. Verifique o console.`, variant: "destructive" });
+            console.error("Erros de parsing do CSV (objetos completos):", JSON.stringify(parseErrors, null, 2));
+            const errorMessages = parseErrors.map((err: Papa.ParseError) => {
+                 const rowInfo = typeof err.row === 'number' ? `Linha CSV ${err.row + 2} (dados linha ${err.row +1}): ` : `Erro: `;
+                 return `${rowInfo}${err.message}`;
+            });
+            toast({
+              title: "Erro ao Processar CSV",
+              description: (
+                <div className="max-h-60 overflow-y-auto text-xs">
+                  <p className="font-semibold mb-1">Houve {parseErrors.length} erro(s) ao ler o arquivo:</p>
+                  {errorMessages.map((msg, i) => <p key={i}>{msg}</p>)}
+                  <p className="mt-2">Verifique o console para mais detalhes técnicos.</p>
+                </div>
+              ),
+              variant: "destructive",
+              duration: 15000,
+            });
             setIsProcessing(false);
             return;
           }
@@ -220,9 +235,9 @@ const BatchImportPatientForm = () => {
           const fileInput = document.getElementById('batch-patient-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
         },
-        error: (error) => {
+        error: (error: Papa.ParseError) => {
           console.error("Erro de parsing PapaParse:", error);
-          toast({ title: "Erro de Leitura", description: "Não foi possível processar o arquivo CSV.", variant: "destructive" });
+          toast({ title: "Erro de Leitura", description: `Não foi possível processar o arquivo CSV: ${error.message}`, variant: "destructive" });
           setIsProcessing(false);
         }
       });
@@ -337,3 +352,5 @@ export default function AddPatientPage() {
     </div>
   );
 }
+
+      
