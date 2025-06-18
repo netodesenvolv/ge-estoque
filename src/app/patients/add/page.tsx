@@ -97,7 +97,13 @@ const BatchImportPatientForm = () => {
             console.error("Erros de parsing do CSV (objetos completos):", JSON.stringify(parseErrors, null, 2));
             const errorMessages = parseErrors.map((err: Papa.ParseError) => {
                  const rowInfo = typeof err.row === 'number' ? `Linha CSV ${err.row + 2} (dados linha ${err.row +1}): ` : `Erro: `;
-                 return `${rowInfo}${err.message}`;
+                 let specificAdvice = "";
+                 if (err.code === "TooFewFields") {
+                    specificAdvice = "Verifique se há vírgulas suficientes para todas as 8 colunas, mesmo que algumas estejam vazias. Ex: 'Valor1,,,Valor4,,,'";
+                 } else if (err.code === "TooManyFields") {
+                    specificAdvice = "Verifique se há vírgulas extras na linha, resultando em mais de 8 colunas.";
+                 }
+                 return `${rowInfo}${err.message}. ${specificAdvice}`;
             });
             toast({
               title: "Erro ao Processar CSV",
@@ -352,5 +358,3 @@ export default function AddPatientPage() {
     </div>
   );
 }
-
-      
