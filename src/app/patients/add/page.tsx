@@ -94,7 +94,7 @@ const BatchImportPatientForm = () => {
       Papa.parse<Record<string, string>>(csvText, {
         header: true,
         skipEmptyLines: true,
-        delimiter: ",", // Forçar vírgula como delimitador
+        delimiter: ",", 
         complete: async (results: ParseResult<Record<string, string>>) => {
           console.log("BATCH IMPORT: PapaParse 'complete' callback iniciado.");
           const { data, errors: parseErrors, meta } = results;
@@ -143,7 +143,7 @@ const BatchImportPatientForm = () => {
           console.log(`BATCH IMPORT: Iniciando processamento de ${data.length} linhas do CSV.`);
 
           data.forEach((row, index) => {
-            const rowIndex = index + 2; // +1 para header, +1 para 0-indexed
+            const rowIndex = index + 2; 
             console.log(`BATCH IMPORT: Processando linha ${rowIndex} do CSV:`, JSON.stringify(row));
             try {
                 const name = row["Nome Completo"]?.trim();
@@ -158,7 +158,7 @@ const BatchImportPatientForm = () => {
                 if (!name || !susCardNumber) {
                   importErrors.push(`Linha ${rowIndex}: Nome Completo e Número do Cartão SUS são obrigatórios.`);
                   console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - Nome ou SUS obrigatórios. Nome: ${name}, SUS: ${susCardNumber}`);
-                  return; // continue to next iteration
+                  return; 
                 }
 
                 if (!/^\d{15}$/.test(susCardNumber)) {
@@ -169,14 +169,13 @@ const BatchImportPatientForm = () => {
 
                 let birthDate: string | undefined = undefined;
                 if (birthDateStr) {
-                    // Tenta parsear datas nos formatos AAAA-MM-DD, DD/MM/AAAA, DD-MM-AAAA
                     let parsedDate: Date | null = null;
-                    if (/^\d{4}-\d{2}-\d{2}$/.test(birthDateStr)) { // AAAA-MM-DD
-                        parsedDate = new Date(birthDateStr + 'T00:00:00Z'); // Adiciona T00:00:00Z para tratar como UTC
-                    } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(birthDateStr)) { // DD/MM/AAAA
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(birthDateStr)) { 
+                        parsedDate = new Date(birthDateStr + 'T00:00:00Z'); 
+                    } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(birthDateStr)) { 
                         const parts = birthDateStr.split('/');
                         parsedDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00Z`);
-                    } else if (/^\d{2}-\d{2}-\d{4}$/.test(birthDateStr)) { // DD-MM-AAAA
+                    } else if (/^\d{2}-\d{2}-\d{4}$/.test(birthDateStr)) { 
                         const parts = birthDateStr.split('-');
                         parsedDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00Z`);
                     }
@@ -219,22 +218,24 @@ const BatchImportPatientForm = () => {
                     return;
                   }
                 }
-
-                const newPatient: Omit<Patient, 'id'> = {
-                  name,
-                  susCardNumber,
-                  birthDate,
-                  address: address || undefined,
-                  phone: phone || undefined,
-                  sex: sex || undefined,
-                  healthAgentName: healthAgentName || undefined,
-                  registeredUBSId,
-                  registeredUBSName,
+                
+                const patientPayload: Partial<Omit<Patient, 'id'>> = { // Use Partial here
+                  name: name,
+                  susCardNumber: susCardNumber,
                 };
-                console.log(`BATCH IMPORT: Linha ${rowIndex}: Dados do paciente validados e prontos para batch:`, JSON.stringify(newPatient));
+
+                if (birthDate) patientPayload.birthDate = birthDate;
+                if (address) patientPayload.address = address;
+                if (phone) patientPayload.phone = phone;
+                if (sex) patientPayload.sex = sex;
+                if (healthAgentName) patientPayload.healthAgentName = healthAgentName;
+                if (registeredUBSId) patientPayload.registeredUBSId = registeredUBSId;
+                if (registeredUBSName) patientPayload.registeredUBSName = registeredUBSName;
+                
+                console.log(`BATCH IMPORT: Linha ${rowIndex}: Dados do paciente validados e prontos para batch:`, JSON.stringify(patientPayload));
 
                 const newDocRef = doc(patientsCollectionRef);
-                batch.set(newDocRef, newPatient);
+                batch.set(newDocRef, patientPayload as Omit<Patient, 'id'>); // Cast after building
                 validPatientsCount++;
             } catch (error: any) {
                 console.error(`BATCH IMPORT: Erro inesperado processando linha ${rowIndex}:`, error);
@@ -291,14 +292,14 @@ const BatchImportPatientForm = () => {
       });
     };
 
-    reader.readAsText(file, 'UTF-8'); // Especificar UTF-8 para leitura
+    reader.readAsText(file, 'UTF-8'); 
   };
 
   const handleDownloadTemplate = () => {
-    const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
+    const BOM = "\uFEFF"; 
     const csvHeader = "Nome Completo,Data de Nascimento,Número do Cartão SUS,Endereço,Telefone,Sexo,Agente de Saúde,Nome da UBS de Cadastro\n";
     const csvExampleRow1 = "Maria Joaquina de Amaral Pereira Góes,1985-07-22,700123456789012,\"Rua das Palmeiras, 45, Centro, Cidade Exemplo - EX\",(11) 98765-4321,feminino,José Agente,UBS Central Exemplo\n";
-    const csvExampleRow2 = "João Ricardo da Silva,,700987654321098,,,,,\n"; // Exemplo com campos opcionais vazios
+    const csvExampleRow2 = "João Ricardo da Silva,,700987654321098,,,,,\n"; 
     const csvContent = BOM + csvHeader + csvExampleRow1 + csvExampleRow2;
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
