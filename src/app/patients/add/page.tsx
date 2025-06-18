@@ -14,7 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Papa from 'papaparse';
 import { firestore } from '@/lib/firebase';
-import { collection, writeBatch, doc, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, writeBatch, doc, getDocs, query, orderBy, onSnapshot } from 'firebase/firestore'; // Added onSnapshot
 import type { Patient, Hospital, PatientSex } from '@/types';
 
 const BatchImportPatientForm = () => {
