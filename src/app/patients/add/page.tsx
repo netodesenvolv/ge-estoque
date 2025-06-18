@@ -17,6 +17,8 @@ import { firestore } from '@/lib/firebase';
 import { collection, writeBatch, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
 import type { Patient, Hospital, PatientSex } from '@/types';
 
+const BATCH_SIZE = 400; // Firestore batch limit is 500, using 400 for safety
+
 const BatchImportPatientForm = () => {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -137,12 +139,14 @@ const BatchImportPatientForm = () => {
           }
 
           const patientsCollectionRef = collection(firestore, "patients");
-          const batch = writeBatch(firestore);
-          let validPatientsCount = 0;
+          let currentBatch = writeBatch(firestore);
+          let operationsInCurrentBatch = 0;
+          let totalValidPatientsProcessed = 0;
           const importErrors: string[] = [];
-          console.log(`BATCH IMPORT: Iniciando processamento de ${data.length} linhas do CSV.`);
+          console.log(`BATCH IMPORT: Iniciando processamento de ${data.length} linhas do CSV. Tamanho do lote: ${BATCH_SIZE}`);
 
-          data.forEach((row, index) => {
+          for (let index = 0; index < data.length; index++) {
+            const row = data[index];
             const rowIndex = index + 2; 
             console.log(`BATCH IMPORT: Processando linha ${rowIndex} do CSV:`, JSON.stringify(row));
             try {
@@ -158,16 +162,20 @@ const BatchImportPatientForm = () => {
                 if (!name || !susCardNumber) {
                   importErrors.push(`Linha ${rowIndex}: Nome Completo e Número do Cartão SUS são obrigatórios.`);
                   console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - Nome ou SUS obrigatórios. Nome: ${name}, SUS: ${susCardNumber}`);
-                  return; 
+                  continue; 
                 }
 
                 if (!/^\d{15}$/.test(susCardNumber)) {
                   importErrors.push(`Linha ${rowIndex}: Número do Cartão SUS inválido ('${susCardNumber}'). Deve conter 15 dígitos numéricos.`);
                   console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - Formato do SUS inválido. SUS: ${susCardNumber}`);
-                  return;
+                  continue;
                 }
 
-                let birthDate: string | undefined = undefined;
+                const patientPayload: Partial<Omit<Patient, 'id'>> = {
+                  name: name,
+                  susCardNumber: susCardNumber,
+                };
+                
                 if (birthDateStr) {
                     let parsedDate: Date | null = null;
                     if (/^\d{4}-\d{2}-\d{2}$/.test(birthDateStr)) { 
@@ -184,66 +192,78 @@ const BatchImportPatientForm = () => {
                         const year = parsedDate.getUTCFullYear();
                         const month = (parsedDate.getUTCMonth() + 1).toString().padStart(2, '0');
                         const day = parsedDate.getUTCDate().toString().padStart(2, '0');
-                        birthDate = `${year}-${month}-${day}`;
-                         console.log(`BATCH IMPORT: Linha ${rowIndex}: Data de Nascimento processada: ${birthDateStr} -> ${birthDate}`);
+                        patientPayload.birthDate = `${year}-${month}-${day}`;
+                         console.log(`BATCH IMPORT: Linha ${rowIndex}: Data de Nascimento processada: ${birthDateStr} -> ${patientPayload.birthDate}`);
                     } else {
                         importErrors.push(`Linha ${rowIndex}: Data de Nascimento inválida ('${birthDateStr}'). Use AAAA-MM-DD, DD/MM/AAAA ou DD-MM-AAAA, ou deixe em branco.`);
                         console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - Data de Nascimento inválida. Data: ${birthDateStr}`);
-                        return;
+                        continue;
                     }
                 }
+                if (address) patientPayload.address = address;
+                if (phone) patientPayload.phone = phone;
 
-
-                let sex: PatientSex | undefined = undefined;
                 if (sexStr) {
                   if (['masculino', 'feminino', 'outro', 'ignorado'].includes(sexStr)) {
-                    sex = sexStr as PatientSex;
+                    patientPayload.sex = sexStr as PatientSex;
                   } else {
                     importErrors.push(`Linha ${rowIndex}: Sexo inválido ('${row["Sexo"]}'). Use 'masculino', 'feminino', 'outro' ou 'ignorado'.`);
                     console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - Sexo inválido. Sexo: ${row["Sexo"]}`);
-                    return;
+                    continue;
                   }
                 }
-
-                let registeredUBSId: string | undefined = undefined;
-                let registeredUBSName: string | undefined = undefined;
+                if (healthAgentName) patientPayload.healthAgentName = healthAgentName;
+                
                 if (registeredUBSNameCsv) {
                   const ubs = ubsList.find(u => u.name.toLowerCase() === registeredUBSNameCsv.toLowerCase());
                   if (ubs) {
-                    registeredUBSId = ubs.id;
-                    registeredUBSName = ubs.name;
+                    patientPayload.registeredUBSId = ubs.id;
+                    patientPayload.registeredUBSName = ubs.name;
                   } else {
                     importErrors.push(`Linha ${rowIndex}: UBS de Cadastro '${registeredUBSNameCsv}' não encontrada. Verifique o nome ou cadastre a UBS primeiro.`);
                     console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - UBS não encontrada. UBS CSV: ${registeredUBSNameCsv}`);
-                    return;
+                    continue;
                   }
                 }
-                
-                const patientPayload: Partial<Omit<Patient, 'id'>> = { // Use Partial here
-                  name: name,
-                  susCardNumber: susCardNumber,
-                };
-
-                if (birthDate) patientPayload.birthDate = birthDate;
-                if (address) patientPayload.address = address;
-                if (phone) patientPayload.phone = phone;
-                if (sex) patientPayload.sex = sex;
-                if (healthAgentName) patientPayload.healthAgentName = healthAgentName;
-                if (registeredUBSId) patientPayload.registeredUBSId = registeredUBSId;
-                if (registeredUBSName) patientPayload.registeredUBSName = registeredUBSName;
                 
                 console.log(`BATCH IMPORT: Linha ${rowIndex}: Dados do paciente validados e prontos para batch:`, JSON.stringify(patientPayload));
 
                 const newDocRef = doc(patientsCollectionRef);
-                batch.set(newDocRef, patientPayload as Omit<Patient, 'id'>); // Cast after building
-                validPatientsCount++;
+                currentBatch.set(newDocRef, patientPayload as Omit<Patient, 'id'>);
+                operationsInCurrentBatch++;
+                totalValidPatientsProcessed++;
+
+                if (operationsInCurrentBatch >= BATCH_SIZE) {
+                  console.log(`BATCH IMPORT: Commitando lote de ${operationsInCurrentBatch} pacientes...`);
+                  await currentBatch.commit();
+                  console.log(`BATCH IMPORT: Lote de ${operationsInCurrentBatch} pacientes commitado com sucesso.`);
+                  currentBatch = writeBatch(firestore); // Inicia um novo lote
+                  operationsInCurrentBatch = 0;
+                   toast({
+                    title: "Lote Parcial Importado",
+                    description: `${totalValidPatientsProcessed} pacientes processados até agora.`,
+                    duration: 3000, // Mensagem mais curta
+                  });
+                }
+
             } catch (error: any) {
                 console.error(`BATCH IMPORT: Erro inesperado processando linha ${rowIndex}:`, error);
                 importErrors.push(`Linha ${rowIndex}: Erro inesperado durante processamento: ${error.message}`);
             }
-          });
-          console.log("BATCH IMPORT: Processamento de todas as linhas concluído. Erros de validação de linha:", importErrors.length, "Pacientes válidos para batch:", validPatientsCount);
+          }
+          console.log("BATCH IMPORT: Processamento de todas as linhas concluído. Erros de validação de linha:", importErrors.length, "Pacientes válidos para batch:", totalValidPatientsProcessed);
 
+          // Commit do último lote, se houver operações pendentes
+          if (operationsInCurrentBatch > 0) {
+            console.log(`BATCH IMPORT: Commitando lote final de ${operationsInCurrentBatch} pacientes...`);
+            try {
+              await currentBatch.commit();
+              console.log(`BATCH IMPORT: Lote final de ${operationsInCurrentBatch} pacientes commitado com sucesso.`);
+            } catch (batchError: any) {
+                console.error("BATCH IMPORT: Erro ao commitar lote final de pacientes no Firestore: ", batchError);
+                importErrors.push(`Erro ao salvar o último lote de pacientes: ${batchError.message}`);
+            }
+          }
 
           if (importErrors.length > 0) {
             toast({
@@ -254,28 +274,18 @@ const BatchImportPatientForm = () => {
                 </div>
               ),
               variant: "destructive",
-              duration: 10000,
+              duration: totalValidPatientsProcessed > 0 ? 15000 : 10000,
             });
           }
 
-          if (validPatientsCount > 0) {
-            try {
-              console.log(`BATCH IMPORT: Tentando batch.commit() para ${validPatientsCount} pacientes.`);
-              await batch.commit();
-              console.log("BATCH IMPORT: batch.commit() bem-sucedido.");
-              toast({
-                title: "Importação Concluída",
-                description: `${validPatientsCount} paciente(s) importado(s) com sucesso.`,
-              });
-            } catch (error) {
-              console.error("BATCH IMPORT: Erro ao salvar pacientes no Firestore (batch.commit): ", error);
-              toast({ title: "Erro no Banco de Dados", description: "Não foi possível salvar os pacientes importados.", variant: "destructive" });
-            }
+          if (totalValidPatientsProcessed > 0) {
+            toast({
+              title: "Importação Concluída",
+              description: `${totalValidPatientsProcessed} paciente(s) importado(s) com sucesso.`,
+            });
           } else if (importErrors.length === 0 && data.length > 0) { 
              toast({ title: "Nenhum Paciente para Importar", description: "Nenhum paciente válido encontrado na planilha após validação.", variant: "default" });
              console.log("BATCH IMPORT: Nenhum paciente válido para commit, mas não houve erros de validação explícitos que pararam o loop.");
-          } else if (data.length === 0) {
-             // Este caso já foi tratado no início
           }
 
           console.log("BATCH IMPORT: Chegando ao final do 'complete' callback. isProcessing será definido como false.");
@@ -325,6 +335,7 @@ const BatchImportPatientForm = () => {
         <CardTitle className="font-headline">Importar Pacientes em Lote via Planilha CSV</CardTitle>
         <CardDescription>
           A primeira linha da planilha deve ser o cabeçalho. Certifique-se que o arquivo está codificado em UTF-8.
+          Grandes arquivos serão processados em lotes de {BATCH_SIZE} pacientes.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -401,5 +412,3 @@ export default function AddPatientPage() {
     </div>
   );
 }
-
-    
