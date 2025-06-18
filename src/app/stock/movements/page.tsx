@@ -732,18 +732,28 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
 
                         if (movementData.type === 'entry') {
                             let currentCentralQtyBeforeOp = currentItemData.currentQuantityCentral;
+                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Tipo ENTRADA. Item: ${item.name}. currentQuantityCentral (lido do DB): ${currentCentralQtyBeforeOp}, tipo: ${typeof currentCentralQtyBeforeOp}`);
+
                             if (typeof currentCentralQtyBeforeOp !== 'number' || isNaN(currentCentralQtyBeforeOp)) {
-                                console.warn(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentQuantityCentral lido do DB para item '${item.name}' era '${currentCentralQtyBeforeOp}' (tipo: ${typeof currentCentralQtyBeforeOp}). Considerando como 0 para a operação de entrada.`);
+                                console.warn(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentQuantityCentral do item '${item.name}' era '${currentCentralQtyBeforeOp}'. Corrigindo para 0.`);
                                 currentCentralQtyBeforeOp = 0;
                             }
                             if (typeof movementData.quantity !== 'number' || isNaN(movementData.quantity)) {
                                 console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - movementData.quantity ('${movementData.quantity}') não é um número válido! Abortando atualização para este item.`);
                                 throw new Error(`Quantidade de movimentação inválida para ${item.name} na linha ${rowIndex}.`);
                             }
+
                             newQuantityCentralCalculated = currentCentralQtyBeforeOp + movementData.quantity;
-                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Tipo ENTRADA. Item: ${item.name}. currentQuantityCentral (lido): ${currentCentralQtyBeforeOp}. movementData.quantity: ${movementData.quantity}. newQuantityCentral (calculado): ${newQuantityCentralCalculated}`);
+                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Cálculo para ENTRADA: ${currentCentralQtyBeforeOp} (atual) + ${movementData.quantity} (mov.) = ${newQuantityCentralCalculated} (novo)`);
+                            
+                            if (isNaN(newQuantityCentralCalculated)) {
+                                console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - newQuantityCentralCalculated é NaN. Abortando atualização. currentCentralQtyBeforeOp: ${currentCentralQtyBeforeOp}, movementData.quantity: ${movementData.quantity}`);
+                                throw new Error(`Erro no cálculo da nova quantidade central para ${item.name} (resultou em NaN) na linha ${rowIndex}.`);
+                            }
+                            
                             transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentralCalculated });
                             console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Operação de update para currentQuantityCentral (${newQuantityCentralCalculated}) do item ${itemDocRef.path} adicionada à transação.`);
+                        
                         } else if (movementData.type === 'exit' || movementData.type === 'consumption') {
                             let currentCentralQtyForExit = currentItemData.currentQuantityCentral;
                              if (typeof currentCentralQtyForExit !== 'number' || isNaN(currentCentralQtyForExit)) {
@@ -1030,4 +1040,3 @@ export default function StockMovementsPage() {
   );
 }
     
-
