@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import PageHeader from '@/components/PageHeader';
 import PatientForm from '@/components/forms/PatientForm';
 import { UserPlus, Upload, Download, Loader2 } from 'lucide-react';
@@ -14,13 +14,38 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Papa from 'papaparse';
 import { firestore } from '@/lib/firebase';
-import { collection, writeBatch, doc } from 'firebase/firestore';
-import type { Patient } from '@/types';
+import { collection, writeBatch, doc, getDocs, query, orderBy } from 'firebase/firestore';
+import type { Patient, Hospital, PatientSex } from '@/types';
 
 const BatchImportPatientForm = () => {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [hospitals, setHospitals] = useState<Hospital[]>([]);
+  const [ubsList, setUbsList] = useState<Hospital[]>([]);
+  const [isLoadingHospitals, setIsLoadingHospitals] = useState(true);
   const { toast } = useToast();
+
+  useEffect(() => {
+    setIsLoadingHospitals(true);
+    const hospitalsCollectionRef = collection(firestore, "hospitals");
+    const q = query(hospitalsCollectionRef, orderBy("name", "asc"));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const allHospitalsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital));
+      setHospitals(allHospitalsData);
+      setUbsList(allHospitalsData.filter(h => h.name.toLowerCase().includes('ubs')));
+      setIsLoadingHospitals(false);
+    }, (error) => {
+      console.error("Erro ao buscar hospitais/UBSs: ", error);
+      toast({
+        title: "Erro ao Carregar Hospitais/UBSs",
+        description: "Não foi possível carregar a lista de hospitais/UBSs para validação.",
+        variant: "destructive",
+      });
+      setIsLoadingHospitals(false);
+    });
+    return () => unsubscribe();
+  }, [toast]);
+
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
@@ -43,11 +68,11 @@ const BatchImportPatientForm = () => {
 
   const handleSubmit = async () => {
     if (!file) {
-      toast({
-        title: "Erro",
-        description: "Por favor, selecione um arquivo CSV para importar.",
-        variant: "destructive",
-      });
+      toast({ title: "Erro", description: "Por favor, selecione um arquivo CSV para importar.", variant: "destructive" });
+      return;
+    }
+    if (isLoadingHospitals) {
+      toast({ title: "Aguarde", description: "A lista de UBSs ainda está carregando. Tente novamente em alguns segundos.", variant: "default" });
       return;
     }
 
@@ -70,11 +95,7 @@ const BatchImportPatientForm = () => {
 
           if (parseErrors.length > 0) {
             console.error("Erros de parsing do CSV:", parseErrors);
-            toast({
-              title: "Erro ao Processar CSV",
-              description: `Houve ${parseErrors.length} erro(s) ao ler o arquivo. Verifique o console.`,
-              variant: "destructive",
-            });
+            toast({ title: "Erro ao Processar CSV", description: `Houve ${parseErrors.length} erro(s) ao ler o arquivo. Verifique o console.`, variant: "destructive" });
             setIsProcessing(false);
             return;
           }
@@ -84,18 +105,23 @@ const BatchImportPatientForm = () => {
             setIsProcessing(false);
             return;
           }
-          
+
           const patientsCollectionRef = collection(firestore, "patients");
           const batch = writeBatch(firestore);
           let validPatientsCount = 0;
           const importErrors: string[] = [];
 
           data.forEach((row, index) => {
-            const rowIndex = index + 2; // +1 para header, +1 para 0-indexed
+            const rowIndex = index + 2;
 
             const name = row["Nome Completo"]?.trim();
             const susCardNumber = row["Número do Cartão SUS"]?.trim();
             const birthDateStr = row["Data de Nascimento"]?.trim();
+            const address = row["Endereço"]?.trim();
+            const phone = row["Telefone"]?.trim();
+            const sexStr = row["Sexo"]?.trim().toLowerCase();
+            const healthAgentName = row["Agente de Saúde"]?.trim();
+            const registeredUBSNameCsv = row["Nome da UBS de Cadastro"]?.trim();
 
             if (!name || !susCardNumber) {
               importErrors.push(`Linha ${rowIndex}: Nome Completo e Número do Cartão SUS são obrigatórios.`);
@@ -103,17 +129,16 @@ const BatchImportPatientForm = () => {
             }
 
             if (!/^\d{15}$/.test(susCardNumber)) {
-              importErrors.push(`Linha ${rowIndex}: Número do Cartão SUS inválido. Deve conter 15 dígitos numéricos.`);
+              importErrors.push(`Linha ${rowIndex}: Número do Cartão SUS inválido ('${susCardNumber}'). Deve conter 15 dígitos numéricos.`);
               return;
             }
-            
+
             let birthDate: string | undefined = undefined;
             if (birthDateStr) {
-                const parsedDate = new Date(birthDateStr); // Interpreta "YYYY-MM-DD" como YYYY-MM-DDT00:00:00Z (UTC)
+                const parsedDate = new Date(birthDateStr);
                 if (!isNaN(parsedDate.getTime())) {
-                    // Usar componentes UTC para evitar deslocamento de fuso
                     const year = parsedDate.getUTCFullYear();
-                    const month = (parsedDate.getUTCMonth() + 1).toString().padStart(2, '0'); // getUTCMonth é 0-indexed
+                    const month = (parsedDate.getUTCMonth() + 1).toString().padStart(2, '0');
                     const day = parsedDate.getUTCDate().toString().padStart(2, '0');
                     birthDate = `${year}-${month}-${day}`;
                 } else {
@@ -122,13 +147,42 @@ const BatchImportPatientForm = () => {
                 }
             }
 
+            let sex: PatientSex | undefined = undefined;
+            if (sexStr) {
+              if (['masculino', 'feminino', 'outro', 'ignorado'].includes(sexStr)) {
+                sex = sexStr as PatientSex;
+              } else {
+                importErrors.push(`Linha ${rowIndex}: Sexo inválido ('${row["Sexo"]}'). Use 'masculino', 'feminino', 'outro' ou 'ignorado'.`);
+                return;
+              }
+            }
+
+            let registeredUBSId: string | undefined = undefined;
+            let registeredUBSName: string | undefined = undefined;
+            if (registeredUBSNameCsv) {
+              const ubs = ubsList.find(u => u.name.toLowerCase() === registeredUBSNameCsv.toLowerCase());
+              if (ubs) {
+                registeredUBSId = ubs.id;
+                registeredUBSName = ubs.name;
+              } else {
+                importErrors.push(`Linha ${rowIndex}: UBS de Cadastro '${registeredUBSNameCsv}' não encontrada. Verifique o nome ou cadastre a UBS primeiro.`);
+                return;
+              }
+            }
+
             const newPatient: Omit<Patient, 'id'> = {
               name,
               susCardNumber,
               birthDate,
+              address: address || undefined,
+              phone: phone || undefined,
+              sex: sex || undefined,
+              healthAgentName: healthAgentName || undefined,
+              registeredUBSId,
+              registeredUBSName,
             };
-            
-            const newDocRef = doc(patientsCollectionRef); // Cria referência com ID automático
+
+            const newDocRef = doc(patientsCollectionRef);
             batch.set(newDocRef, newPatient);
             validPatientsCount++;
           });
@@ -145,29 +199,24 @@ const BatchImportPatientForm = () => {
               duration: 10000,
             });
           }
-          
+
           if (validPatientsCount > 0) {
             try {
               await batch.commit();
               toast({
                 title: "Importação Concluída",
                 description: `${validPatientsCount} paciente(s) importado(s) com sucesso.`,
-                variant: "default",
               });
             } catch (error) {
               console.error("Erro ao salvar pacientes no Firestore: ", error);
-              toast({
-                title: "Erro no Banco de Dados",
-                description: "Não foi possível salvar os pacientes importados. Tente novamente.",
-                variant: "destructive",
-              });
+              toast({ title: "Erro no Banco de Dados", description: "Não foi possível salvar os pacientes importados.", variant: "destructive" });
             }
           } else if (importErrors.length === 0) {
-             toast({ title: "Nenhum Paciente para Importar", description: "Nenhum paciente válido encontrado na planilha para importação.", variant: "default" });
+             toast({ title: "Nenhum Paciente para Importar", description: "Nenhum paciente válido encontrado na planilha.", variant: "default" });
           }
 
           setIsProcessing(false);
-          setFile(null); 
+          setFile(null);
           const fileInput = document.getElementById('batch-patient-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
         },
@@ -179,14 +228,14 @@ const BatchImportPatientForm = () => {
       });
     };
 
-    reader.readAsText(file);
+    reader.readAsText(file, 'UTF-8');
   };
 
   const handleDownloadTemplate = () => {
-    const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
-    const csvHeader = "Nome Completo,Número do Cartão SUS,Data de Nascimento\n";
-    const csvExampleRow1 = "Maria Joaquina de Amaral Pereira Góes,700123456789012,1985-07-22\n";
-    const csvExampleRow2 = "José Ricardo da Silva,700987654321098,\n";
+    const BOM = "\uFEFF";
+    const csvHeader = "Nome Completo,Data de Nascimento,Número do Cartão SUS,Endereço,Telefone,Sexo,Agente de Saúde,Nome da UBS de Cadastro\n";
+    const csvExampleRow1 = "Maria Joaquina de Amaral Pereira Góes,1985-07-22,700123456789012,\"Rua das Palmeiras, 45, Centro, Cidade Exemplo - EX\",(11) 98765-4321,feminino,José Agente,UBS Central Exemplo\n";
+    const csvExampleRow2 = "José Ricardo da Silva,,700987654321098,,,,,\n";
     const csvContent = BOM + csvHeader + csvExampleRow1 + csvExampleRow2;
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -200,16 +249,9 @@ const BatchImportPatientForm = () => {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-       toast({
-        title: "Download Iniciado",
-        description: "O arquivo modelo_importacao_pacientes.csv está sendo baixado.",
-      });
+       toast({ title: "Download Iniciado", description: "O arquivo modelo_importacao_pacientes.csv está sendo baixado." });
     } else {
-        toast({
-            title: "Erro no Download",
-            description: "Seu navegador não suporta o download automático de arquivos.",
-            variant: "destructive",
-        });
+        toast({ title: "Erro no Download", description: "Seu navegador não suporta o download automático.", variant: "destructive" });
     }
   }
 
@@ -218,8 +260,7 @@ const BatchImportPatientForm = () => {
       <CardHeader>
         <CardTitle className="font-headline">Importar Pacientes em Lote via Planilha CSV</CardTitle>
         <CardDescription>
-          Faça o upload de um arquivo .csv contendo os dados dos pacientes.
-          A primeira linha da planilha deve ser o cabeçalho.
+          A primeira linha da planilha deve ser o cabeçalho. Certifique-se que o arquivo está codificado em UTF-8.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -232,9 +273,14 @@ const BatchImportPatientForm = () => {
                 Sua planilha CSV deve ter as seguintes colunas, nesta ordem:
               </p>
               <ul className="list-disc list-inside text-sm space-y-1">
-                <li><code>Nome Completo</code> (Texto, Obrigatório) - Nome completo do paciente.</li>
-                <li><code>Número do Cartão SUS</code> (Número, Obrigatório) - 15 dígitos do Cartão Nacional de Saúde.</li>
-                <li><code>Data de Nascimento</code> (Data no formato AAAA-MM-DD, Opcional) - Ex: 1990-12-31. Deixe em branco se não for fornecer.</li>
+                <li><code>Nome Completo</code> (Texto, Obrigatório)</li>
+                <li><code>Data de Nascimento</code> (Data AAAA-MM-DD, Opcional)</li>
+                <li><code>Número do Cartão SUS</code> (Número, Obrigatório - 15 dígitos)</li>
+                <li><code>Endereço</code> (Texto, Opcional)</li>
+                <li><code>Telefone</code> (Texto, Opcional)</li>
+                <li><code>Sexo</code> (Texto, Opcional - 'masculino', 'feminino', 'outro', 'ignorado')</li>
+                <li><code>Agente de Saúde</code> (Texto, Opcional - Nome do agente)</li>
+                <li><code>Nome da UBS de Cadastro</code> (Texto, Opcional - Nome exato da UBS cadastrada no sistema)</li>
               </ul>
               <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="mt-4">
                 <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (.csv)
@@ -244,29 +290,23 @@ const BatchImportPatientForm = () => {
         </div>
 
         <div className="grid w-full max-w-md items-center gap-2">
-          <Label htmlFor="batch-patient-file-input">Arquivo CSV</Label>
+          <Label htmlFor="batch-patient-file-input">Arquivo CSV (UTF-8)</Label>
           <Input
             id="batch-patient-file-input"
             type="file"
             accept=".csv"
             onChange={handleFileChange}
             className="cursor-pointer file:cursor-pointer file:font-semibold file:text-primary"
-            disabled={isProcessing}
+            disabled={isProcessing || isLoadingHospitals}
           />
           {file && <p className="text-sm text-muted-foreground mt-2">Arquivo selecionado: {file.name}</p>}
         </div>
       </CardContent>
       <CardFooter>
-        <Button onClick={handleSubmit} disabled={!file || isProcessing}>
-          {isProcessing ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processando...
-            </>
-          ) : (
-            <>
-              <Upload className="mr-2 h-4 w-4" /> Processar Planilha
-            </>
-          )}
+        <Button onClick={handleSubmit} disabled={!file || isProcessing || isLoadingHospitals}>
+          {isLoadingHospitals ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Carregando UBSs...</> :
+           isProcessing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processando...</> :
+           <><Upload className="mr-2 h-4 w-4" /> Processar Planilha</>}
         </Button>
       </CardFooter>
     </Card>

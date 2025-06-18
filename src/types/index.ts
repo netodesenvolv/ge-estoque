@@ -52,15 +52,23 @@ export interface StockMovement {
   quantity: number;
   date: string; // ISO date string
   notes?: string;
-  patientId?: string; 
-  patientName?: string; 
+  patientId?: string;
+  patientName?: string;
 }
+
+export type PatientSex = 'masculino' | 'feminino' | 'outro' | 'ignorado';
 
 export interface Patient {
   id: string;
-  name: string;
-  birthDate?: string; // ISO date string, e.g., "YYYY-MM-DD", agora opcional
-  susCardNumber: string;
+  name: string; // Nome Completo
+  birthDate?: string; // ISO date string, e.g., "YYYY-MM-DD"
+  susCardNumber: string; // CNS
+  address?: string; // Endereço
+  phone?: string; // Telefone
+  sex?: PatientSex; // Sexo
+  healthAgentName?: string; // Nome do Agente de Saúde
+  registeredUBSId?: string; // ID da UBS de Cadastro
+  registeredUBSName?: string; // Nome da UBS de Cadastro (para conveniência de exibição)
 }
 
 export interface ConsumptionDataPoint {
@@ -70,7 +78,7 @@ export interface ConsumptionDataPoint {
   quantityConsumed: number;
   servedUnitId: string;
   hospitalId: string;
-  patientId?: string; 
+  patientId?: string;
 }
 
 // For GenAI input
@@ -79,8 +87,8 @@ export interface HistoricalDataEntry {
   date: string; // YYYY-MM-DD
   quantityConsumed: number;
   servedUnit: string;
-  hospital: string; 
-  patientSUS?: string; 
+  hospital: string;
+  patientSUS?: string;
 }
 
 export type UserRole = 'admin' | 'user';

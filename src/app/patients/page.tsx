@@ -8,14 +8,22 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, PlusCircle, Edit3, Trash2, Search } from 'lucide-react';
-import type { Patient } from '@/types';
+import { Users, PlusCircle, Edit3, Trash2, Search, Phone, Home } from 'lucide-react';
+import type { Patient, PatientSex } from '@/types';
 import { Input } from '@/components/ui/input';
 import { format, parseISO, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { firestore } from '@/lib/firebase';
 import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { Badge } from '@/components/ui/badge';
+
+const patientSexDisplay: Record<PatientSex, string> = {
+  masculino: 'M',
+  feminino: 'F',
+  outro: 'O',
+  ignorado: 'N/I',
+};
 
 export default function PatientsPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -47,11 +55,18 @@ export default function PatientsPage() {
 
   const filteredPatients = patients.filter(patient =>
     patient.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    patient.susCardNumber.includes(searchTerm)
+    patient.susCardNumber.includes(searchTerm) ||
+    (patient.phone && patient.phone.includes(searchTerm)) ||
+    (patient.registeredUBSName && patient.registeredUBSName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const handleEdit = (id: string) => {
-    router.push(`/patients/${id}/edit`);
+    // Implementar rota de edição futuramente
+    // router.push(`/patients/${id}/edit`);
+    toast({
+      title: "Funcionalidade Pendente",
+      description: "A edição de pacientes ainda não foi implementada.",
+    });
   };
 
   const handleDelete = async (id: string) => {
@@ -61,7 +76,6 @@ export default function PatientsPage() {
       toast({
         title: "Paciente Excluído",
         description: "Paciente foi removido do banco de dados.",
-        variant: "default",
       });
     } catch (error) {
       console.error("Erro ao excluir paciente: ", error);
@@ -76,16 +90,19 @@ export default function PatientsPage() {
   const formatBirthDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
-      const date = parseISO(dateString);
-      if (isValid(date)) {
+      const date = parseISO(dateString); // Ajustado para parseISO
+      if (isValid(date)) { // Verifica se a data é válida
         return format(date, 'dd/MM/yyyy', { locale: ptBR });
       }
       return 'Data Inválida';
     } catch (error) {
-      return 'Data Inválida';
+      return 'Data Inválida'; // Em caso de erro no parsing
     }
   };
 
+  const getSexDisplay = (sex?: PatientSex) => {
+    return sex ? patientSexDisplay[sex] || 'N/A' : 'N/A';
+  };
 
   return (
     <div>
@@ -108,8 +125,8 @@ export default function PatientsPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Buscar por nome ou Cartão SUS..."
-              className="pl-10 w-full md:w-1/2"
+              placeholder="Buscar por nome, Cartão SUS, telefone ou UBS..."
+              className="pl-10 w-full md:w-2/3"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -121,8 +138,11 @@ export default function PatientsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Nome</TableHead>
-                  <TableHead>Data de Nascimento</TableHead>
+                  <TableHead>Data de Nasc.</TableHead>
+                  <TableHead>Sexo</TableHead>
                   <TableHead>Cartão SUS</TableHead>
+                  <TableHead><Phone className="inline h-4 w-4 mr-1"/>Telefone</TableHead>
+                  <TableHead><Home className="inline h-4 w-4 mr-1"/>UBS de Cadastro</TableHead>
                   <TableHead className="text-center">Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -131,10 +151,15 @@ export default function PatientsPage() {
                   filteredPatients.map((patient) => (
                     <TableRow key={patient.id}>
                       <TableCell className="font-medium">{patient.name}</TableCell>
+                      <TableCell>{formatBirthDate(patient.birthDate)}</TableCell>
                       <TableCell>
-                        {formatBirthDate(patient.birthDate)}
+                        <Badge variant={patient.sex === 'feminino' ? "secondary" : patient.sex === 'masculino' ? "outline" : "default"} className="text-xs">
+                          {getSexDisplay(patient.sex)}
+                        </Badge>
                       </TableCell>
                       <TableCell>{patient.susCardNumber}</TableCell>
+                      <TableCell>{patient.phone || 'N/A'}</TableCell>
+                      <TableCell>{patient.registeredUBSName || 'N/A'}</TableCell>
                       <TableCell className="text-center">
                         <Button variant="ghost" size="icon" onClick={() => handleEdit(patient.id)} className="hover:text-primary mr-2">
                           <Edit3 className="h-4 w-4" />
@@ -147,7 +172,7 @@ export default function PatientsPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center h-24">
+                    <TableCell colSpan={7} className="text-center h-24">
                       Nenhum paciente encontrado.
                     </TableCell>
                   </TableRow>
