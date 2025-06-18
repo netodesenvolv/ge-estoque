@@ -58,15 +58,25 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
 }
 
 export function LayoutRenderer({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading: authLoading, isMounted } = useAuth();
   const pathname = usePathname();
   const isAuthRoute = pathname === '/login' || pathname === '/signup';
+
+  if (!isMounted) {
+    // Renderiza um loader consistente no servidor e na primeira renderização do cliente antes da montagem
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
+        <p className="text-lg text-muted-foreground">Inicializando...</p>
+      </div>
+    );
+  }
 
   if (isAuthRoute) {
     return <>{children}</>;
   }
 
-  if (loading) {
+  if (authLoading) {
      return (
       <div className="flex h-screen items-center justify-center">
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
@@ -77,7 +87,7 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
 
   if (!user && !isAuthRoute) {
     // O AuthProvider já lida com o redirecionamento.
-    // Podemos mostrar uma tela de "Verificando..." ou um spinner se o redirecionamento demorar.
+    // Este estado é para o breve momento antes do redirecionamento do useEffect no AuthProvider ocorrer.
     return (
       <div className="flex h-screen items-center justify-center">
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
@@ -99,4 +109,4 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
     </div>
   );
 }
-
+    

@@ -21,6 +21,7 @@ import { useRouter, usePathname } from 'next/navigation';
 interface AuthContextType {
   user: FirebaseUser | null;
   loading: boolean; // Continuará indicando o carregamento do estado de autenticação
+  isMounted: boolean; // Adicionado para rastrear a montagem do cliente
   logout: () => Promise<void>;
   loginWithEmailAndPassword: (email: string, pass: string) => Promise<FirebaseUser | AuthError>;
   signUpWithEmailAndPassword: (email: string, pass: string) => Promise<FirebaseUser | AuthError>;
@@ -60,6 +61,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const authContextValue: AuthContextType = {
     user,
     loading,
+    isMounted, // Fornecer isMounted através do contexto
     loginWithEmailAndPassword: async (email: string, pass: string): Promise<FirebaseUser | AuthError> => {
       try {
         const userCredential = await firebaseSignIn(auth, email, pass);
@@ -104,3 +106,4 @@ export const useAuth = (): AuthContextType => {
   return context;
 };
 
+    
