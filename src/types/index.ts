@@ -46,16 +46,16 @@ export interface StockMovement {
   itemName?: string;
   unitId?: string;
   unitName?: string;
-  hospitalId?: string; // Only relevant if unitId is present for exit/consumption
-  hospitalName?: string; // Only relevant if unitId is present for exit/consumption
+  hospitalId?: string | null; // Only relevant if unitId is present for exit/consumption
+  hospitalName?: string | null; // Only relevant if unitId is present for exit/consumption
   type: StockMovementType;
   quantity: number;
   date: string; // ISO date string
-  notes?: string;
-  patientId?: string;
-  patientName?: string;
+  notes?: string | null; // Allow null for optional notes
+  patientId?: string | null; // Allow null for optional patient ID
+  patientName?: string | null; // Allow null for optional patient name
 }
-
+ 
 export type PatientSex = 'masculino' | 'feminino' | 'outro' | 'ignorado';
 
 export interface Patient {

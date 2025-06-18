@@ -19,10 +19,20 @@ import type { Item, ServedUnit, Hospital, Patient, StockMovement } from '@/types
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, runTransaction, addDoc, getDocs, writeBatch } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, runTransaction, addDoc, getDocs, writeBatch, type Transaction } from 'firebase/firestore';
 import Papa, { type ParseError } from 'papaparse';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
+
+function removeUndefinedFields<T extends object>(obj: T): Partial<T> {
+  const newObj: Partial<T> = {};
+  for (const key in obj) {
+    if (obj[key] !== undefined) {
+      newObj[key] = obj[key];
+    }
+  }
+  return newObj;
+}
 
 const CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE = "CENTRAL_WAREHOUSE_DIRECT_EXIT";
 
@@ -202,22 +212,27 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
         const unitDetailsForLog = servedUnits.find(u => u.id === processedData.unitId);
         const patientDetailsForLog = patients.find(p => p.id === processedData.patientId);
 
-        const movementLog: Omit<StockMovement, 'id'> = {
+        const movementLogPayload: Partial<StockMovement> = {
           itemId: processedData.itemId,
-          itemName: itemDetailsForLog?.name || null,
+          itemName: itemDetailsForLog?.name,
           type: processedData.type,
           quantity: processedData.quantity,
           date: processedData.date,
           notes: processedData.notes || null,
-          hospitalId: processedData.hospitalId || null,
+          hospitalId: hospitalDetailsForLog?.id || null,
           hospitalName: hospitalDetailsForLog?.name || null,
-          unitId: processedData.unitId || null,
+          unitId: unitDetailsForLog?.id || null,
           unitName: unitDetailsForLog?.name || null,
-          patientId: processedData.patientId || null,
+          patientId: patientDetailsForLog?.id || null,
           patientName: patientDetailsForLog?.name || null,
         };
+        
+        const cleanedMovementLog = Object.fromEntries(
+          Object.entries(movementLogPayload).filter(([_, v]) => v !== undefined)
+        ) as Omit<StockMovement, 'id'>;
+
         const stockMovementsCollectionRef = collection(firestore, "stockMovements");
-        transaction.set(doc(stockMovementsCollectionRef), movementLog);
+        transaction.set(doc(stockMovementsCollectionRef), cleanedMovementLog);
       });
       
       const item = items.find(i => i.id === processedData.itemId);
@@ -482,7 +497,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
   const handleDownloadTemplate = () => {
     const BOM = "\uFEFF";
     const csvHeader = "Código do Item,Tipo,Quantidade,Data,Nome do Hospital Destino/Consumo,Nome da Unidade Destino/Consumo,Cartão SUS Paciente,Observações\n";
-    const csvExampleRow1 = "ITEM001,entrada,100,2024-01-15,,,,,\n"; // Data corrigida para AAAA-MM-DD
+    const csvExampleRow1 = "ITEM001,entrada,100,2024-01-15,,,,,\n"; 
     const csvExampleRow2 = "ITEM002,saida,10,2024-01-16,Hospital Central,UTI Geral,,Transferência urgente\n";
     const csvExampleRow3 = "ITEM003,consumo,2,2024-01-17,UBS Vila Nova,Consultório 1,700123456789012,Consumo paciente Maria\n";
     const csvExampleRow4 = "ITEM001,saida,5,2024-01-18,,,,Baixa por ajuste de inventário\n";
@@ -506,6 +521,158 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
       toast({ title: "Erro no Download", description: "Seu navegador não suporta o download automático.", variant: "destructive" });
     }
   };
+
+  const processMovementRowTransaction = async (
+    transaction: Transaction,
+    movementData: MovementFormData,
+    item: Item,
+    rowIndex: number,
+    itemCodeForRow: string,
+    hospitalNameCsv?: string,
+    unitNameCsv?: string,
+    notesCsv?: string,
+    patientId?: string
+  ) => {
+      const itemDocRef = doc(firestore, "items", movementData.itemId);
+      let unitConfigDocRef = null;
+      let unitConfigSnap = null;
+      let unitConfigDocId = null;
+      
+      const itemSnap = await transaction.get(itemDocRef); 
+      if (!itemSnap.exists()) {
+          console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Item ID '${movementData.itemId}' não encontrado na transação.`);
+          throw new Error(`Item ID '${movementData.itemId}' não encontrado na transação (linha ${rowIndex}).`);
+      }
+      
+      const currentItemData = itemSnap.data() as Item;
+      let newQuantityCentralCalculated: number; 
+
+      if ((movementData.type === 'exit' || movementData.type === 'consumption') && movementData.hospitalId && movementData.unitId) {
+          unitConfigDocId = `${movementData.itemId}_${movementData.unitId}`; 
+          unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
+          console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Verificando config unidade ${unitConfigDocRef.path}.`);
+          unitConfigSnap = await transaction.get(unitConfigDocRef); 
+      }
+
+      console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Detalhes para decisão: type='${movementData.type}', hospitalId='${movementData.hospitalId}', unitId='${movementData.unitId}'`);
+
+      if (movementData.type === 'entry') {
+          let currentCentralQtyBeforeOp = currentItemData.currentQuantityCentral;
+          console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Tipo ENTRADA. Item ID: ${movementData.itemId}. currentQuantityCentral (antes da coerção): ${currentCentralQtyBeforeOp}, tipo: ${typeof currentCentralQtyBeforeOp}`);
+
+          if (typeof currentCentralQtyBeforeOp !== 'number' || isNaN(currentCentralQtyBeforeOp)) {
+              console.warn(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentQuantityCentral do item ID '${movementData.itemId}' era '${currentCentralQtyBeforeOp}'. Corrigindo para 0.`);
+              currentCentralQtyBeforeOp = 0;
+          }
+          if (typeof movementData.quantity !== 'number' || isNaN(movementData.quantity)) {
+              console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - movementData.quantity ('${movementData.quantity}') não é um número válido! Abortando atualização para este item.`);
+              throw new Error(`Quantidade de movimentação inválida para item ID '${movementData.itemId}' na linha ${rowIndex}.`);
+          }
+
+          newQuantityCentralCalculated = currentCentralQtyBeforeOp + movementData.quantity;
+          console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Cálculo para ENTRADA: ${currentCentralQtyBeforeOp} (atual) + ${movementData.quantity} (mov.) = ${newQuantityCentralCalculated} (novo)`);
+          
+          if (isNaN(newQuantityCentralCalculated)) {
+              console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - newQuantityCentralCalculated é NaN. Abortando atualização. currentCentralQtyBeforeOp: ${currentCentralQtyBeforeOp}, movementData.quantity: ${movementData.quantity}`);
+              throw new Error(`Erro no cálculo da nova quantidade central para ${item.name} (resultou em NaN) na linha ${rowIndex}.`);
+          }
+          transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentralCalculated });
+          console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Operação de update para currentQuantityCentral (${newQuantityCentralCalculated}) do item ${itemDocRef.path} adicionada à transação.`);
+      
+      } else if (movementData.type === 'exit' || movementData.type === 'consumption') {
+          let currentCentralQtyForExit = currentItemData.currentQuantityCentral;
+          console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Tipo ${movementData.type}. currentQuantityCentral (ANTES da coerção): ${currentCentralQtyForExit}, tipo: ${typeof currentCentralQtyForExit}`);
+          if (typeof currentCentralQtyForExit !== 'number' || isNaN(currentCentralQtyForExit)) {
+              console.warn(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentQuantityCentral para SAÍDA/CONSUMO lido do DB para item ID '${movementData.itemId}' era '${currentCentralQtyForExit}'. Corrigindo para 0.`);
+              currentCentralQtyForExit = 0;
+          }
+          console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentCentralQtyForExit (APÓS coerção): ${currentCentralQtyForExit}`);
+          
+          console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Valores para decisão de rota de saída: movementData.hospitalId='${movementData.hospitalId}', movementData.unitId='${movementData.unitId}'`);
+
+          if (movementData.hospitalId && movementData.unitId && unitConfigDocRef) { 
+              console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - ${movementData.type} para Unidade. Estoque central (coerced): ${currentCentralQtyForExit}, Quantidade da mov.: ${movementData.quantity}`);
+              if (currentCentralQtyForExit < movementData.quantity) {
+                  console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Estoque insuficiente no Arm. Central. Item ID: ${movementData.itemId}, Atual: ${currentCentralQtyForExit}, Necessário: ${movementData.quantity}`);
+                  throw new Error(`Estoque insuficiente (${currentCentralQtyForExit}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
+              }
+              
+              const newCentralQuantityAfterTransfer = currentCentralQtyForExit - movementData.quantity;
+              console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Tipo SAIDA/CONSUMO (para Unidade). Atualizando item ${itemDocRef.path}. Old Central Qty: ${currentCentralQtyForExit}. New Central Qty: ${newCentralQuantityAfterTransfer}`);
+              transaction.update(itemDocRef, { currentQuantityCentral: newCentralQuantityAfterTransfer });
+
+              if (unitConfigSnap && unitConfigSnap.exists()) {
+                  const currentUnitConfigData = unitConfigSnap.data();
+                  let currentUnitQtyBeforeOp = currentUnitConfigData.currentQuantity || 0;
+                  if (typeof currentUnitQtyBeforeOp !== 'number' || isNaN(currentUnitQtyBeforeOp)) {
+                      console.warn(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): currentQuantity da unidade ${movementData.unitId} era '${currentUnitQtyBeforeOp}'. Considerando como 0.`);
+                      currentUnitQtyBeforeOp = 0;
+                  }
+                  const newUnitQuantity = currentUnitQtyBeforeOp + movementData.quantity;
+                  console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Atualizando Unit Config ${unitConfigDocRef.path}. Old Unit Qty: ${currentUnitQtyBeforeOp}. New Unit Qty: ${newUnitQuantity}`);
+                  transaction.update(unitConfigDocRef, { currentQuantity: newUnitQuantity });
+              } else { 
+                  const unitDetails = servedUnits.find(u => u.id === movementData.unitId);
+                  const dataToSet = {
+                      itemId: movementData.itemId,
+                      unitId: movementData.unitId,
+                      hospitalId: unitDetails?.hospitalId || null,
+                      currentQuantity: movementData.quantity,
+                      strategicStockLevel: 0, 
+                      minQuantity: 0, 
+                  };
+                  console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Setting new Unit Config ${unitConfigDocRef.path}. New Unit Qty: ${movementData.quantity}. Data:`, JSON.stringify(dataToSet));
+                  transaction.set(unitConfigDocRef, dataToSet);
+              }
+          } else if (!movementData.hospitalId && !movementData.unitId) { 
+              console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Entrou no bloco de BAIXA DIRETA/CONSUMO CENTRAL.`);
+              if (typeof currentCentralQtyForExit !== 'number' || isNaN(currentCentralQtyForExit)) {
+                  console.warn(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentQuantityCentral para SAÍDA/CONSUMO lido do DB para item ID '${movementData.itemId}' era '${currentCentralQtyForExit}'. Corrigindo para 0.`);
+                  currentCentralQtyForExit = 0;
+              }
+              console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentCentralQtyForExit (APÓS coerção): ${currentCentralQtyForExit}`);
+
+              if (typeof movementData.quantity !== 'number' || isNaN(movementData.quantity) || movementData.quantity <= 0) {
+                  console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - movementData.quantity ('${movementData.quantity}') não é um número positivo válido! Abortando atualização para este item.`);
+                  throw new Error(`Quantidade de movimentação inválida para item ID '${movementData.itemId}' na linha ${rowIndex}.`);
+              }
+              
+              if (currentCentralQtyForExit < movementData.quantity) {
+                  console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Estoque insuficiente (baixa direta). Item ID: ${movementData.itemId}, Atual: ${currentCentralQtyForExit}, Necessário: ${movementData.quantity}`);
+                  throw new Error(`Estoque insuficiente (${currentCentralQtyForExit}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
+              }
+              newQuantityCentralCalculated = currentCentralQtyForExit - movementData.quantity;
+              console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Baixa/consumo direto. Update para item ${itemDocRef.path} com currentQuantityCentral: ${newQuantityCentralCalculated} adicionado à transação.`);
+              transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentralCalculated });
+              console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - FIM do bloco de BAIXA DIRETA/CONSUMO CENTRAL.`);
+          } else {
+              console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Configuração de saída/consumo inválida. HospitalId: '${movementData.hospitalId}', UnitId: '${movementData.unitId}'`);
+              throw new Error(`Configuração de saída/consumo inválida na planilha (linha ${rowIndex}). Hospital/Unidade inconsistente ou ausente quando esperado.`);
+          }
+      }
+
+      const patientDetailsForLog = patientId ? patients.find(p => p.id === patientId) : null;
+      const movementLog: Omit<StockMovement, 'id'> = {
+          itemId: movementData.itemId, 
+          itemName: items.find(i => i.id === movementData.itemId)?.name ?? null, 
+          type: movementData.type,
+          quantity: movementData.quantity,
+          date: movementData.date,
+          notes: notesCsv || undefined, 
+          hospitalId: movementData.hospitalId || undefined, 
+          hospitalName: hospitalNameCsv || undefined,
+          unitId: movementData.unitId || undefined,
+          unitName: unitNameCsv || undefined,
+          patientId: patientId || undefined,
+          patientName: patientDetailsForLog?.name || undefined, 
+      };
+      console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Criando log de movimentação (antes de remover undefined):`, JSON.stringify(movementLog));
+      const movementLogClean = removeUndefinedFields(movementLog);
+      console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Log de movimentação (depois de remover undefined):`, JSON.stringify(movementLogClean));
+      transaction.set(doc(collection(firestore, "stockMovements")), movementLogClean);
+      console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): DENTRO DA TRANSAÇÃO - Todas as operações da transação foram adicionadas. Preparando para commit implícito.`);
+  };
+
 
   const handleSubmit = async () => {
     if (!file) {
@@ -573,7 +740,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
             const rowIndex = i + 2; 
             let itemCodeForRow = "N/A"; 
             console.log(`BATCH IMPORT: Linha ${rowIndex} do CSV:`, JSON.stringify(row));
-
+            
             try {
                 const itemCode = row["Código do Item"]?.trim();
                 itemCodeForRow = itemCode || "N/A";
@@ -593,6 +760,10 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 }
                 
                 console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Tipo lido (original): '${row["Tipo"]}', Sanitizado: '${typeStr}', Tipo JS: ${typeof typeStr}`);
+                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): typeStr length: ${typeStr.length}`);
+                for(let charIdx = 0; charIdx < typeStr.length; charIdx++) {
+                    console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): CHAR_CODE_LOG charCodeAt(${charIdx}) ('${typeStr.charAt(charIdx)}'): ${typeStr.charCodeAt(charIdx)}`);
+                }
 
 
                 const quantityStr = row["Quantidade"]?.trim();
@@ -623,7 +794,6 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                   continue;
                 }
 
-                // Validação de Data mais estrita
                 const dateRegex = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/;
                 let formattedDate = dateStr;
                 if (!dateRegex.test(dateStr)) {
@@ -632,18 +802,17 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                     continue;
                 }
                 try {
-                    const parsedDate = new Date(dateStr + "T00:00:00Z"); // Trata como UTC para evitar off-by-one
+                    const parsedDate = new Date(dateStr + "T00:00:00Z"); 
                     if (isNaN(parsedDate.getTime())) {
                         throw new Error("Data resultou em NaN após parsing.");
                     }
-                    // Checa se a data parseada corresponde à string original (para evitar datas como 2024-02-30)
                     const checkYear = parsedDate.getUTCFullYear();
                     const checkMonth = parsedDate.getUTCMonth() + 1;
                     const checkDay = parsedDate.getUTCDate();
                     const [inputYear, inputMonth, inputDay] = dateStr.split('-').map(Number);
 
                     if (checkYear !== inputYear || checkMonth !== inputMonth || checkDay !== inputDay) {
-                         throw new Error(`Data inválida (ex: dia inexistente para o mês). Original: ${dateStr}, Parseed: ${checkYear}-${checkMonth}-${checkDay}`);
+                         throw new Error(`Data inválida (ex: dia inexistente para o mês). Original: ${dateStr}, Parsed: ${checkYear}-${checkMonth}-${checkDay}`);
                     }
                     formattedDate = parsedDate.toISOString().split('T')[0];
                     console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Data CSV '${dateStr}' formatada para '${formattedDate}'`);
@@ -663,7 +832,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
 
                 let hospitalId: string | undefined = undefined;
                 let unitId: string | undefined = undefined;
-                let patientId: string | undefined = undefined;
+                let patientIdCsv: string | undefined = undefined;
                 let selectedHospital: Hospital | undefined = undefined;
                 let selectedUnit: ServedUnit | undefined = undefined;
 
@@ -700,7 +869,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                         console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - paciente não encontrado. SUS: ${patientSUS}`);
                         continue;
                     }
-                    patientId = patient.id;
+                    patientIdCsv = patient.id;
                 }
                 
                 const movementData: MovementFormData = {
@@ -710,7 +879,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                     date: formattedDate, 
                     hospitalId: hospitalId,
                     unitId: unitId,
-                    patientId: patientId,
+                    patientId: patientIdCsv,
                     notes: notesCsv,
                 };
 
@@ -718,136 +887,19 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
                 
                 try {
                     console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): Iniciando runTransaction.`);
-                    await runTransaction(firestore, async (transaction) => {
-                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): DENTRO da transação Firestore.`);
-                        const itemDocRef = doc(firestore, "items", movementData.itemId);
-                        let unitConfigDocRef = null;
-                        let unitConfigSnap = null;
-                        let unitConfigDocId = null;
-                        
-                        const itemSnap = await transaction.get(itemDocRef); 
-                        if (!itemSnap.exists()) {
-                            console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Item ${item.name} (ID: ${movementData.itemId}) não encontrado na transação.`);
-                            throw new Error(`Item ${item.name} não encontrado na transação (linha ${rowIndex}).`);
-                        }
-                        
-                        const currentItemData = itemSnap.data() as Item;
-                        let newQuantityCentralCalculated: number; 
-
-                        if ((movementData.type === 'exit' || movementData.type === 'consumption') && movementData.hospitalId && movementData.unitId) {
-                            unitConfigDocId = `${movementData.itemId}_${movementData.unitId}`;
-                            unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
-                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Verificando config unidade ${unitConfigDocRef.path}.`);
-                            unitConfigSnap = await transaction.get(unitConfigDocRef); 
-                        }
-
-                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Detalhes para decisão: type='${movementData.type}', hospitalId='${movementData.hospitalId}', unitId='${movementData.unitId}'`);
-
-                        if (movementData.type === 'entry') {
-                            let currentCentralQtyBeforeOp = currentItemData.currentQuantityCentral;
-                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Tipo ENTRADA. Item: ${item.name}. currentQuantityCentral (antes da coerção): ${currentCentralQtyBeforeOp}, tipo: ${typeof currentCentralQtyBeforeOp}`);
-
-                            if (typeof currentCentralQtyBeforeOp !== 'number' || isNaN(currentCentralQtyBeforeOp)) {
-                                console.warn(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentQuantityCentral do item '${item.name}' era '${currentCentralQtyBeforeOp}'. Corrigindo para 0.`);
-                                currentCentralQtyBeforeOp = 0;
-                            }
-                            if (typeof movementData.quantity !== 'number' || isNaN(movementData.quantity)) {
-                                console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - movementData.quantity ('${movementData.quantity}') não é um número válido! Abortando atualização para este item.`);
-                                throw new Error(`Quantidade de movimentação inválida para ${item.name} na linha ${rowIndex}.`);
-                            }
-
-                            newQuantityCentralCalculated = currentCentralQtyBeforeOp + movementData.quantity;
-                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Cálculo para ENTRADA: ${currentCentralQtyBeforeOp} (atual) + ${movementData.quantity} (mov.) = ${newQuantityCentralCalculated} (novo)`);
-                            
-                            if (isNaN(newQuantityCentralCalculated)) {
-                                console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - newQuantityCentralCalculated é NaN. Abortando atualização. currentCentralQtyBeforeOp: ${currentCentralQtyBeforeOp}, movementData.quantity: ${movementData.quantity}`);
-                                throw new Error(`Erro no cálculo da nova quantidade central para ${item.name} (resultou em NaN) na linha ${rowIndex}.`);
-                            }
-                            
-                            transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentralCalculated });
-                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Operação de update para currentQuantityCentral (${newQuantityCentralCalculated}) do item ${itemDocRef.path} adicionada à transação.`);
-                        
-                        } else if (movementData.type === 'exit' || movementData.type === 'consumption') {
-                            let currentCentralQtyForExit = currentItemData.currentQuantityCentral;
-                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Tipo ${movementData.type}. currentQuantityCentral (ANTES da coerção): ${currentCentralQtyForExit}, tipo: ${typeof currentCentralQtyForExit}`);
-                            if (typeof currentCentralQtyForExit !== 'number' || isNaN(currentCentralQtyForExit)) {
-                                console.warn(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentQuantityCentral para SAÍDA/CONSUMO lido do DB para item '${item.name}' era '${currentCentralQtyForExit}'. Corrigindo para 0.`);
-                                currentCentralQtyForExit = 0;
-                            }
-                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - currentCentralQtyForExit (APÓS coerção): ${currentCentralQtyForExit}`);
-                            
-                            console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Valores para decisão de rota de saída: movementData.hospitalId='${movementData.hospitalId}', movementData.unitId='${movementData.unitId}'`);
-
-
-                            if (movementData.hospitalId && movementData.unitId && unitConfigDocRef) { 
-                                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - ${movementData.type} para Unidade. Estoque central (coerced): ${currentCentralQtyForExit}, Quantidade da mov.: ${movementData.quantity}`);
-                                if (currentCentralQtyForExit < movementData.quantity) {
-                                    console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Estoque insuficiente no Arm. Central. Item: ${item.name}, Atual: ${currentCentralQtyForExit}, Necessário: ${movementData.quantity}`);
-                                    throw new Error(`Estoque insuficiente (${currentCentralQtyForExit}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
-                                }
-                                
-                                const newCentralQuantityAfterTransfer = currentCentralQtyForExit - movementData.quantity;
-                                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Tipo SAIDA/CONSUMO (para Unidade). Atualizando item ${itemDocRef.path}. Old Central Qty: ${currentCentralQtyForExit}. New Central Qty: ${newCentralQuantityAfterTransfer}`);
-                                transaction.update(itemDocRef, { currentQuantityCentral: newCentralQuantityAfterTransfer });
-
-                                if (unitConfigSnap && unitConfigSnap.exists()) {
-                                    const currentUnitConfigData = unitConfigSnap.data();
-                                    let currentUnitQtyBeforeOp = currentUnitConfigData.currentQuantity || 0;
-                                    if (typeof currentUnitQtyBeforeOp !== 'number' || isNaN(currentUnitQtyBeforeOp)) {
-                                        console.warn(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): currentQuantity da unidade ${movementData.unitId} era '${currentUnitQtyBeforeOp}'. Considerando como 0.`);
-                                        currentUnitQtyBeforeOp = 0;
-                                    }
-                                    const newUnitQuantity = currentUnitQtyBeforeOp + movementData.quantity;
-                                    console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Atualizando Unit Config ${unitConfigDocRef.path}. Old Unit Qty: ${currentUnitQtyBeforeOp}. New Unit Qty: ${newUnitQuantity}`);
-                                    transaction.update(unitConfigDocRef, { currentQuantity: newUnitQuantity });
-                                } else { 
-                                    const unitDetails = servedUnits.find(u => u.id === movementData.unitId);
-                                    const dataToSet = {
-                                        itemId: movementData.itemId,
-                                        unitId: movementData.unitId,
-                                        hospitalId: unitDetails?.hospitalId || null,
-                                        currentQuantity: movementData.quantity,
-                                        strategicStockLevel: 0, 
-                                        minQuantity: 0, 
-                                    };
-                                    console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Setting new Unit Config ${unitConfigDocRef.path}. New Unit Qty: ${movementData.quantity}. Data:`, JSON.stringify(dataToSet));
-                                    transaction.set(unitConfigDocRef, dataToSet);
-                                }
-                            } else if (!movementData.hospitalId && !movementData.unitId) { 
-                                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Entrou no bloco de BAIXA DIRETA/CONSUMO CENTRAL.`);
-                                if (currentCentralQtyForExit < movementData.quantity) {
-                                    console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Estoque insuficiente (baixa direta). Item: ${item.name}, Atual: ${currentCentralQtyForExit}, Necessário: ${movementData.quantity}`);
-                                    throw new Error(`Estoque insuficiente (${currentCentralQtyForExit}) no Arm. Central para ${item.name} (necessário: ${movementData.quantity}) (linha ${rowIndex})`);
-                                }
-                                newQuantityCentralCalculated = currentCentralQtyForExit - movementData.quantity;
-                                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Baixa/consumo direto. Update para item ${itemDocRef.path} com currentQuantityCentral: ${newQuantityCentralCalculated} adicionado à transação.`);
-                                transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentralCalculated });
-                                console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - FIM do bloco de BAIXA DIRETA/CONSUMO CENTRAL.`);
-                            } else {
-                                console.error(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION ERROR - Configuração de saída/consumo inválida. HospitalId: '${movementData.hospitalId}', UnitId: '${movementData.unitId}'`);
-                                throw new Error(`Configuração de saída/consumo inválida na planilha (linha ${rowIndex}). Hospital/Unidade inconsistente ou ausente quando esperado.`);
-                            }
-                        }
-                        
-                        const patientDetailsForLog = patientId ? patients.find(p => p.id === patientId) : null;
-                        const movementLog: Omit<StockMovement, 'id'> = {
-                            itemId: item.id, 
-                            itemName: item.name || null,
-                            type: movementData.type, 
-                            quantity: movementData.quantity, 
-                            date: movementData.date, 
-                            notes: movementData.notes || null,
-                            hospitalId: movementData.hospitalId || null,
-                            hospitalName: selectedHospital?.name || null,
-                            unitId: movementData.unitId || null,
-                            unitName: selectedUnit?.name || null,
-                            patientId: movementData.patientId || null,
-                            patientName: patientDetailsForLog?.name || null,
-                        };
-                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): TRANSACTION - Criando log de movimentação:`, JSON.stringify(movementLog));
-                        transaction.set(doc(collection(firestore, "stockMovements")), movementLog);
-                        console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): DENTRO DA TRANSAÇÃO - Todas as operações da transação foram adicionadas. Preparando para commit implícito.`);
-                    });
+                    await runTransaction(firestore, (transaction) => 
+                        processMovementRowTransaction(
+                            transaction,
+                            movementData,
+                            item,
+                            rowIndex,
+                            itemCodeForRow,
+                            hospitalNameCsv,
+                            unitNameCsv,
+                            notesCsv,
+                            patientIdCsv
+                        )
+                    );
                     successfulImports++;
                     console.log(`BATCH IMPORT: Linha ${rowIndex} (${itemCodeForRow}): PÓS-TRANSAÇÃO - runTransaction CONCLUÍDO com sucesso (resolved). successfulImports: ${successfulImports}`);
                 } catch (transactionError: any) { 
@@ -892,7 +944,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, patients, isL
           const fileInput = document.getElementById('batch-movements-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
         },
-        error: (err) => { 
+        error: (err: any) => { 
           toast({ title: "Erro Crítico de Leitura do CSV", description: `Não foi possível processar o arquivo CSV: ${err.message}. Verifique o formato do arquivo e o console.`, variant: "destructive" });
           console.error("BATCH IMPORT: Erro crítico de parsing PapaParse:", err);
           setIsProcessing(false);

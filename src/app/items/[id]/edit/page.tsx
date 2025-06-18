@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { doc, getDoc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase';
 import ItemForm, { type ItemFormData } from '@/components/forms/ItemForm';
+import { Button } from '@/components/ui/button';
 import PageHeader from '@/components/PageHeader';
 import { Edit3, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
