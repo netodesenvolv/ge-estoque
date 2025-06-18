@@ -8,7 +8,7 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, PlusCircle, Edit3, Trash2, Search, Phone, Home } from 'lucide-react';
+import { Users, PlusCircle, Edit3, Trash2, Search, Phone, Home, MapPin } from 'lucide-react'; // Adicionado MapPin
 import type { Patient, PatientSex } from '@/types';
 import { Input } from '@/components/ui/input';
 import { format, parseISO, isValid } from 'date-fns';
@@ -56,6 +56,7 @@ export default function PatientsPage() {
   const filteredPatients = patients.filter(patient =>
     patient.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     patient.susCardNumber.includes(searchTerm) ||
+    (patient.address && patient.address.toLowerCase().includes(searchTerm.toLowerCase())) || // Adicionado filtro por endereço
     (patient.phone && patient.phone.includes(searchTerm)) ||
     (patient.registeredUBSName && patient.registeredUBSName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
@@ -90,13 +91,13 @@ export default function PatientsPage() {
   const formatBirthDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
-      const date = parseISO(dateString); // Ajustado para parseISO
-      if (isValid(date)) { // Verifica se a data é válida
+      const date = parseISO(dateString);
+      if (isValid(date)) {
         return format(date, 'dd/MM/yyyy', { locale: ptBR });
       }
       return 'Data Inválida';
     } catch (error) {
-      return 'Data Inválida'; // Em caso de erro no parsing
+      return 'Data Inválida';
     }
   };
 
@@ -125,7 +126,7 @@ export default function PatientsPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Buscar por nome, Cartão SUS, telefone ou UBS..."
+              placeholder="Buscar por nome, Cartão SUS, endereço, telefone ou UBS..."
               className="pl-10 w-full md:w-2/3"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -141,6 +142,7 @@ export default function PatientsPage() {
                   <TableHead>Data de Nasc.</TableHead>
                   <TableHead>Sexo</TableHead>
                   <TableHead>Cartão SUS</TableHead>
+                  <TableHead><MapPin className="inline h-4 w-4 mr-1"/>Endereço</TableHead> 
                   <TableHead><Phone className="inline h-4 w-4 mr-1"/>Telefone</TableHead>
                   <TableHead><Home className="inline h-4 w-4 mr-1"/>UBS de Cadastro</TableHead>
                   <TableHead className="text-center">Ações</TableHead>
@@ -158,6 +160,7 @@ export default function PatientsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>{patient.susCardNumber}</TableCell>
+                      <TableCell>{patient.address || 'N/A'}</TableCell>
                       <TableCell>{patient.phone || 'N/A'}</TableCell>
                       <TableCell>{patient.registeredUBSName || 'N/A'}</TableCell>
                       <TableCell className="text-center">
@@ -172,7 +175,7 @@ export default function PatientsPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center h-24">
+                    <TableCell colSpan={8} className="text-center h-24"> 
                       Nenhum paciente encontrado.
                     </TableCell>
                   </TableRow>
