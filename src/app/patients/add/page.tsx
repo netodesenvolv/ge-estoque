@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import Papa, { type ParseError } from 'papaparse';
+import Papa, { type ParseError, type ParseResult } from 'papaparse';
 import { firestore } from '@/lib/firebase';
 import { collection, writeBatch, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
 import type { Patient, Hospital, PatientSex } from '@/types';
@@ -67,6 +67,7 @@ const BatchImportPatientForm = () => {
   };
 
   const handleSubmit = async () => {
+    console.log("BATCH IMPORT: Botão 'Processar Planilha' clicado.");
     if (!file) {
       toast({ title: "Erro", description: "Por favor, selecione um arquivo CSV para importar.", variant: "destructive" });
       return;
@@ -77,7 +78,7 @@ const BatchImportPatientForm = () => {
     }
 
     setIsProcessing(true);
-    console.log("BATCH IMPORT: Iniciando handleSubmit.");
+    console.log("BATCH IMPORT: Iniciando handleSubmit. isProcessing definido como true.");
     const reader = new FileReader();
 
     reader.onload = async (e) => {
@@ -93,19 +94,21 @@ const BatchImportPatientForm = () => {
       Papa.parse<Record<string, string>>(csvText, {
         header: true,
         skipEmptyLines: true,
-        complete: async (results) => {
+        delimiter: ",", // Forçar vírgula como delimitador
+        complete: async (results: ParseResult<Record<string, string>>) => {
           console.log("BATCH IMPORT: PapaParse 'complete' callback iniciado.");
-          const { data, errors: parseErrors } = results;
+          const { data, errors: parseErrors, meta } = results;
+           console.log("BATCH IMPORT: Delimitador detectado/usado:", meta.delimiter);
+           console.log("BATCH IMPORT: Quebra de linha detectada/usada:", meta.linebreak);
+           console.log("BATCH IMPORT: Cabeçalhos lidos:", meta.fields);
 
           if (parseErrors.length > 0) {
             console.error("BATCH IMPORT: Erros de parsing do CSV (objetos completos):", JSON.stringify(parseErrors, null, 2));
             const errorMessages = parseErrors.map((err: Papa.ParseError) => {
                  const rowInfo = typeof err.row === 'number' ? `Linha CSV ${err.row + 2} (dados linha ${err.row +1}): ` : `Erro: `;
                  let specificAdvice = "";
-                 if (err.code === "TooFewFields") {
-                    specificAdvice = "Verifique se há vírgulas suficientes para todas as 8 colunas, mesmo que algumas estejam vazias. Ex: 'Valor1,,,Valor4,,,'";
-                 } else if (err.code === "TooManyFields") {
-                    specificAdvice = "Verifique se há vírgulas extras na linha, resultando em mais de 8 colunas.";
+                 if (err.code === "TooFewFields" || err.code === "TooManyFields") {
+                    specificAdvice = `Esperados ${meta.fields?.length || 'N/A'} campos. Verifique o número de vírgulas na linha.`;
                  }
                  return `${rowInfo}${err.message}. ${specificAdvice}`;
             });
@@ -140,7 +143,7 @@ const BatchImportPatientForm = () => {
           console.log(`BATCH IMPORT: Iniciando processamento de ${data.length} linhas do CSV.`);
 
           data.forEach((row, index) => {
-            const rowIndex = index + 2;
+            const rowIndex = index + 2; // +1 para header, +1 para 0-indexed
             console.log(`BATCH IMPORT: Processando linha ${rowIndex} do CSV:`, JSON.stringify(row));
             try {
                 const name = row["Nome Completo"]?.trim();
@@ -166,18 +169,31 @@ const BatchImportPatientForm = () => {
 
                 let birthDate: string | undefined = undefined;
                 if (birthDateStr) {
-                    const parsedDate = new Date(birthDateStr);
-                    if (!isNaN(parsedDate.getTime())) {
+                    // Tenta parsear datas nos formatos AAAA-MM-DD, DD/MM/AAAA, DD-MM-AAAA
+                    let parsedDate: Date | null = null;
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(birthDateStr)) { // AAAA-MM-DD
+                        parsedDate = new Date(birthDateStr + 'T00:00:00Z'); // Adiciona T00:00:00Z para tratar como UTC
+                    } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(birthDateStr)) { // DD/MM/AAAA
+                        const parts = birthDateStr.split('/');
+                        parsedDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00Z`);
+                    } else if (/^\d{2}-\d{2}-\d{4}$/.test(birthDateStr)) { // DD-MM-AAAA
+                        const parts = birthDateStr.split('-');
+                        parsedDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00Z`);
+                    }
+
+                    if (parsedDate && !isNaN(parsedDate.getTime())) {
                         const year = parsedDate.getUTCFullYear();
                         const month = (parsedDate.getUTCMonth() + 1).toString().padStart(2, '0');
                         const day = parsedDate.getUTCDate().toString().padStart(2, '0');
                         birthDate = `${year}-${month}-${day}`;
+                         console.log(`BATCH IMPORT: Linha ${rowIndex}: Data de Nascimento processada: ${birthDateStr} -> ${birthDate}`);
                     } else {
-                        importErrors.push(`Linha ${rowIndex}: Data de Nascimento inválida ('${birthDateStr}'). Use AAAA-MM-DD ou deixe em branco.`);
+                        importErrors.push(`Linha ${rowIndex}: Data de Nascimento inválida ('${birthDateStr}'). Use AAAA-MM-DD, DD/MM/AAAA ou DD-MM-AAAA, ou deixe em branco.`);
                         console.warn(`BATCH IMPORT: Linha ${rowIndex}: Validação falhou - Data de Nascimento inválida. Data: ${birthDateStr}`);
                         return;
                     }
                 }
+
 
                 let sex: PatientSex | undefined = undefined;
                 if (sexStr) {
@@ -254,14 +270,14 @@ const BatchImportPatientForm = () => {
               console.error("BATCH IMPORT: Erro ao salvar pacientes no Firestore (batch.commit): ", error);
               toast({ title: "Erro no Banco de Dados", description: "Não foi possível salvar os pacientes importados.", variant: "destructive" });
             }
-          } else if (importErrors.length === 0 && data.length > 0) { // Nenhuma falha de validação, mas nenhum paciente válido (pode acontecer se todas as linhas falharem na validação e retornarem)
+          } else if (importErrors.length === 0 && data.length > 0) { 
              toast({ title: "Nenhum Paciente para Importar", description: "Nenhum paciente válido encontrado na planilha após validação.", variant: "default" });
              console.log("BATCH IMPORT: Nenhum paciente válido para commit, mas não houve erros de validação explícitos que pararam o loop.");
           } else if (data.length === 0) {
              // Este caso já foi tratado no início
           }
 
-          console.log("BATCH IMPORT: Chegando ao final do 'complete' callback.");
+          console.log("BATCH IMPORT: Chegando ao final do 'complete' callback. isProcessing será definido como false.");
           setIsProcessing(false);
           setFile(null);
           const fileInput = document.getElementById('batch-patient-file-input') as HTMLInputElement | null;
@@ -275,14 +291,14 @@ const BatchImportPatientForm = () => {
       });
     };
 
-    reader.readAsText(file, 'UTF-8');
+    reader.readAsText(file, 'UTF-8'); // Especificar UTF-8 para leitura
   };
 
   const handleDownloadTemplate = () => {
-    const BOM = "\uFEFF";
+    const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
     const csvHeader = "Nome Completo,Data de Nascimento,Número do Cartão SUS,Endereço,Telefone,Sexo,Agente de Saúde,Nome da UBS de Cadastro\n";
     const csvExampleRow1 = "Maria Joaquina de Amaral Pereira Góes,1985-07-22,700123456789012,\"Rua das Palmeiras, 45, Centro, Cidade Exemplo - EX\",(11) 98765-4321,feminino,José Agente,UBS Central Exemplo\n";
-    const csvExampleRow2 = "José Ricardo da Silva,,700987654321098,,,,,\n";
+    const csvExampleRow2 = "João Ricardo da Silva,,700987654321098,,,,,\n"; // Exemplo com campos opcionais vazios
     const csvContent = BOM + csvHeader + csvExampleRow1 + csvExampleRow2;
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -321,7 +337,7 @@ const BatchImportPatientForm = () => {
               </p>
               <ul className="list-disc list-inside text-sm space-y-1">
                 <li><code>Nome Completo</code> (Texto, Obrigatório)</li>
-                <li><code>Data de Nascimento</code> (Data AAAA-MM-DD, Opcional)</li>
+                <li><code>Data de Nascimento</code> (Data AAAA-MM-DD, DD/MM/AAAA ou DD-MM-AAAA, Opcional)</li>
                 <li><code>Número do Cartão SUS</code> (Número, Obrigatório - 15 dígitos)</li>
                 <li><code>Endereço</code> (Texto, Opcional)</li>
                 <li><code>Telefone</code> (Texto, Opcional)</li>
