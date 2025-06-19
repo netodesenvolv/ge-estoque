@@ -133,12 +133,17 @@ export default function UsersPage() {
                 <p className="ml-2 text-muted-foreground">Carregando usuários...</p>
             </div>
           ) : permissionDeniedError ? (
-            <div className="flex flex-col items-center justify-center h-40 text-center p-4">
+            <div className="flex flex-col items-center justify-center h-40 text-center p-4 rounded-md bg-destructive/10 border border-destructive/50">
               <ShieldAlert className="h-12 w-12 text-destructive mb-3" />
-              <h3 className="text-lg font-semibold text-destructive">Acesso Negado</h3>
-              <p className="text-muted-foreground">
-                Você não tem permissão para visualizar a lista de usuários.
-                Verifique se sua conta possui o perfil de 'Administrador' e se as regras de segurança do Firestore estão configuradas corretamente para permitir a leitura da coleção 'user_profiles'.
+              <h3 className="text-lg font-semibold text-destructive">Acesso Negado à Lista de Usuários</h3>
+              <p className="text-muted-foreground mt-1">
+                Você não tem permissão para visualizar esta lista.
+              </p>
+              <p className="text-sm text-muted-foreground mt-2">
+                <strong>Causa provável:</strong> Suas Regras de Segurança do Firestore não permitem que o usuário atual ({auth.currentUser?.email || 'desconhecido'}) leia a coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>.
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                <strong>Ação recomendada:</strong> Verifique se sua conta possui o perfil de 'Administrador' no sistema e se as Regras de Segurança do Firestore estão configuradas para permitir a leitura da coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code> por administradores.
               </p>
             </div>
           ) : (
@@ -207,4 +212,3 @@ export default function UsersPage() {
     </div>
   );
 }
-
