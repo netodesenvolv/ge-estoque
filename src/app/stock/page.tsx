@@ -31,6 +31,7 @@ interface DisplayStockItem extends GlobalStockItemConfig {
 }
 
 const UBS_GENERAL_STOCK_SUFFIX = "UBSGENERAL";
+const ITEMS_PER_PAGE = 20;
 
 const getUnitDetails = (
     configId: string | undefined,
@@ -86,6 +87,7 @@ export default function StockPage() {
   const [hospitalFilter, setHospitalFilter] = useState('all');
   const [unitFilter, setUnitFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all'); 
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [dataLoadStatus, setDataLoadStatus] = useState<{ [key: string]: boolean }>({
     items: false,
@@ -137,7 +139,6 @@ export default function StockPage() {
 
 
   useEffect(() => {
-    console.log("StockPage: useEffect for combining data triggered. isLoading:", isLoading, "firestoreItems length:", firestoreItems.length);
     if (isLoading) {
       console.log("StockPage: useEffect for combining data: isLoading is true, returning early.");
       return; 
@@ -146,9 +147,7 @@ export default function StockPage() {
 
     const combinedData: DisplayStockItem[] = [];
 
-    // Process items for Central Warehouse view
     firestoreItems.forEach(item => {
-      console.log(`StockPage: Processing Central Item: ${item.name} (ID: ${item.id}), Raw currentQuantityCentral: ${item.currentQuantityCentral}`);
       const centralConfigId = `${item.id}_central`;
       const centralItemConfig = firestoreStockConfigs.find(sc => sc.id === centralConfigId);
       
@@ -157,11 +156,11 @@ export default function StockPage() {
       const rawMinQuantityConfig = centralItemConfig?.minQuantity;
       const rawMinQuantityItem = item.minQuantity;
 
-      const currentQuantityValue = (typeof rawCurrentQuantity === 'number' && !isNaN(rawCurrentQuantity)) ? rawCurrentQuantity : 0;
-      const strategicLvlValue = (typeof rawStrategicLevel === 'number' && !isNaN(rawStrategicLevel)) ? rawStrategicLevel : 0;
-      const minQtyValue = (typeof rawMinQuantityConfig === 'number' && !isNaN(rawMinQuantityConfig)) 
+      const currentQuantityValue = (rawCurrentQuantity !== undefined && typeof rawCurrentQuantity === 'number' && !isNaN(rawCurrentQuantity)) ? rawCurrentQuantity : 0;
+      const strategicLvlValue = (rawStrategicLevel !== undefined && typeof rawStrategicLevel === 'number' && !isNaN(rawStrategicLevel)) ? rawStrategicLevel : 0;
+      const minQtyValue = (rawMinQuantityConfig !== undefined && typeof rawMinQuantityConfig === 'number' && !isNaN(rawMinQuantityConfig)) 
                           ? rawMinQuantityConfig 
-                          : ((typeof rawMinQuantityItem === 'number' && !isNaN(rawMinQuantityItem)) ? rawMinQuantityItem : 0);
+                          : ((rawMinQuantityItem !== undefined && typeof rawMinQuantityItem === 'number' && !isNaN(rawMinQuantityItem)) ? rawMinQuantityItem : 0);
 
       let status: DisplayStockItem['status'] = 'Optimal';
       if (minQtyValue > 0 && currentQuantityValue < minQtyValue) {
@@ -170,7 +169,6 @@ export default function StockPage() {
           status = 'Alert';
       }
       
-      console.log(`StockPage: Pushing Central Item: ${item.name}, currentQuantityValue: ${currentQuantityValue}, minQty: ${minQtyValue}, strategic: ${strategicLvlValue}, status: ${status}`);
       combinedData.push({
         id: `central-${item.id}`,
         itemId: item.id,
@@ -186,24 +184,24 @@ export default function StockPage() {
       });
     });
 
-    // Process stockConfigs for units and general UBS stock
     firestoreStockConfigs.forEach(config => {
       const itemDetail = firestoreItems.find(i => i.id === config.itemId);
       if (!itemDetail) {
-        console.warn(`StockPage: Item detail not found for stockConfig itemId: ${config.itemId}, configId: ${config.id}`);
         return;
       }
       
       const isCentralConfig = config.id === `${config.itemId}_central`;
-      if(isCentralConfig) return; // Already handled by the firestoreItems loop
+      if(isCentralConfig) return;
 
       const unitDetails = getUnitDetails(config.id, config.unitId, config.hospitalId, allServedUnitsData, allHospitalsData);
-      const currentUnitQuantity = config.currentQuantity;
+      const rawCurrentUnitQuantity = config.currentQuantity;
+      const rawUnitMinQuantity = config.minQuantity;
+      const rawUnitStrategicLevel = config.strategicStockLevel;
 
       let status: DisplayStockItem['status'] = 'Optimal';
-      let currentUnitQuantityValue = typeof currentUnitQuantity === 'number' && !isNaN(currentUnitQuantity) ? currentUnitQuantity : 0;
-      let unitMinQtyValue = typeof config.minQuantity === 'number' && !isNaN(config.minQuantity) ? config.minQuantity : 0;
-      let unitStrategicLvlValue = typeof config.strategicStockLevel === 'number' && !isNaN(config.strategicStockLevel) ? config.strategicStockLevel : 0;
+      let currentUnitQuantityValue = (rawCurrentUnitQuantity !== undefined && typeof rawCurrentUnitQuantity === 'number' && !isNaN(rawCurrentUnitQuantity)) ? rawCurrentUnitQuantity : 0;
+      let unitMinQtyValue = (rawUnitMinQuantity !== undefined && typeof rawUnitMinQuantity === 'number' && !isNaN(rawUnitMinQuantity)) ? rawUnitMinQuantity : 0;
+      let unitStrategicLvlValue = (rawUnitStrategicLevel !== undefined && typeof rawUnitStrategicLevel === 'number' && !isNaN(rawUnitStrategicLevel)) ? rawUnitStrategicLevel : 0;
 
       if (unitMinQtyValue > 0 && currentUnitQuantityValue < unitMinQtyValue) {
           status = 'Low';
@@ -218,7 +216,7 @@ export default function StockPage() {
         itemCode: itemDetail.code,
         unitId: config.unitId, 
         unitName: unitDetails.unitName,
-        hospitalId: config.hospitalId || unitDetails.hospitalId, // Prefer config.hospitalId if available
+        hospitalId: config.hospitalId || unitDetails.hospitalId,
         hospitalName: unitDetails.hospitalName,
         strategicStockLevel: unitStrategicLvlValue,
         minQuantity: unitMinQtyValue,
@@ -227,7 +225,6 @@ export default function StockPage() {
       });
     });
     
-    console.log("StockPage: useEffect for combining data: combinedData length:", combinedData.length);
     setStockData(combinedData.sort((a, b) => 
         (a.hospitalName || '').localeCompare(b.hospitalName || '') || 
         (a.unitName || '').localeCompare(b.unitName || '') || 
@@ -257,39 +254,48 @@ export default function StockPage() {
     
     const hospitalMatchLogic = () => {
         if (hospitalFilter === 'all') return true;
-        // For Central Warehouse, check if the unitName is specifically "Armazém Central"
         if (hospitalFilter === 'central') return item.unitName === 'Armazém Central';
-        // For other specific hospitals, check the hospitalId
         return item.hospitalId === hospitalFilter;
     };
 
     const unitMatchLogic = () => {
-        // If filtering for Central Warehouse, unit filter is irrelevant as hospitalMatchLogic already handled it.
         if (hospitalFilter === 'central') return true; 
+        if (hospitalFilter !== 'all' && item.hospitalId !== hospitalFilter) return false; 
 
-        // If filtering for a specific hospital (not 'all' or 'central')
-        if (hospitalFilter !== 'all') {
-            if (item.hospitalId !== hospitalFilter) return false; // Item must belong to the selected hospital
-            if (unitFilter === 'all') return true; // Show all units/general stock for this hospital
-            if (item.unitId === unitFilter) return true; // Specific unit matches
-            // Check for "Estoque Geral (HOSPITAL_NAME)"
-            if (!item.unitId && item.unitName?.startsWith('Estoque Geral') && item.hospitalId === hospitalFilter) return true;
-            return false;
-        }
-
-        // If hospitalFilter is 'all'
-        if (unitFilter === 'all') return true; // Show everything
-        if (item.unitId === unitFilter) return true; // Specific unit matches across all hospitals
-        // If unitFilter is specific, but item is "Armazém Central" or "Estoque Geral", it shouldn't match unless unitFilter is 'all'
-        if (item.unitName === 'Armazém Central' || item.unitName?.startsWith('Estoque Geral')) return false;
+        if (unitFilter === 'all') return true;
+        if (item.unitId === unitFilter) return true; 
         
-        return false; // Default case if no other condition met
+        // Check for general stock of a specific hospital if unitFilter is 'all' (covered by hospitalMatch) or specific unit
+        if (unitFilter === 'all' && item.unitName?.startsWith('Estoque Geral') && item.hospitalId === hospitalFilter) return true;
+        // This scenario should be handled if a specific unit is selected (item.unitId === unitFilter)
+        // Or if "Todas as Unidades (do Hospital)" is selected AND this is a general stock for that hospital
+        if (item.unitName?.startsWith('Estoque Geral') && item.hospitalId === hospitalFilter && unitFilter === 'all') return true;
+
+        return false; 
     };
 
     const statusMatch = statusFilter === 'all' || item.status === statusFilter;
     
     return nameMatch && hospitalMatchLogic() && unitMatchLogic() && statusMatch;
   });
+  
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, hospitalFilter, unitFilter, statusFilter]);
+
+  const indexOfLastItem = currentPage * ITEMS_PER_PAGE;
+  const indexOfFirstItem = indexOfLastItem - ITEMS_PER_PAGE;
+  const currentItemsToDisplay = filteredStockData.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredStockData.length / ITEMS_PER_PAGE);
+
+  const handleNextPage = () => {
+    setCurrentPage(prev => Math.min(prev + 1, totalPages));
+  };
+
+  const handlePrevPage = () => {
+    setCurrentPage(prev => Math.max(prev - 1, 1));
+  };
+
 
   const getStatusBadgeVariant = (status?: DisplayStockItem['status']) => {
     if (status === 'Alert' || status === 'Low') return 'destructive'; 
@@ -349,7 +355,7 @@ export default function StockPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={unitFilter} onValueChange={setUnitFilter} disabled={isLoading || hospitalFilter === 'central' || (hospitalFilter === 'all' && filteredUnitsForSelect.length === allServedUnitsData.length) }>
+            <Select value={unitFilter} onValueChange={setUnitFilter} disabled={isLoading || hospitalFilter === 'central' || (hospitalFilter === 'all' && filteredUnitsForSelect.length === allServedUnitsData.length && allServedUnitsData.length === 0) }>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Filtrar por Unidade" />
               </SelectTrigger>
@@ -395,8 +401,8 @@ export default function StockPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredStockData.length > 0 ? (
-                  filteredStockData.map((item) => (
+                {currentItemsToDisplay.length > 0 ? (
+                  currentItemsToDisplay.map((item) => (
                     <TableRow key={item.id} className={item.status === 'Alert' || item.status === 'Low' ? 'bg-red-500/5' : ''}>
                       <TableCell className="font-medium">{item.itemName}</TableCell>
                       <TableCell>{item.itemCode || 'N/A'}</TableCell>
@@ -420,6 +426,19 @@ export default function StockPage() {
               </TableBody>
             </Table>
           </div>
+          )}
+          {!isLoading && filteredStockData.length > ITEMS_PER_PAGE && (
+            <div className="flex justify-between items-center mt-4 pt-4 border-t no-print">
+              <Button onClick={handlePrevPage} disabled={currentPage === 1 || isLoading}>
+                Anterior
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Página {currentPage} de {totalPages} (Total: {filteredStockData.length} itens)
+              </span>
+              <Button onClick={handleNextPage} disabled={currentPage === totalPages || isLoading}>
+                Próxima
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>
