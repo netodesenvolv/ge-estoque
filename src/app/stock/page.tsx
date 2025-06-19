@@ -39,11 +39,8 @@ const getUnitDetails = (
     allServedUnits: ServedUnit[], 
     allHospitals: Hospital[]
 ) => {
-    if (!unitIdFromConfig && !hospitalIdFromConfig) { // Armazém Central (identificado por não ter unitId nem hospitalId na config original DO ITEM)
-        return { unitName: 'Armazém Central', hospitalId: undefined, hospitalName: undefined };
-    }
-
-    if (unitIdFromConfig) { // Unidade Servida Específica
+    // Case 1: Specific Served Unit (unitIdFromConfig is present)
+    if (unitIdFromConfig) {
         const unit = allServedUnits.find(u => u.id === unitIdFromConfig);
         if (!unit) return { unitName: 'Unidade Desconhecida', hospitalId: hospitalIdFromConfig, hospitalName: 'Hospital Desconhecido' };
         const hospital = allHospitals.find(h => h.id === unit.hospitalId);
@@ -54,10 +51,10 @@ const getUnitDetails = (
         };
     }
     
-    // Estoque Geral de uma UBS/Hospital (config.id termina com _UBSGENERAL, unitId é undefined, hospitalId está presente)
+    // Case 2: General Stock for a UBS/Hospital (configId ends with UBS_GENERAL_STOCK_SUFFIX, hospitalIdFromConfig is present, unitIdFromConfig is NOT)
     if (configId?.endsWith(`_${UBS_GENERAL_STOCK_SUFFIX}`) && hospitalIdFromConfig && !unitIdFromConfig) {
         const hospital = allHospitals.find(h => h.id === hospitalIdFromConfig);
-        if (!hospital) return { unitName: `Hospital ID ${hospitalIdFromConfig} Desconhecido`, hospitalId: hospitalIdFromConfig, hospitalName: 'Hospital Desconhecido' };
+        if (!hospital) return { unitName: `Estoque Geral (ID: ${hospitalIdFromConfig})`, hospitalId: hospitalIdFromConfig, hospitalName: 'Hospital Desconhecido' };
         return {
             unitName: `Estoque Geral (${hospital.name})`,
             hospitalId: hospital.id,
@@ -65,8 +62,13 @@ const getUnitDetails = (
         };
     }
     
-    // Fallback
-    return { unitName: 'Local Desconhecido', hospitalId: hospitalIdFromConfig, hospitalName: 'N/A' };
+    // Fallback for unexpected configurations
+    if (hospitalIdFromConfig) {
+        const hospital = allHospitals.find(h => h.id === hospitalIdFromConfig);
+        return { unitName: `Configuração Inválida em ${hospital?.name || 'Hospital Desconhecido'}`, hospitalId: hospitalIdFromConfig, hospitalName: hospital?.name || 'Hospital Desconhecido' };
+    }
+
+    return { unitName: 'Localização Inválida/Não Especificada', hospitalId: undefined, hospitalName: undefined };
 };
 
 
@@ -135,40 +137,48 @@ export default function StockPage() {
 
 
   useEffect(() => {
-    console.log("StockPage: useEffect for combining data triggered. Current isLoading state:", isLoading);
+    console.log("StockPage: useEffect for combining data triggered. isLoading:", isLoading, "firestoreItems length:", firestoreItems.length);
     if (isLoading) {
-      console.log("StockPage: useEffect for combining data: isLoading is true, returning.");
+      console.log("StockPage: useEffect for combining data: isLoading is true, returning early.");
       return; 
     }
     console.log("StockPage: useEffect for combining data: processing...");
 
     const combinedData: DisplayStockItem[] = [];
 
+    // Process items for Central Warehouse view
     firestoreItems.forEach(item => {
+      console.log(`StockPage: Processing Central Item: ${item.name} (ID: ${item.id}), Raw currentQuantityCentral: ${item.currentQuantityCentral}`);
       const centralConfigId = `${item.id}_central`;
       const centralItemConfig = firestoreStockConfigs.find(sc => sc.id === centralConfigId);
       
-      const currentQuantity = item.currentQuantityCentral;
-      const strategicLvl = centralItemConfig?.strategicStockLevel || 0;
-      const minQty = centralItemConfig?.minQuantity ?? item.minQuantity ?? 0; 
+      const rawCurrentQuantity = item.currentQuantityCentral;
+      const rawStrategicLevel = centralItemConfig?.strategicStockLevel;
+      const rawMinQuantityConfig = centralItemConfig?.minQuantity;
+      const rawMinQuantityItem = item.minQuantity;
+
+      const currentQuantityValue = (typeof rawCurrentQuantity === 'number' && !isNaN(rawCurrentQuantity)) ? rawCurrentQuantity : 0;
+      const strategicLvlValue = (typeof rawStrategicLevel === 'number' && !isNaN(rawStrategicLevel)) ? rawStrategicLevel : 0;
+      const minQtyValue = (typeof rawMinQuantityConfig === 'number' && !isNaN(rawMinQuantityConfig)) 
+                          ? rawMinQuantityConfig 
+                          : ((typeof rawMinQuantityItem === 'number' && !isNaN(rawMinQuantityItem)) ? rawMinQuantityItem : 0);
 
       let status: DisplayStockItem['status'] = 'Optimal';
-      let currentQuantityValue = typeof currentQuantity === 'number' && !isNaN(currentQuantity) ? currentQuantity : 0;
-      let minQtyValue = typeof minQty === 'number' && !isNaN(minQty) ? minQty : 0;
-      let strategicLvlValue = typeof strategicLvl === 'number' && !isNaN(strategicLvl) ? strategicLvl : 0;
-
       if (minQtyValue > 0 && currentQuantityValue < minQtyValue) {
           status = 'Low';
       } else if (strategicLvlValue > 0 && currentQuantityValue < strategicLvlValue) {
           status = 'Alert';
       }
       
+      console.log(`StockPage: Pushing Central Item: ${item.name}, currentQuantityValue: ${currentQuantityValue}, minQty: ${minQtyValue}, strategic: ${strategicLvlValue}, status: ${status}`);
       combinedData.push({
         id: `central-${item.id}`,
         itemId: item.id,
         itemName: item.name,
         itemCode: item.code,
-        ...getUnitDetails(undefined, undefined, allServedUnitsData, allHospitalsData), // Armazém Central
+        unitName: 'Armazém Central',
+        hospitalId: undefined,
+        hospitalName: undefined,
         strategicStockLevel: strategicLvlValue,
         minQuantity: minQtyValue,
         currentQuantity: currentQuantityValue,
@@ -176,12 +186,16 @@ export default function StockPage() {
       });
     });
 
+    // Process stockConfigs for units and general UBS stock
     firestoreStockConfigs.forEach(config => {
       const itemDetail = firestoreItems.find(i => i.id === config.itemId);
-      if (!itemDetail) return;
+      if (!itemDetail) {
+        console.warn(`StockPage: Item detail not found for stockConfig itemId: ${config.itemId}, configId: ${config.id}`);
+        return;
+      }
       
       const isCentralConfig = config.id === `${config.itemId}_central`;
-      if(isCentralConfig) return; // Já tratado acima com os dados de `firestoreItems`
+      if(isCentralConfig) return; // Already handled by the firestoreItems loop
 
       const unitDetails = getUnitDetails(config.id, config.unitId, config.hospitalId, allServedUnitsData, allHospitalsData);
       const currentUnitQuantity = config.currentQuantity;
@@ -198,13 +212,13 @@ export default function StockPage() {
       }
       
       combinedData.push({
-        id: config.id || `${config.itemId}_${config.unitId || config.hospitalId + '_' + UBS_GENERAL_STOCK_SUFFIX}`,
+        id: config.id || `${config.itemId}_${config.unitId || (config.hospitalId ? config.hospitalId + '_' + UBS_GENERAL_STOCK_SUFFIX : 'unknown_config')}`,
         itemId: config.itemId,
         itemName: itemDetail.name,
         itemCode: itemDetail.code,
         unitId: config.unitId, 
         unitName: unitDetails.unitName,
-        hospitalId: config.hospitalId,
+        hospitalId: config.hospitalId || unitDetails.hospitalId, // Prefer config.hospitalId if available
         hospitalName: unitDetails.hospitalName,
         strategicStockLevel: unitStrategicLvlValue,
         minQuantity: unitMinQtyValue,
@@ -243,30 +257,33 @@ export default function StockPage() {
     
     const hospitalMatchLogic = () => {
         if (hospitalFilter === 'all') return true;
-        if (hospitalFilter === 'central') return !item.unitId && !item.hospitalId; // Armazém Central
+        // For Central Warehouse, check if the unitName is specifically "Armazém Central"
+        if (hospitalFilter === 'central') return item.unitName === 'Armazém Central';
+        // For other specific hospitals, check the hospitalId
         return item.hospitalId === hospitalFilter;
     };
 
     const unitMatchLogic = () => {
-        if (hospitalFilter === 'central') return !item.unitId && !item.hospitalId; // Se filtro é Central, só mostra Central
+        // If filtering for Central Warehouse, unit filter is irrelevant as hospitalMatchLogic already handled it.
+        if (hospitalFilter === 'central') return true; 
 
-        // Se filtro hospital não é 'central' e não é 'all' (ou seja, um hospital específico)
-        if (hospitalFilter !== 'all' && item.hospitalId === hospitalFilter) {
-            if (unitFilter === 'all') return true; // Todas as unidades desse hospital + estoque geral do hospital
-            if (item.unitId === unitFilter) return true; // Unidade específica
-            // Para estoque geral da UBS/Hospital (onde unitId é undefined mas hospitalId está presente)
-            if (!item.unitId && item.id?.endsWith(UBS_GENERAL_STOCK_SUFFIX) && unitFilter === 'all') return true; 
+        // If filtering for a specific hospital (not 'all' or 'central')
+        if (hospitalFilter !== 'all') {
+            if (item.hospitalId !== hospitalFilter) return false; // Item must belong to the selected hospital
+            if (unitFilter === 'all') return true; // Show all units/general stock for this hospital
+            if (item.unitId === unitFilter) return true; // Specific unit matches
+            // Check for "Estoque Geral (HOSPITAL_NAME)"
+            if (!item.unitId && item.unitName?.startsWith('Estoque Geral') && item.hospitalId === hospitalFilter) return true;
             return false;
         }
-        // Se filtro hospital é 'all'
-        if (hospitalFilter === 'all') {
-            if (unitFilter === 'all') return true; // Tudo
-            if (item.unitId === unitFilter) return true; // Unidade específica em qualquer hospital
-             // Se o filtro de unidade for para "nenhuma unidade específica" mas queremos todos os hospitais,
-             // não há uma forma fácil de filtrar apenas os "estoques gerais" de todos os hospitais com este filtro.
-             // O melhor é deixar o usuário selecionar um hospital específico para ver seu estoque geral.
-        }
-        return false;
+
+        // If hospitalFilter is 'all'
+        if (unitFilter === 'all') return true; // Show everything
+        if (item.unitId === unitFilter) return true; // Specific unit matches across all hospitals
+        // If unitFilter is specific, but item is "Armazém Central" or "Estoque Geral", it shouldn't match unless unitFilter is 'all'
+        if (item.unitName === 'Armazém Central' || item.unitName?.startsWith('Estoque Geral')) return false;
+        
+        return false; // Default case if no other condition met
     };
 
     const statusMatch = statusFilter === 'all' || item.status === statusFilter;
@@ -332,7 +349,7 @@ export default function StockPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={unitFilter} onValueChange={setUnitFilter} disabled={(hospitalFilter === 'central' && !isLoading) || isLoading || hospitalFilter === 'all'}>
+            <Select value={unitFilter} onValueChange={setUnitFilter} disabled={isLoading || hospitalFilter === 'central' || (hospitalFilter === 'all' && filteredUnitsForSelect.length === allServedUnitsData.length) }>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Filtrar por Unidade" />
               </SelectTrigger>
@@ -383,7 +400,7 @@ export default function StockPage() {
                     <TableRow key={item.id} className={item.status === 'Alert' || item.status === 'Low' ? 'bg-red-500/5' : ''}>
                       <TableCell className="font-medium">{item.itemName}</TableCell>
                       <TableCell>{item.itemCode || 'N/A'}</TableCell>
-                      <TableCell>{item.hospitalName || (item.unitId ? 'N/A' : (item.id.startsWith('central-') ? '-' : 'N/D'))}</TableCell>
+                      <TableCell>{item.hospitalName || (item.unitName === 'Armazém Central' ? '-' : 'N/D')}</TableCell>
                       <TableCell>{item.unitName}</TableCell>
                       <TableCell className="text-right">{typeof item.currentQuantity === 'number' ? item.currentQuantity : 'N/D'}</TableCell>
                       <TableCell className="text-right">{item.minQuantity}</TableCell>
