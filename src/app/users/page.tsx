@@ -133,18 +133,47 @@ export default function UsersPage() {
                 <p className="ml-2 text-muted-foreground">Carregando usuários...</p>
             </div>
           ) : permissionDeniedError ? (
-            <div className="flex flex-col items-center justify-center h-40 text-center p-4 rounded-md bg-destructive/10 border border-destructive/50">
+            <div className="flex flex-col items-center justify-center h-60 text-center p-4 rounded-md bg-destructive/10 border border-destructive/50">
               <ShieldAlert className="h-12 w-12 text-destructive mb-3" />
               <h3 className="text-lg font-semibold text-destructive">Acesso Negado à Lista de Usuários</h3>
               <p className="text-muted-foreground mt-1">
                 Você não tem permissão para visualizar esta lista.
               </p>
               <p className="text-sm text-muted-foreground mt-2">
-                <strong>Causa provável:</strong> Suas Regras de Segurança do Firestore não permitem que o usuário atual ({auth.currentUser?.email || 'desconhecido'}) leia a coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>.
+                <strong>Causa provável:</strong> Suas Regras de Segurança do Firestore não permitem que o usuário atual leia a coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>.
               </p>
               <p className="text-sm text-muted-foreground mt-1">
-                <strong>Ação recomendada:</strong> Verifique se sua conta possui o perfil de 'Administrador' no sistema e se as Regras de Segurança do Firestore estão configuradas para permitir a leitura da coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code> por administradores.
+                <strong>Ação recomendada:</strong>
               </p>
+              <ul className="text-sm text-muted-foreground list-disc list-inside mt-1 text-left max-w-md">
+                <li>Verifique se sua conta atual possui o perfil de 'Administrador' no sistema.</li>
+                <li>Acesse o Firebase Console, vá para Firestore Database &gt; Regras.</li>
+                <li>
+                  Certifique-se de que suas regras permitem a leitura da coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code> por usuários administradores.
+                  Por exemplo, se você tem um campo <code className="bg-muted px-1 py-0.5 rounded text-xs">role: 'admin'</code> nos documentos da coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>, sua regra para listar pode ser algo como:
+                  <pre className="mt-1 p-2 bg-muted/50 text-xs text-left rounded max-w-full overflow-x-auto"><code>
+{`service cloud.firestore {
+  match /databases/{database}/documents {
+    // ...
+    function isAdmin() {
+      return request.auth != null && 
+             get(/databases/$(database)/documents/user_profiles/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /user_profiles/{userId} {
+      // Permitir que administradores leiam qualquer perfil e listem todos
+      allow read: if isAdmin(); 
+      // Permitir que usuários leiam seu próprio perfil
+      allow get: if request.auth.uid == userId; 
+      // ... outras regras de escrita
+    }
+    // ...
+  }
+}`}
+                  </code></pre>
+                </li>
+                 <li>Teste suas regras no Playground de Regras do Firebase Console antes de publicá-las.</li>
+              </ul>
             </div>
           ) : (
           <div className="overflow-x-auto">
@@ -212,3 +241,4 @@ export default function UsersPage() {
     </div>
   );
 }
+    
