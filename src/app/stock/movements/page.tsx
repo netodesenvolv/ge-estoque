@@ -16,7 +16,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowRightLeft, User, Loader2, Upload, Download, ShieldAlert } from 'lucide-react';
 import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockMovementType } from '@/types';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react'; // Added useMemo
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
 import { collection, query, orderBy, onSnapshot, doc, runTransaction, addDoc, type Transaction, type DocumentSnapshot, writeBatch, getDoc, getDocs } from 'firebase/firestore';
@@ -150,7 +150,9 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
       date: new Date().toISOString().split('T')[0],
       notes: '',
       hospitalId: currentUserProfile?.associatedHospitalId || undefined,
-      unitId: currentUserProfile?.associatedUnitId || undefined,
+      unitId: (currentUserProfile?.role === 'ubs_operator' && !currentUserProfile.associatedUnitId)
+                ? GENERAL_STOCK_UNIT_ID_PLACEHOLDER
+                : currentUserProfile?.associatedUnitId || undefined,
       patientId: undefined,
       itemId: undefined,
     },
@@ -159,65 +161,77 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
   const movementType = form.watch('type');
   const selectedHospitalId = form.watch('hospitalId');
 
+  const { role: userRole, associatedHospitalId: userAssociatedHospitalId, associatedUnitId: userAssociatedUnitId } = currentUserProfile || {};
+
   useEffect(() => {
     if (currentUserProfile) {
       form.reset({
-        type: (currentUserProfile.role === 'hospital_operator' || currentUserProfile.role === 'ubs_operator') ? 'consumption' : 'entry',
+        type: (userRole === 'hospital_operator' || userRole === 'ubs_operator') ? 'consumption' : 'entry',
         quantity: 1,
         date: new Date().toISOString().split('T')[0],
         notes: '',
-        hospitalId: currentUserProfile.associatedHospitalId || undefined,
-        unitId: currentUserProfile.associatedUnitId || undefined,
-        patientId: undefined,
         itemId: undefined,
+        hospitalId: userAssociatedHospitalId || undefined,
+        unitId: (userRole === 'ubs_operator' && !userAssociatedUnitId)
+                  ? GENERAL_STOCK_UNIT_ID_PLACEHOLDER
+                  : userAssociatedUnitId || undefined,
+        patientId: undefined,
       });
     }
-  }, [currentUserProfile, form]);
+  }, [currentUserProfile, form, userRole, userAssociatedHospitalId, userAssociatedUnitId]);
+
 
   useEffect(() => {
-    if (movementType === 'entry' && (currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator')) {
-        form.setValue('hospitalId', undefined, { shouldValidate: true });
-        form.setValue('unitId', undefined, { shouldValidate: true });
-        form.setValue('patientId', undefined, { shouldValidate: true });
+    if (movementType === 'entry' && (userRole === 'admin' || userRole === 'central_operator')) {
+        form.setValue('hospitalId', undefined, { shouldValidate: false });
+        form.setValue('unitId', undefined, { shouldValidate: false });
+        form.setValue('patientId', undefined, { shouldValidate: false });
     } else if (movementType === 'exit') {
-        form.setValue('patientId', undefined, { shouldValidate: true });
+        form.setValue('patientId', undefined, { shouldValidate: false });
     }
-    if (selectedHospitalId === CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE) {
-        form.setValue('unitId', undefined, { shouldValidate: true });
+  }, [movementType, form, userRole]);
+
+  useEffect(() => {
+    if (selectedHospitalId) {
+        if (selectedHospitalId === CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE) {
+            form.setValue('unitId', undefined, { shouldValidate: false });
+        } else {
+            if (!(userRole === 'hospital_operator' && userAssociatedUnitId)) {
+                form.setValue('unitId', undefined, { shouldValidate: false });
+            }
+        }
+    } else {
+        if (movementType !== 'entry' && (userRole === 'admin' || userRole === 'central_operator')) {
+             form.setValue('unitId', undefined, { shouldValidate: false });
+        }
     }
-  }, [movementType, form, selectedHospitalId, currentUserProfile]);
+  }, [selectedHospitalId, form, userRole, userAssociatedUnitId, movementType]);
 
-   useEffect(() => {
-    if (selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE &&
-        !(currentUserProfile?.role === 'hospital_operator' && currentUserProfile?.associatedUnitId) &&
-        !(currentUserProfile?.role === 'ubs_operator')
-        ) {
-        form.setValue('unitId', undefined, { shouldValidate: true });
+
+  const availableUnits = useMemo(() => {
+    if (selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE) {
+        return servedUnits.filter(unit => unit.hospitalId === selectedHospitalId);
     }
-  }, [selectedHospitalId, form, currentUserProfile]);
+    return [];
+  }, [selectedHospitalId, servedUnits]);
 
-
-  const availableUnits = selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE
-    ? servedUnits.filter(unit => unit.hospitalId === selectedHospitalId)
-    : [];
 
   const isPatientLinkable = () => {
     if (movementType !== 'consumption') return false;
-    const selectedUnitId = form.getValues('unitId'); // Get current unitId for this check
+    const currentUnitIdValue = form.getValues('unitId');
 
-    if (currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator') {
-        return !!selectedUnitId && selectedUnitId !== GENERAL_STOCK_UNIT_ID_PLACEHOLDER && selectedHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE;
+    if (userRole === 'admin' || userRole === 'central_operator') {
+        return !!currentUnitIdValue && currentUnitIdValue !== GENERAL_STOCK_UNIT_ID_PLACEHOLDER && selectedHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE;
     }
-    if (currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator') {
-        return true;
+    if (userRole === 'hospital_operator' || userRole === 'ubs_operator') {
+        return true; // Patient can always be linked by these roles if it's consumption
     }
     return false;
   };
 
 
   const getUnitFormFieldDescription = () => {
-    const role = currentUserProfile?.role;
-    if (role === 'admin' || role === 'central_operator') {
+    if (userRole === 'admin' || userRole === 'central_operator') {
         if (movementType === 'exit' && selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE) {
             const hospital = hospitals.find(h => h.id === selectedHospitalId);
             if (hospital?.name.toLowerCase().includes('ubs')) {
@@ -228,19 +242,19 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
         if (movementType === 'consumption' && selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE) {
             return "Unidade onde o item foi consumido (Obrigatório).";
         }
-    } else if (role === 'hospital_operator' && !currentUserProfile?.associatedUnitId) {
+    } else if (userRole === 'hospital_operator' && !userAssociatedUnitId) {
         return "Selecione a unidade de consumo dentro do seu hospital.";
-    } else if (role === 'ubs_operator') {
+    } else if (userRole === 'ubs_operator') {
         return "Opcional. Selecione 'Estoque Geral da UBS' ou uma unidade específica se houver.";
     }
     return "Selecione uma unidade de destino ou consumo.";
   };
 
-  const isHospitalFieldDisabled = currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator';
-  const isUnitFieldDisabled = !!(currentUserProfile?.role === 'hospital_operator' && currentUserProfile?.associatedUnitId) ||
+  const isHospitalFieldDisabled = userRole === 'hospital_operator' || userRole === 'ubs_operator';
+  const isUnitFieldDisabled = !!(userRole === 'hospital_operator' && userAssociatedUnitId) ||
                              (selectedHospitalId === CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE) ||
-                             (!selectedHospitalId && (currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator')) ||
-                             (availableUnits.length === 0 && selectedHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE && !(currentUserProfile?.role === 'ubs_operator'));
+                             (!selectedHospitalId && (userRole === 'admin' || userRole === 'central_operator') && movementType !== 'entry') ||
+                             (availableUnits.length === 0 && selectedHospitalId && selectedHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE && !(userRole === 'ubs_operator'));
 
 
   const onSubmit = async (data: MovementFormData) => {
@@ -263,16 +277,16 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
         processedData.patientId = undefined;
     }
 
-    if ((currentUserProfile.role === 'hospital_operator' || currentUserProfile.role === 'ubs_operator')) {
+    if ((userRole === 'hospital_operator' || userRole === 'ubs_operator')) {
         if (processedData.type !== 'consumption') {
              toast({ title: "Operação não permitida", description: "Seu perfil permite apenas registrar 'Consumo'.", variant: "destructive" });
              setIsSubmitting(false); return;
         }
-        if (processedData.hospitalId !== currentUserProfile.associatedHospitalId) {
+        if (processedData.hospitalId !== userAssociatedHospitalId) {
              toast({ title: "Operação não permitida", description: "Consumo apenas para seu hospital/UBS associado.", variant: "destructive" });
              setIsSubmitting(false); return;
         }
-        if (currentUserProfile.associatedUnitId && processedData.unitId !== currentUserProfile.associatedUnitId) {
+        if (userAssociatedUnitId && processedData.unitId !== userAssociatedUnitId) {
              toast({ title: "Operação não permitida", description: "Consumo apenas para sua unidade associada.", variant: "destructive" });
              setIsSubmitting(false); return;
         }
@@ -323,13 +337,15 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
         description: description,
       });
       form.reset({
-          type: (currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator') ? 'consumption' : 'entry',
+          type: (userRole === 'hospital_operator' || userRole === 'ubs_operator') ? 'consumption' : 'entry',
           quantity: 1,
           date: new Date().toISOString().split('T')[0],
           notes: '',
           itemId: undefined,
-          hospitalId: currentUserProfile?.associatedHospitalId || undefined,
-          unitId: currentUserProfile?.associatedUnitId || undefined,
+          hospitalId: userAssociatedHospitalId || undefined,
+          unitId: (userRole === 'ubs_operator' && !userAssociatedUnitId)
+                    ? GENERAL_STOCK_UNIT_ID_PLACEHOLDER
+                    : userAssociatedUnitId || undefined,
           patientId: undefined,
       });
 
@@ -376,11 +392,11 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
                         className="flex flex-col space-y-1 md:flex-row md:space-y-0 md:space-x-4"
                       >
                         <FormItem className="flex items-center space-x-3 space-y-0">
-                          <FormControl><RadioGroupItem value="entry" disabled={!(currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator')} /></FormControl>
+                          <FormControl><RadioGroupItem value="entry" disabled={!(userRole === 'admin' || userRole === 'central_operator')} /></FormControl>
                           <FormLabel className="font-normal">Entrada (Armazém Central)</FormLabel>
                         </FormItem>
                         <FormItem className="flex items-center space-x-3 space-y-0">
-                          <FormControl><RadioGroupItem value="exit" disabled={!(currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator')} /></FormControl>
+                          <FormControl><RadioGroupItem value="exit" disabled={!(userRole === 'admin' || userRole === 'central_operator')} /></FormControl>
                           <FormLabel className="font-normal">Saída (Transferência/Baixa)</FormLabel>
                         </FormItem>
                         <FormItem className="flex items-center space-x-3 space-y-0">
@@ -422,21 +438,21 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
                         <FormLabel>Hospital de Destino/Consumo</FormLabel>
                         <Select
                             onValueChange={field.onChange}
-                            value={field.value ?? (currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator' ? CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE : currentUserProfile.associatedHospitalId)}
+                            value={field.value ?? ((userRole === 'admin' || userRole === 'central_operator') ? CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE : userAssociatedHospitalId)}
                             disabled={isHospitalFieldDisabled}
                         >
                           <FormControl><SelectTrigger><SelectValue placeholder="Selecione um hospital ou baixa direta" /></SelectTrigger></FormControl>
                           <SelectContent>
-                             {(currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator') &&
+                             {(userRole === 'admin' || userRole === 'central_operator') &&
                                 <SelectItem value={CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE}>Nenhum (Baixa/Consumo direto do Armazém Central)</SelectItem>
                              }
                             {hospitals.map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
                           </SelectContent>
                         </Select>
                          <FormDescription>
-                            {(currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator') && movementType === 'exit' && "Para transferir, selecione o hospital. Para baixa direta do Armazém Central, escolha 'Nenhum'."}
-                            {(currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator') && movementType === 'consumption' && "Selecione o hospital onde o item foi consumido. Para consumo direto do Armazém Central, escolha 'Nenhum'."}
-                            {(currentUserProfile.role === 'hospital_operator' || currentUserProfile.role === 'ubs_operator') && "Consumo será registrado para o seu hospital/UBS associado."}
+                            {(userRole === 'admin' || userRole === 'central_operator') && movementType === 'exit' && "Para transferir, selecione o hospital. Para baixa direta do Armazém Central, escolha 'Nenhum'."}
+                            {(userRole === 'admin' || userRole === 'central_operator') && movementType === 'consumption' && "Selecione o hospital onde o item foi consumido. Para consumo direto do Armazém Central, escolha 'Nenhum'."}
+                            {(userRole === 'hospital_operator' || userRole === 'ubs_operator') && "Consumo será registrado para o seu hospital/UBS associado."}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -456,10 +472,10 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, patients }: { items
                             disabled={isUnitFieldDisabled}
                           >
                             <FormControl><SelectTrigger>
-                                <SelectValue placeholder={availableUnits.length > 0 || currentUserProfile.role === 'ubs_operator' ? "Selecione uma unidade" : "Nenhuma unidade para este hospital/config"} />
+                                <SelectValue placeholder={availableUnits.length > 0 || userRole === 'ubs_operator' ? "Selecione uma unidade" : "Nenhuma unidade para este hospital/config"} />
                             </SelectTrigger></FormControl>
                             <SelectContent>
-                               {currentUserProfile.role === 'ubs_operator' && <SelectItem value={GENERAL_STOCK_UNIT_ID_PLACEHOLDER}>Estoque Geral da UBS</SelectItem>}
+                               {userRole === 'ubs_operator' && <SelectItem value={GENERAL_STOCK_UNIT_ID_PLACEHOLDER}>Estoque Geral da UBS</SelectItem>}
                               {availableUnits.map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>)}
                             </SelectContent>
                           </Select>
@@ -1154,3 +1170,4 @@ export default function StockMovementsPage() {
 }
     
 
+    
