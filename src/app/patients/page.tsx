@@ -8,7 +8,7 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, PlusCircle, Edit3, Trash2, Search, Phone, Home, MapPin } from 'lucide-react'; // Adicionado MapPin
+import { Users, PlusCircle, Edit3, Trash2, Search, Phone, Home, MapPin } from 'lucide-react';
 import type { Patient, PatientSex } from '@/types';
 import { Input } from '@/components/ui/input';
 import { format, parseISO, isValid } from 'date-fns';
@@ -51,12 +51,12 @@ export default function PatientsPage() {
     });
 
     return () => unsubscribe();
-  }, [toast]);
+  }, []); // Array de dependências alterado para vazio
 
   const filteredPatients = patients.filter(patient =>
     patient.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     patient.susCardNumber.includes(searchTerm) ||
-    (patient.address && patient.address.toLowerCase().includes(searchTerm.toLowerCase())) || // Adicionado filtro por endereço
+    (patient.address && patient.address.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (patient.phone && patient.phone.includes(searchTerm)) ||
     (patient.registeredUBSName && patient.registeredUBSName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
