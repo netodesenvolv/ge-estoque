@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { format, parseISO, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { firestore } from '@/lib/firebase';
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc, getDocs, limit, startAfter, endBefore, limitToLast } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 
@@ -25,45 +25,88 @@ const patientSexDisplay: Record<PatientSex, string> = {
   ignorado: 'N/I',
 };
 
+const PATIENTS_PER_PAGE = 15;
+
 export default function PatientsPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [lastVisible, setLastVisible] = useState<any>(null);
+  const [firstVisible, setFirstVisible] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [page, setPage] = useState(1);
+
   const router = useRouter();
   const { toast } = useToast();
 
-  useEffect(() => {
+  const fetchPatients = useCallback(async (nextPage = true) => {
+    setIsLoading(true);
     const patientsCollectionRef = collection(firestore, "patients");
-    const q = query(patientsCollectionRef, orderBy("name", "asc"));
+    let q;
 
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const patientsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      } as Patient));
-      setPatients(patientsData);
-    }, (error) => {
-      console.error("Erro ao buscar pacientes: ", error);
-      toast({
-        title: "Erro ao Carregar Pacientes",
-        description: "Não foi possível carregar os pacientes do banco de dados.",
-        variant: "destructive",
-      });
-    });
+    if (nextPage) {
+        q = query(patientsCollectionRef, orderBy("name", "asc"), startAfter(lastVisible), limit(PATIENTS_PER_PAGE));
+    } else {
+        q = query(patientsCollectionRef, orderBy("name", "asc"), endBefore(firstVisible), limitToLast(PATIENTS_PER_PAGE));
+    }
+    
+    if(page === 1 && !lastVisible) {
+        q = query(patientsCollectionRef, orderBy("name", "asc"), limit(PATIENTS_PER_PAGE));
+    }
 
-    return () => unsubscribe();
-  }, []); // Array de dependências alterado para vazio
+    try {
+        const documentSnapshots = await getDocs(q);
+        const patientsData = documentSnapshots.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+        } as Patient));
+
+        if(patientsData.length > 0) {
+            setPatients(patientsData);
+            setFirstVisible(documentSnapshots.docs[0]);
+            setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
+        } else {
+            // Se não houver mais dados, voltamos para a página anterior
+            if(nextPage) {
+                setPage(page > 1 ? page -1 : 1);
+            }
+        }
+    } catch (error) {
+        console.error("Erro ao buscar pacientes: ", error);
+        toast({
+            title: "Erro ao Carregar Pacientes",
+            description: "Não foi possível carregar os pacientes do banco de dados.",
+            variant: "destructive",
+        });
+    } finally {
+        setIsLoading(false);
+    }
+  }, [lastVisible, firstVisible, page, toast]);
+
+  useEffect(() => {
+    fetchPatients();
+  }, []);
+
+
+  const fetchNextPage = () => {
+    setPage(prev => prev + 1);
+    fetchPatients(true);
+  };
+
+  const fetchPrevPage = () => {
+    setPage(prev => prev - 1);
+    fetchPatients(false);
+  };
+
 
   const filteredPatients = patients.filter(patient =>
     patient.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    patient.susCardNumber.includes(searchTerm) ||
+    (patient.susCardNumber && patient.susCardNumber.includes(searchTerm)) ||
     (patient.address && patient.address.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (patient.phone && patient.phone.includes(searchTerm)) ||
     (patient.registeredUBSName && patient.registeredUBSName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const handleEdit = (id: string) => {
-    // Implementar rota de edição futuramente
-    // router.push(`/patients/${id}/edit`);
     toast({
       title: "Funcionalidade Pendente",
       description: "A edição de pacientes ainda não foi implementada.",
@@ -78,6 +121,7 @@ export default function PatientsPage() {
         title: "Paciente Excluído",
         description: "Paciente foi removido do banco de dados.",
       });
+      fetchPatients(); 
     } catch (error) {
       console.error("Erro ao excluir paciente: ", error);
       toast({
@@ -149,7 +193,13 @@ export default function PatientsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredPatients.length > 0 ? (
+                {isLoading ? (
+                    <TableRow>
+                        <TableCell colSpan={8} className="text-center h-24">
+                            Carregando...
+                        </TableCell>
+                    </TableRow>
+                ) : filteredPatients.length > 0 ? (
                   filteredPatients.map((patient) => (
                     <TableRow key={patient.id}>
                       <TableCell className="font-medium">{patient.name}</TableCell>
@@ -182,6 +232,15 @@ export default function PatientsPage() {
                 )}
               </TableBody>
             </Table>
+          </div>
+          <div className="flex justify-between items-center mt-4">
+            <Button onClick={fetchPrevPage} disabled={page <= 1 || isLoading}>
+              Anterior
+            </Button>
+            <span>Página {page}</span>
+            <Button onClick={fetchNextPage} disabled={isLoading || patients.length < PATIENTS_PER_PAGE}>
+              Próxima
+            </Button>
           </div>
         </CardContent>
       </Card>
