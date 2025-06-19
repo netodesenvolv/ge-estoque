@@ -10,13 +10,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Users as UsersIcon, PlusCircle, Edit3, Trash2, Search, Loader2, ShieldAlert } from 'lucide-react';
-import type { UserProfile, User } from '@/types';
+import type { User } from '@/types'; // User type now includes more details
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
 import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 import type { FirestoreError } from 'firebase/firestore';
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
 
 export default function UsersPage() {
   const [userProfiles, setUserProfiles] = useState<User[]>([]);
@@ -25,18 +26,19 @@ export default function UsersPage() {
   const [permissionDeniedError, setPermissionDeniedError] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
+  const { currentUserProfile } = useAuth(); // Get current user's profile
 
   useEffect(() => {
     setIsLoading(true);
-    setPermissionDeniedError(false); // Reset on each load attempt
+    setPermissionDeniedError(false); 
     const usersCollectionRef = collection(firestore, "user_profiles");
     const q = query(usersCollectionRef, orderBy("name", "asc"));
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const profilesData = querySnapshot.docs.map(docSnap => ({
-        id: docSnap.id,
+        id: docSnap.id, // This is the Firebase Auth UID
         ...docSnap.data(),
-      } as User));
+      } as User)); // Cast to User type
       setUserProfiles(profilesData);
       setIsLoading(false);
     }, (error: FirestoreError) => {
@@ -57,7 +59,9 @@ export default function UsersPage() {
 
   const filteredUsers = userProfiles.filter(user =>
     user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.email.toLowerCase().includes(searchTerm.toLowerCase())
+    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    user.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (user.associatedHospitalName && user.associatedHospitalName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const handleEdit = (id: string) => {
@@ -65,10 +69,15 @@ export default function UsersPage() {
       title: "Funcionalidade Pendente",
       description: `A edição do usuário com ID: ${id} ainda não foi implementada.`,
     });
-    // router.push(`/users/${id}/edit`); // Futuramente
   };
 
   const handleDelete = async (userId: string, userName: string) => {
+     if (currentUserProfile?.role !== 'admin') {
+      toast({ title: "Permissão Negada", description: "Apenas administradores podem excluir usuários.", variant: "destructive" });
+      return;
+    }
+    // Note: Deleting from Firestore 'user_profiles' does NOT delete the Firebase Auth user.
+    // True user deletion requires Firebase Admin SDK on a backend.
     const userProfileDocRef = doc(firestore, "user_profiles", userId);
     try {
       await deleteDoc(userProfileDocRef);
@@ -87,7 +96,14 @@ export default function UsersPage() {
   };
 
   const getRoleText = (role: User['role']) => {
-    return role === 'admin' ? 'Administrador' : 'Usuário';
+    const roleMap: Record<User['role'], string> = {
+        admin: 'Administrador',
+        central_operator: 'Op. Almox. Central',
+        hospital_operator: 'Op. Hospital',
+        ubs_operator: 'Op. UBS',
+        user: 'Usuário Padrão'
+    };
+    return roleMap[role] || role;
   }
 
   const getStatusVariant = (status: User['status']): 'default' | 'secondary' => {
@@ -97,6 +113,8 @@ export default function UsersPage() {
     return status === 'active' ? 'Ativo' : 'Inativo';
   }
 
+  const canAddUsers = currentUserProfile?.role === 'admin';
+
 
   return (
     <div>
@@ -105,11 +123,13 @@ export default function UsersPage() {
         description="Adicione, edite e gerencie usuários do sistema."
         icon={UsersIcon}
         actions={
-          <Button asChild>
-            <Link href="/users/add">
-              <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Novo Usuário
-            </Link>
-          </Button>
+          canAddUsers ? (
+            <Button asChild>
+              <Link href="/users/add">
+                <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Novo Usuário
+              </Link>
+            </Button>
+          ) : null
         }
       />
       <Card className="shadow-lg">
@@ -119,7 +139,7 @@ export default function UsersPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Buscar por nome ou email..."
+              placeholder="Buscar por nome, email, perfil ou hospital..."
               className="pl-10 w-full md:w-1/2"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -142,38 +162,6 @@ export default function UsersPage() {
               <p className="text-sm text-muted-foreground mt-2">
                 <strong>Causa provável:</strong> Suas Regras de Segurança do Firestore não permitem que o usuário atual leia a coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>.
               </p>
-              <p className="text-sm text-muted-foreground mt-1">
-                <strong>Ação recomendada:</strong>
-              </p>
-              <ul className="text-sm text-muted-foreground list-disc list-inside mt-1 text-left max-w-md">
-                <li>Verifique se sua conta atual possui o perfil de 'Administrador' no sistema.</li>
-                <li>Acesse o Firebase Console, vá para Firestore Database &gt; Regras.</li>
-                <li>
-                  Certifique-se de que suas regras permitem a leitura da coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code> por usuários administradores.
-                  Por exemplo, se você tem um campo <code className="bg-muted px-1 py-0.5 rounded text-xs">role: 'admin'</code> nos documentos da coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>, sua regra para listar pode ser algo como:
-                  <pre className="mt-1 p-2 bg-muted/50 text-xs text-left rounded max-w-full overflow-x-auto"><code>
-{`service cloud.firestore {
-  match /databases/{database}/documents {
-    // ...
-    function isAdmin() {
-      return request.auth != null && 
-             get(/databases/$(database)/documents/user_profiles/$(request.auth.uid)).data.role == 'admin';
-    }
-
-    match /user_profiles/{userId} {
-      // Permitir que administradores leiam qualquer perfil e listem todos
-      allow read: if isAdmin(); 
-      // Permitir que usuários leiam seu próprio perfil
-      allow get: if request.auth.uid == userId; 
-      // ... outras regras de escrita
-    }
-    // ...
-  }
-}`}
-                  </code></pre>
-                </li>
-                 <li>Teste suas regras no Playground de Regras do Firebase Console antes de publicá-las.</li>
-              </ul>
             </div>
           ) : (
           <div className="overflow-x-auto">
@@ -183,6 +171,7 @@ export default function UsersPage() {
                   <TableHead>Nome</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Perfil</TableHead>
+                  <TableHead>Local Associado</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-center">Ações</TableHead>
                 </TableRow>
@@ -193,42 +182,54 @@ export default function UsersPage() {
                     <TableRow key={user.id}>
                       <TableCell className="font-medium">{user.name}</TableCell>
                       <TableCell>{user.email}</TableCell>
-                      <TableCell>{getRoleText(user.role)}</TableCell>
+                      <TableCell>
+                        <Badge variant={user.role === 'admin' ? "destructive" : "secondary"} className="whitespace-nowrap">
+                            {getRoleText(user.role)}
+                        </Badge>
+                        </TableCell>
+                      <TableCell>
+                        {user.associatedHospitalName || '-'}
+                        {user.associatedUnitName && ` (${user.associatedUnitName})`}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={getStatusVariant(user.status)}>{getStatusText(user.status)}</Badge>
                       </TableCell>
                       <TableCell className="text-center">
-                        <Button variant="ghost" size="icon" onClick={() => handleEdit(user.id)} className="hover:text-primary mr-2">
-                          <Edit3 className="h-4 w-4" />
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="hover:text-destructive">
-                              <Trash2 className="h-4 w-4" />
+                        {currentUserProfile?.role === 'admin' && (
+                          <>
+                            <Button variant="ghost" size="icon" onClick={() => handleEdit(user.id)} className="hover:text-primary mr-2">
+                              <Edit3 className="h-4 w-4" />
                             </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Confirmar Exclusão</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Tem certeza que deseja excluir o perfil de {user.name}? Esta ação removerá o perfil do banco de dados, mas não a conta de autenticação do Firebase.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleDelete(user.id, user.name)} className={buttonVariants({variant: "destructive"})}>
-                                Excluir Perfil
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="icon" className="hover:text-destructive" disabled={user.id === currentUserProfile.id}>
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Confirmar Exclusão</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Tem certeza que deseja excluir o perfil de {user.name}? Esta ação removerá o perfil do banco de dados, mas não a conta de autenticação do Firebase.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => handleDelete(user.id, user.name)} className={buttonVariants({variant: "destructive"})}>
+                                    Excluir Perfil
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center h-24">
-                      Nenhum usuário encontrado. Verifique se há usuários cadastrados ou se há permissão para listá-los.
+                    <TableCell colSpan={6} className="text-center h-24">
+                      Nenhum usuário encontrado.
                     </TableCell>
                   </TableRow>
                 )}

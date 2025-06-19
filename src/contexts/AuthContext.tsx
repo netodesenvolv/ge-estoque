@@ -15,13 +15,16 @@ import {
   createUserWithEmailAndPassword as firebaseSignUp,
   signOut as firebaseSignOut
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { auth, firestore } from '@/lib/firebase'; // Import firestore
+import { doc, getDoc } from 'firebase/firestore'; // Import doc and getDoc
 import { useRouter, usePathname } from 'next/navigation';
+import type { UserProfile, User } from '@/types'; // Import UserProfile and User
 
 interface AuthContextType {
   user: FirebaseUser | null;
-  loading: boolean; // Continuará indicando o carregamento do estado de autenticação
-  isMounted: boolean; // Adicionado para rastrear a montagem do cliente
+  currentUserProfile: UserProfile | null; // Changed from User to UserProfile for clarity
+  loading: boolean; 
+  isMounted: boolean; 
   logout: () => Promise<void>;
   loginWithEmailAndPassword: (email: string, pass: string) => Promise<FirebaseUser | AuthError>;
   signUpWithEmailAndPassword: (email: string, pass: string) => Promise<FirebaseUser | AuthError>;
@@ -35,24 +38,39 @@ interface AuthProviderProps {
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [loading, setLoading] = useState(true); // Indica se o estado de autenticação inicial ainda está carregando
-  const [isMounted, setIsMounted] = useState(false); // Para rastrear se o componente montou no cliente
+  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true); 
+  const [isMounted, setIsMounted] = useState(false); 
 
   const router = useRouter();
   const pathname = usePathname();
   const isAuthRoute = pathname === '/login' || pathname === '/signup';
 
   useEffect(() => {
-    setIsMounted(true); // Define como montado após a primeira renderização do cliente
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoading(false); // Estado de autenticação carregado
+    setIsMounted(true); 
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      if (firebaseUser) {
+        // Fetch user profile from Firestore
+        const userProfileRef = doc(firestore, "user_profiles", firebaseUser.uid);
+        const userProfileSnap = await getDoc(userProfileRef);
+        if (userProfileSnap.exists()) {
+          setCurrentUserProfile(userProfileSnap.data() as UserProfile);
+        } else {
+          console.warn(`No profile found in Firestore for user ${firebaseUser.uid}`);
+          // Potentially create a default profile or handle this case
+          // For now, set to null or a default guest profile
+          setCurrentUserProfile(null); 
+        }
+      } else {
+        setCurrentUserProfile(null);
+      }
+      setLoading(false); 
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    // Lógica de redirecionamento: executa apenas no cliente após a montagem e o estado de auth ser carregado
     if (isMounted && !loading && !user && !isAuthRoute) {
       router.push('/login');
     }
@@ -60,11 +78,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const authContextValue: AuthContextType = {
     user,
+    currentUserProfile,
     loading,
-    isMounted, // Fornecer isMounted através do contexto
+    isMounted, 
     loginWithEmailAndPassword: async (email: string, pass: string): Promise<FirebaseUser | AuthError> => {
       try {
         const userCredential = await firebaseSignIn(auth, email, pass);
+        // Profile will be fetched by onAuthStateChanged
         return userCredential.user;
       } catch (error) {
         return error as AuthError;
@@ -73,6 +93,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     signUpWithEmailAndPassword: async (email: string, pass: string): Promise<FirebaseUser | AuthError> => {
       try {
         const userCredential = await firebaseSignUp(auth, email, pass);
+        // Profile will be created and then fetched by onAuthStateChanged if successful
         return userCredential.user;
       } catch (error) {
         return error as AuthError;
@@ -80,17 +101,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     },
     logout: async (): Promise<void> => {
       await firebaseSignOut(auth);
-      // O router.push('/login') está no useEffect, mas podemos adicionar aqui para garantir se necessário
-      // ou confiar que o estado de 'user' mudando acionará o useEffect.
-      // Para uma experiência mais imediata, podemos fazer o push aqui também.
+      setCurrentUserProfile(null); // Clear profile on logout
       router.push('/login');
     }
   };
 
-  // Durante SSR e a primeira renderização no cliente (antes de isMounted se tornar true),
-  // sempre renderize os children para garantir que a hidratação corresponda.
-  // A lógica de exibir "Carregando..." ou "Verificando..." será gerenciada pelo LayoutRenderer
-  // ou por componentes filhos que consomem o contexto.
   return (
     <AuthContext.Provider value={authContextValue}>
       {children}
@@ -105,5 +120,3 @@ export const useAuth = (): AuthContextType => {
   }
   return context;
 };
-
-    

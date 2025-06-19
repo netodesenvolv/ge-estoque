@@ -17,9 +17,10 @@ import { Loader2 } from 'lucide-react';
 import type { AuthError, User as FirebaseUser } from 'firebase/auth';
 import { firestore } from '@/lib/firebase';
 import { doc, setDoc } from 'firebase/firestore';
-import type { UserProfile } from '@/types'; // Assuming UserProfile exists or is similar to User type
+import type { UserProfile } from '@/types'; 
 
 const signupSchema = z.object({
+  name: z.string().min(3, { message: "O nome deve ter pelo menos 3 caracteres." }), // Added name field
   email: z.string().email({ message: "Por favor, insira um email válido." }),
   password: z.string().min(6, { message: "A senha deve ter pelo menos 6 caracteres." }),
   confirmPassword: z.string(),
@@ -39,6 +40,7 @@ export default function SignupPage() {
   const form = useForm<SignupFormValues>({
     resolver: zodResolver(signupSchema),
     defaultValues: {
+      name: '', // Default for name
       email: '',
       password: '',
       confirmPassword: '',
@@ -51,7 +53,7 @@ export default function SignupPage() {
     const result = await signUpWithEmailAndPassword(data.email, data.password);
     
 
-    if ('code' in result) { // Check if it's an AuthError
+    if ('code' in result) { 
       setLoading(false);
       const authError = result as AuthError;
       if (authError.code === 'auth/email-already-in-use') {
@@ -63,23 +65,23 @@ export default function SignupPage() {
         setError(`Erro ao criar conta: ${authError.message}`);
       }
     } else {
-      // User created in Firebase Auth, now create profile in Firestore
       const firebaseUser = result as FirebaseUser;
+      // Default role for self-signup is 'user'
       const userProfile: UserProfile = {
-        name: firebaseUser.displayName || data.email.split('@')[0], // Use displayName or part of email as name
-        email: firebaseUser.email!, // Email is guaranteed here
-        role: 'user',
-        status: 'active',
+        name: data.name, // Use name from form
+        email: firebaseUser.email!, 
+        role: 'user', // Default role
+        status: 'active', // Default status
+        // No associatedHospitalId or associatedUnitId for self-signup by default
       };
       try {
         await setDoc(doc(firestore, "user_profiles", firebaseUser.uid), userProfile);
         setLoading(false);
-        router.push('/'); // Redirect to dashboard or desired page
+        router.push('/'); 
       } catch (firestoreError) {
         setLoading(false);
         console.error("Erro ao criar perfil do usuário no Firestore:", firestoreError);
         setError("Conta criada, mas houve um erro ao salvar o perfil. Contate o suporte.");
-        // Potentially log out the user or handle this state if critical
       }
     }
   };
@@ -97,6 +99,19 @@ export default function SignupPage() {
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
             <CardContent className="space-y-6">
+               <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nome Completo</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Seu nome completo" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <FormField
                 control={form.control}
                 name="email"
