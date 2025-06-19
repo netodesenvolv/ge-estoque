@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import type { UserRole, UserStatus, UserProfile, Hospital, ServedUnit } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/contexts/AuthContext'; 
+import { useAuth } from '@/contexts/AuthContext';
 import { firestore } from '@/lib/firebase';
 import { doc, setDoc, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import type { AuthError, User as FirebaseUser } from 'firebase/auth';
@@ -53,7 +53,7 @@ const LOADING_VALUE = "__LOADING__";
 export default function UserForm({}: UserFormProps) {
   const router = useRouter();
   const { toast } = useToast();
-  const { signUpWithEmailAndPassword } = useAuth(); 
+  const { signUpWithEmailAndPassword } = useAuth();
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
   const [isLoadingHospitals, setIsLoadingHospitals] = useState(true);
@@ -68,7 +68,7 @@ export default function UserForm({}: UserFormProps) {
       password: '',
       confirmPassword: '',
       role: 'user',
-      status: true, 
+      status: true,
       associatedHospitalId: undefined,
       associatedUnitId: undefined,
     },
@@ -113,21 +113,29 @@ export default function UserForm({}: UserFormProps) {
       setServedUnits([]);
     }
   }, [selectedHospitalForUnits, selectedRole, toast]);
-  
+
    useEffect(() => {
     // Reset associatedUnitId if hospital changes or role no longer requires it
     if (selectedRole !== 'hospital_operator') {
          form.setValue('associatedUnitId', undefined);
+    } else if (selectedRole === 'hospital_operator' && selectedHospitalForUnits) {
+        // If role is hospital_operator and hospital is selected,
+        // check if current unitId is still valid for the new hospital.
+        // This is partly handled by the servedUnits state update, but an explicit reset might be good.
+        const currentUnitId = form.getValues('associatedUnitId');
+        if (currentUnitId && !servedUnits.find(u => u.id === currentUnitId)) {
+            form.setValue('associatedUnitId', undefined);
+        }
     }
-  }, [selectedRole, selectedHospitalForUnits, form]);
+  }, [selectedRole, selectedHospitalForUnits, form, servedUnits]);
 
 
   const onSubmit = async (data: UserFormData) => {
-    form.clearErrors(); 
-    
+    form.clearErrors();
+
     const authResult = await signUpWithEmailAndPassword(data.email, data.password);
 
-    if ('code' in authResult) { 
+    if ('code' in authResult) {
       const authError = authResult as AuthError;
       if (authError.code === 'auth/email-already-in-use') {
         form.setError("email", { type: "manual", message: "Este email já está em uso." });
@@ -140,22 +148,26 @@ export default function UserForm({}: UserFormProps) {
           variant: "destructive",
         });
       }
-      return; 
+      return;
     }
 
     const firebaseUser = authResult as FirebaseUser;
-    const hospital = data.associatedHospitalId ? hospitals.find(h => h.id === data.associatedHospitalId) : undefined;
-    const unit = data.associatedUnitId ? servedUnits.find(u => u.id === data.associatedUnitId) : undefined;
+    const hospital = (data.associatedHospitalId && data.associatedHospitalId !== LOADING_VALUE)
+      ? hospitals.find(h => h.id === data.associatedHospitalId) : undefined;
+    const unit = (data.associatedUnitId && data.associatedUnitId !== LOADING_VALUE)
+      ? servedUnits.find(u => u.id === data.associatedUnitId) : undefined;
 
     const userProfileData: UserProfile = {
       name: data.name,
-      email: data.email, 
+      email: data.email,
       role: data.role as UserRole,
       status: data.status ? 'active' : 'inactive',
-      associatedHospitalId: data.associatedHospitalId || undefined,
-      associatedHospitalName: hospital?.name || undefined,
-      associatedUnitId: data.associatedUnitId || undefined,
-      associatedUnitName: unit?.name || undefined,
+      // Conditionally add properties only if they have a valid, truthy value
+      ...(data.associatedHospitalId && data.associatedHospitalId !== LOADING_VALUE && { associatedHospitalId: data.associatedHospitalId }),
+      ...(data.associatedHospitalId && data.associatedHospitalId !== LOADING_VALUE && hospital && { associatedHospitalName: hospital.name }),
+      // Ensure empty string from "Nenhuma específica" for unitId is not saved as is, but omitted
+      ...(data.associatedUnitId && data.associatedUnitId !== LOADING_VALUE && data.associatedUnitId !== "" && { associatedUnitId: data.associatedUnitId }),
+      ...(data.associatedUnitId && data.associatedUnitId !== LOADING_VALUE && data.associatedUnitId !== "" && unit && { associatedUnitName: unit.name }),
     };
 
     try {
@@ -164,7 +176,7 @@ export default function UserForm({}: UserFormProps) {
         title: "Usuário Adicionado",
         description: `${userProfileData.name} foi adicionado com sucesso. O novo usuário está logado. O administrador precisará logar novamente.`,
       });
-      router.push('/users'); 
+      router.push('/users');
     } catch (firestoreError) {
       console.error("Erro ao salvar perfil do usuário no Firestore: ", firestoreError);
       toast({
@@ -237,7 +249,7 @@ export default function UserForm({}: UserFormProps) {
                 )}
               />
             </div>
-            
+
             <FormField
               control={form.control}
               name="role"
@@ -299,7 +311,7 @@ export default function UserForm({}: UserFormProps) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Unidade Servida Associada (Opcional para Operador de Hospital)</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value} defaultValue={field.value} disabled={isLoadingUnits || !selectedHospitalForUnits}>
+                    <Select onValueChange={field.onChange} value={field.value || ""} defaultValue={field.value || ""} disabled={isLoadingUnits || !selectedHospitalForUnits}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder={isLoadingUnits ? "Carregando unidades..." : "Todas as unidades do hospital ou uma específica"} />
