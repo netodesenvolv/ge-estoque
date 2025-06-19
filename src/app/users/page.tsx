@@ -65,10 +65,7 @@ export default function UsersPage() {
   );
 
   const handleEdit = (id: string) => {
-    toast({
-      title: "Funcionalidade Pendente",
-      description: `A edição do usuário com ID: ${id} ainda não foi implementada.`,
-    });
+    router.push(`/users/${id}/edit`);
   };
 
   const handleDelete = async (userId: string, userName: string) => {
@@ -115,7 +112,6 @@ export default function UsersPage() {
 
   const canAddUsers = currentUserProfile?.role === 'admin';
 
-
   return (
     <div>
       <PageHeader
@@ -153,7 +149,7 @@ export default function UsersPage() {
                 <p className="ml-2 text-muted-foreground">Carregando usuários...</p>
             </div>
           ) : permissionDeniedError ? (
-            <div className="flex flex-col items-center justify-center h-60 text-center p-4 rounded-md bg-destructive/10 border border-destructive/50">
+            <div className="flex flex-col items-center justify-center h-auto text-center p-4 rounded-md bg-destructive/10 border border-destructive/50 my-6">
               <ShieldAlert className="h-12 w-12 text-destructive mb-3" />
               <h3 className="text-lg font-semibold text-destructive">Acesso Negado à Lista de Usuários</h3>
               <p className="text-muted-foreground mt-1">
@@ -164,27 +160,31 @@ export default function UsersPage() {
                  Verifique suas regras no Console do Firebase.
               </p>
                <p className="text-xs text-muted-foreground mt-3">
-                Exemplo de regra para permitir que administradores leiam todos os perfis (requer que o perfil do admin tenha <code className="bg-muted px-1 py-0.5 rounded text-xs">role: 'admin'</code>):
+                Exemplo de regra para permitir que administradores leiam todos os perfis (requer que o perfil do admin tenha <code className="bg-muted px-1 py-0.5 rounded text-xs">role: 'admin'</code> no documento <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles/&#123;UID_DO_ADMIN&#125;</code>):
               </p>
-              <pre className="mt-1 p-2 bg-gray-100 dark:bg-gray-800 rounded text-xs text-left overflow-x-auto">
+              <pre className="mt-1 p-2 bg-gray-100 dark:bg-gray-800 rounded text-xs text-left overflow-x-auto w-full max-w-2xl">
                 <code>
 {`service cloud.firestore {
   match /databases/{database}/documents {
     function isAdmin() {
-      return request.auth != null && 
+      // Verifica se o usuário está autenticado e se seu perfil tem role == 'admin'
+      return request.auth != null &&
              get(/databases/$(database)/documents/user_profiles/$(request.auth.uid)).data.role == 'admin';
     }
     match /user_profiles/{userId} {
-      // Admins podem ler todos os perfis, usuários podem ler o próprio
-      allow read: if isAdmin() || request.auth.uid == userId;
-      // Admins podem listar todos os perfis
+      // Admins podem listar (consultar) a coleção.
       allow list: if isAdmin(); 
-      // ... (regras de escrita)
+      // Admins podem ler perfis individuais, usuários podem ler o próprio.
+      allow get: if request.auth.uid == userId || isAdmin();
+      // ... (outras regras de create, update, delete)
     }
   }
 }`}
                 </code>
               </pre>
+               <p className="text-sm text-muted-foreground mt-3">
+                Certifique-se também de que o usuário administrador com o qual você está testando realmente possui o campo <code className="bg-muted px-1 py-0.5 rounded text-xs">role</code> com o valor <code className="bg-muted px-1 py-0.5 rounded text-xs">'admin'</code> em seu documento na coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>.
+              </p>
             </div>
           ) : (
           <div className="overflow-x-auto">
@@ -265,6 +265,4 @@ export default function UsersPage() {
     </div>
   );
 }
-    
-
     
