@@ -58,72 +58,103 @@ export default function StockPage() {
   const [unitFilter, setUnitFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all'); 
 
-  useEffect(() => {
-    setIsLoading(true);
-    const dataSources = [
-      { name: "items", setter: setFirestoreItems, query: query(collection(firestore, "items"), orderBy("name", "asc")) },
-      { name: "stockConfigs", setter: setFirestoreStockConfigs, query: query(collection(firestore, "stockConfigs")) },
-      { name: "servedUnits", setter: setAllServedUnitsData, query: query(collection(firestore, "servedUnits"), orderBy("name", "asc")) },
-      { name: "hospitals", setter: setAllHospitalsData, query: query(collection(firestore, "hospitals"), orderBy("name", "asc")) },
-    ];
+  const [dataLoadStatus, setDataLoadStatus] = useState<{ [key: string]: boolean }>({
+    items: false,
+    stockConfigs: false,
+    servedUnits: false,
+    hospitals: false,
+  });
 
-    let loadedCount = 0;
+  useEffect(() => {
+    const sourcesToLoad = ["items", "stockConfigs", "servedUnits", "hospitals"];
+    // Reset load status on re-run (e.g., if component remounts or dependencies change)
+    const initialLoadStatus = sourcesToLoad.reduce((acc, curr) => ({ ...acc, [curr]: false }), {});
+    setDataLoadStatus(initialLoadStatus);
+    setIsLoading(true); // Set loading to true when starting to fetch data
+
     const unsubscribers: (() => void)[] = [];
 
-    dataSources.forEach(source => {
-      const unsubscribe = onSnapshot(source.query, (snapshot) => {
-        source.setter(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
-        loadedCount++;
-        if (loadedCount === dataSources.length) {
-          setIsLoading(false);
-        }
+    const createListener = (collectionName: string, setter: React.Dispatch<React.SetStateAction<any[]>>, queryToRun: any) => {
+      console.log(`Setting up listener for ${collectionName}`);
+      const unsubscribe = onSnapshot(queryToRun, (snapshot) => {
+        console.log(`Snapshot received for ${collectionName}. Docs count: ${snapshot.docs.length}`);
+        setter(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+        setDataLoadStatus(prev => ({ ...prev, [collectionName]: true }));
       }, (error) => {
-        console.error(`Erro ao buscar ${source.name}: `, error);
-        toast({ title: `Erro ao Carregar ${source.name}`, variant: "destructive" });
-        loadedCount++; // Considerar erro como "carregado" para não bloquear indefinidamente
-        if (loadedCount === dataSources.length) {
-          setIsLoading(false);
-        }
+        console.error(`Erro ao buscar ${collectionName}: `, error);
+        toast({ title: `Erro ao Carregar ${collectionName}`, variant: "destructive" });
+        setDataLoadStatus(prev => ({ ...prev, [collectionName]: true })); 
       });
       unsubscribers.push(unsubscribe);
-    });
+    };
+
+    createListener("items", setFirestoreItems, query(collection(firestore, "items"), orderBy("name", "asc")));
+    createListener("stockConfigs", setFirestoreStockConfigs, query(collection(firestore, "stockConfigs")));
+    createListener("servedUnits", setAllServedUnitsData, query(collection(firestore, "servedUnits"), orderBy("name", "asc")));
+    createListener("hospitals", setAllHospitalsData, query(collection(firestore, "hospitals"), orderBy("name", "asc")));
     
-    return () => unsubscribers.forEach(unsub => unsub());
-  }, [toast]);
+    return () => {
+      console.log("Cleaning up Firestore listeners for StockPage");
+      unsubscribers.forEach(unsub => unsub());
+    };
+  }, [toast]); // toast é estável, este useEffect deve rodar uma vez
 
   useEffect(() => {
-    if (isLoading) return; // Só processa se o carregamento inicial estiver completo
+    const allLoaded = Object.values(dataLoadStatus).every(status => status === true);
+    if (allLoaded) {
+      console.log("All data sources are now marked as loaded. Setting isLoading to false.");
+      setIsLoading(false);
+    } else {
+      // Se nem todos carregaram, mantenha isLoading como true ou redefina se necessário
+      // No entanto, o isLoading inicial é true, então só precisamos definir como false quando tudo carregar.
+      // Se uma dependência mudar e este useEffect re-executar, dataLoadStatus será resetado,
+      // e isLoading será efetivamente true até que allLoaded seja true novamente.
+    }
+  }, [dataLoadStatus]);
+
+
+  useEffect(() => {
+    console.log("StockPage: useEffect for combining data triggered. Current isLoading state:", isLoading);
+    if (isLoading) {
+      console.log("StockPage: useEffect for combining data: isLoading is true, returning.");
+      return; 
+    }
+    console.log("StockPage: useEffect for combining data: processing...");
 
     const combinedData: DisplayStockItem[] = [];
 
     firestoreItems.forEach(item => {
+      if (item.name && item.name.toLowerCase().includes('paracetamol')) {
+          console.log(`StockPage: Combining data for CENTRAL item: ${item.name} (ID: ${item.id}), currentQuantityCentral: ${item.currentQuantityCentral}`);
+      }
+
       const centralConfigId = `${item.id}_central`;
       const config = firestoreStockConfigs.find(sc => sc.id === centralConfigId);
       
       const currentQuantity = item.currentQuantityCentral;
       const strategicLvl = config?.strategicStockLevel || 0;
-      const minQty = config?.minQuantity ?? item.minQuantity;
+      const minQty = config?.minQuantity ?? item.minQuantity ?? 0; // Fallback para 0 se ambos undefined
 
       let status: DisplayStockItem['status'] = 'Optimal';
-      if (typeof currentQuantity === 'number') {
-        if (minQty > 0 && currentQuantity < minQty) {
-            status = 'Low';
-        } else if (strategicLvl > 0 && currentQuantity < strategicLvl) {
-            status = 'Alert';
-        }
-      } else {
-        status = undefined; 
-      }
+      let currentQuantityValue = typeof currentQuantity === 'number' && !isNaN(currentQuantity) ? currentQuantity : 0;
+      let minQtyValue = typeof minQty === 'number' && !isNaN(minQty) ? minQty : 0;
+      let strategicLvlValue = typeof strategicLvl === 'number' && !isNaN(strategicLvl) ? strategicLvl : 0;
 
+      if (minQtyValue > 0 && currentQuantityValue < minQtyValue) {
+          status = 'Low';
+      } else if (strategicLvlValue > 0 && currentQuantityValue < strategicLvlValue) {
+          status = 'Alert';
+      }
+      
       combinedData.push({
         id: `central-${item.id}`,
         itemId: item.id,
         itemName: item.name,
         itemCode: item.code,
         ...getUnitDetails(undefined, allServedUnitsData, allHospitalsData),
-        strategicStockLevel: strategicLvl,
-        minQuantity: minQty,
-        currentQuantity: currentQuantity,
+        strategicStockLevel: strategicLvlValue,
+        minQuantity: minQtyValue,
+        currentQuantity: currentQuantityValue,
         status: status,
       });
     });
@@ -132,19 +163,23 @@ export default function StockPage() {
       if (config.unitId) { 
         const itemDetail = firestoreItems.find(i => i.id === config.itemId);
         if (!itemDetail) return;
+        
+        if (itemDetail.name && itemDetail.name.toLowerCase().includes('paracetamol')) {
+            console.log(`StockPage: Combining data for UNIT item: ${itemDetail.name} (Unit ID: ${config.unitId}), unitCurrentQuantity: ${config.currentQuantity}`);
+        }
 
         const unitDetails = getUnitDetails(config.unitId, allServedUnitsData, allHospitalsData);
         const currentUnitQuantity = config.currentQuantity;
 
         let status: DisplayStockItem['status'] = 'Optimal';
-            if (typeof currentUnitQuantity === 'number') {
-            if (config.minQuantity > 0 && currentUnitQuantity < config.minQuantity) {
-                status = 'Low';
-            } else if (config.strategicStockLevel > 0 && currentUnitQuantity < config.strategicStockLevel) {
-                status = 'Alert';
-            }
-        } else {
-            status = undefined;
+        let currentUnitQuantityValue = typeof currentUnitQuantity === 'number' && !isNaN(currentUnitQuantity) ? currentUnitQuantity : 0;
+        let unitMinQtyValue = typeof config.minQuantity === 'number' && !isNaN(config.minQuantity) ? config.minQuantity : 0;
+        let unitStrategicLvlValue = typeof config.strategicStockLevel === 'number' && !isNaN(config.strategicStockLevel) ? config.strategicStockLevel : 0;
+
+        if (unitMinQtyValue > 0 && currentUnitQuantityValue < unitMinQtyValue) {
+            status = 'Low';
+        } else if (unitStrategicLvlValue > 0 && currentUnitQuantityValue < unitStrategicLvlValue) {
+            status = 'Alert';
         }
         
         combinedData.push({
@@ -153,14 +188,15 @@ export default function StockPage() {
           itemName: itemDetail.name,
           itemCode: itemDetail.code,
           ...unitDetails,
-          strategicStockLevel: config.strategicStockLevel,
-          minQuantity: config.minQuantity,
-          currentQuantity: currentUnitQuantity,
+          strategicStockLevel: unitStrategicLvlValue,
+          minQuantity: unitMinQtyValue,
+          currentQuantity: currentUnitQuantityValue,
           status: status,
         });
       }
     });
     
+    console.log("StockPage: useEffect for combining data: combinedData length:", combinedData.length);
     setStockData(combinedData.sort((a, b) => 
         (a.hospitalName || '').localeCompare(b.hospitalName || '') || 
         (a.unitName || '').localeCompare(b.unitName || '') || 
@@ -175,13 +211,12 @@ export default function StockPage() {
     : allServedUnitsData.filter(u => u.hospitalId === hospitalFilter);
 
   useEffect(() => {
-    // Reset unitFilter if it becomes invalid due to hospitalFilter change
     if (hospitalFilter !== 'all' && hospitalFilter !== 'central') {
       if (unitFilter !== 'all' && !filteredUnitsForSelect.find(u => u.id === unitFilter)) {
         setUnitFilter('all');
       }
     } else if (hospitalFilter === 'central' && unitFilter !== 'all') {
-       setUnitFilter('all'); // No units for central warehouse
+       setUnitFilter('all'); 
     }
   }, [hospitalFilter, unitFilter, filteredUnitsForSelect]);
 
@@ -231,7 +266,7 @@ export default function StockPage() {
         description="Visualize os níveis de estoque atuais em todos os locais." 
         icon={Warehouse}
         actions={
-          <Button onClick={handlePrint} variant="outline">
+          <Button onClick={handlePrint} variant="outline" className="no-print">
             <Printer className="mr-2 h-4 w-4" /> Imprimir Tabela
           </Button>
         }
@@ -265,7 +300,7 @@ export default function StockPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={unitFilter} onValueChange={setUnitFilter} disabled={hospitalFilter === 'central' || isLoading}>
+            <Select value={unitFilter} onValueChange={setUnitFilter} disabled={(hospitalFilter === 'central' && !isLoading) || isLoading}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Filtrar por Unidade" />
               </SelectTrigger>
