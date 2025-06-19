@@ -161,7 +161,30 @@ export default function UsersPage() {
               </p>
               <p className="text-sm text-muted-foreground mt-2">
                 <strong>Causa provável:</strong> Suas Regras de Segurança do Firestore não permitem que o usuário atual leia a coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>.
+                 Verifique suas regras no Console do Firebase.
               </p>
+               <p className="text-xs text-muted-foreground mt-3">
+                Exemplo de regra para permitir que administradores leiam todos os perfis (requer que o perfil do admin tenha <code className="bg-muted px-1 py-0.5 rounded text-xs">role: 'admin'</code>):
+              </p>
+              <pre className="mt-1 p-2 bg-gray-100 dark:bg-gray-800 rounded text-xs text-left overflow-x-auto">
+                <code>
+{`service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null && 
+             get(/databases/$(database)/documents/user_profiles/$(request.auth.uid)).data.role == 'admin';
+    }
+    match /user_profiles/{userId} {
+      // Admins podem ler todos os perfis, usuários podem ler o próprio
+      allow read: if isAdmin() || request.auth.uid == userId;
+      // Admins podem listar todos os perfis
+      allow list: if isAdmin(); 
+      // ... (regras de escrita)
+    }
+  }
+}`}
+                </code>
+              </pre>
             </div>
           ) : (
           <div className="overflow-x-auto">
@@ -242,4 +265,6 @@ export default function UsersPage() {
     </div>
   );
 }
+    
+
     
