@@ -17,8 +17,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, runTransaction, getDoc } from 'firebase/firestore';
-import { processMovementRowTransaction } from '@/app/stock/movements/page'; // Import the transaction function
+import { collection, query, orderBy, onSnapshot, doc, runTransaction, getDoc, type FirestoreError } from 'firebase/firestore';
+import { processMovementRowTransaction } from '@/app/stock/movements/page'; 
 
 const NO_PATIENT_ID = "__NO_PATIENT__";
 const UBS_GENERAL_STOCK_SUFFIX = "UBSGENERAL";
@@ -28,7 +28,7 @@ const CENTRAL_WAREHOUSE_ID = "__CENTRAL_WAREHOUSE__";
 
 const locationSelectionSchema = z.object({
   hospitalId: z.string().min(1, "Selecione o hospital/local."),
-  unitId: z.string().optional(), // Pode ser o placeholder para estoque geral
+  unitId: z.string().optional(), 
 });
 
 const consumptionDetailsSchema = z.object({
@@ -74,52 +74,65 @@ export default function GeneralConsumptionPage() {
     },
   });
 
+  const handleSnapshotError = (collectionName: string, error: FirestoreError) => {
+    console.error(`Error loading ${collectionName}:`, error);
+    if (error.code === 'permission-denied') {
+      toast({
+        title: `Permissão Negada: ${collectionName}`,
+        description: `Não foi possível carregar dados de '${collectionName}'. Verifique suas Regras de Segurança do Firestore.`,
+        variant: "destructive",
+        duration: 10000, 
+      });
+    } else {
+      toast({
+        title: `Erro ao Carregar ${collectionName.charAt(0).toUpperCase() + collectionName.slice(1)}`,
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+  
   useEffect(() => {
     setIsLoadingData(true);
     const unsubscribers = [
-      onSnapshot(query(collection(firestore, "items"), orderBy("name", "asc")), snapshot => setItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Item)))),
-      onSnapshot(query(collection(firestore, "patients"), orderBy("name", "asc")), snapshot => setPatients(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Patient)))),
-      onSnapshot(query(collection(firestore, "hospitals"), orderBy("name", "asc")), snapshot => setHospitals(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Hospital)))),
-      onSnapshot(query(collection(firestore, "servedUnits"), orderBy("name", "asc")), snapshot => setServedUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ServedUnit)))),
-      onSnapshot(query(collection(firestore, "stockConfigs")), snapshot => setStockConfigs(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as FirestoreStockConfig)))),
+      onSnapshot(query(collection(firestore, "items"), orderBy("name", "asc")), 
+        snapshot => setItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Item))), 
+        (error) => handleSnapshotError("itens", error as FirestoreError)
+      ),
+      onSnapshot(query(collection(firestore, "patients"), orderBy("name", "asc")), 
+        snapshot => setPatients(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Patient))), 
+        (error) => handleSnapshotError("pacientes", error as FirestoreError)
+      ),
+      onSnapshot(query(collection(firestore, "hospitals"), orderBy("name", "asc")), 
+        snapshot => setHospitals(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Hospital))), 
+        (error) => handleSnapshotError("hospitais", error as FirestoreError)
+      ),
+      onSnapshot(query(collection(firestore, "servedUnits"), orderBy("name", "asc")), 
+        snapshot => setServedUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ServedUnit))), 
+        (error) => handleSnapshotError("unidades servidas", error as FirestoreError)
+      ),
+      onSnapshot(query(collection(firestore, "stockConfigs")), 
+        snapshot => setStockConfigs(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as FirestoreStockConfig))), 
+        (error) => handleSnapshotError("configurações de estoque", error as FirestoreError)
+      ),
     ];
     
-    // Check if all data has loaded
-    let loadedCount = 0;
-    const checkAllLoaded = () => {
-      loadedCount++;
-      if (loadedCount === unsubscribers.length) {
-        setIsLoadingData(false);
-      }
+    // Simplified loading check: assume all listeners are set up, then wait a bit.
+    // A more robust solution would track individual load states for each collection.
+    const timer = setTimeout(() => {
+        setIsLoadingData(false); 
+    }, 2500); // Increased timeout slightly
+
+
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+      clearTimeout(timer);
     };
-    unsubscribers.forEach((_, i, arr) => {
-        // This setup for checking loading is a bit simplified.
-        // A more robust way would be to track individual loading states.
-        // For now, assuming all onSnapshot calls will eventually resolve or error.
-        const originalCallback = arr[i]; // This is not how onSnapshot works, needs adjustment if used directly
-        // Instead, we just set a timeout or check after all listeners are attached.
-        // For simplicity, we use a count based on listeners.
-        if (i === arr.length -1) { // Check after the last listener is setup
-            // A more robust way is to check actual data length or use Promise.all with getDocs
-            // For onSnapshot, it's tricky, setting a small timeout or specific flags for each collection is better.
-            // Here, we'll use a timeout for simplicity after setting up listeners.
-            setTimeout(() => {
-                if (items.length || hospitals.length || servedUnits.length || stockConfigs.length || patients.length) {
-                     // Data started loading
-                }
-                 setIsLoadingData(false); // Assume data loaded or listener will update it
-            }, 1500); // Arbitrary delay
-        }
-    });
+  }, [toast]); 
 
 
-    return () => unsubscribers.forEach(unsub => unsub());
-  }, [toast]); // items, hospitals, servedUnits, stockConfigs, patients removed to avoid loop on first load
-
-
-  // Pre-fill and disable hospital/unit based on user role
   useEffect(() => {
-    if (currentUserProfile && !isLoadingData) { // Ensure data is loaded before trying to find hospitals/units
+    if (currentUserProfile && !isLoadingData) { 
       const userRole = currentUserProfile.role;
       const userHospitalId = currentUserProfile.associatedHospitalId;
       const userUnitId = currentUserProfile.associatedUnitId;
@@ -127,7 +140,6 @@ export default function GeneralConsumptionPage() {
       if ((userRole === 'hospital_operator' || userRole === 'ubs_operator') && userHospitalId) {
         if (locationForm.getValues('hospitalId') !== userHospitalId) {
           locationForm.setValue('hospitalId', userHospitalId);
-          // When hospitalId is programmatically set, reset unitId for fresh selection
           locationForm.setValue('unitId', undefined); 
         }
   
@@ -136,19 +148,17 @@ export default function GeneralConsumptionPage() {
         }
       }
     }
-  }, [currentUserProfile, isLoadingData, locationForm]); // Removed hospitals, servedUnits, no direct use here
+  }, [currentUserProfile, isLoadingData, locationForm]); 
   
 
   const watchedHospitalId = locationForm.watch('hospitalId');
 
-  // Reset unitId when hospital selection changes, unless it's an operator's fixed hospital
   useEffect(() => {
     const userIsOperatorWithFixedHospital = 
       (currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator') &&
       currentUserProfile?.associatedHospitalId === watchedHospitalId;
 
     if (!userIsOperatorWithFixedHospital && watchedHospitalId) {
-        // If user is admin/central_op and changes hospital, or if something unexpected happens, reset unit
         if (locationForm.getValues('unitId') !== undefined) {
              locationForm.setValue('unitId', undefined);
         }
@@ -183,6 +193,10 @@ export default function GeneralConsumptionPage() {
       unitNameDisplay = unit?.name || "Unidade Desconhecida";
     } else if (data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER && hospital?.name.toLowerCase().includes('ubs')) {
       unitNameDisplay = `Estoque Geral (${hospital.name})`;
+    } else if (data.hospitalId && (!data.unitId || data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER) && !hospital?.name.toLowerCase().includes('ubs')) {
+      // This case should ideally not happen if button logic is correct, but good to handle
+      toast({ title: "Erro de Seleção", description: "Para hospitais (não UBS), uma unidade específica deve ser selecionada para consumo.", variant: "destructive" });
+      return;
     }
 
 
@@ -193,7 +207,7 @@ export default function GeneralConsumptionPage() {
       unitName: unitNameDisplay,
     });
     setStage('fillForm');
-    consumptionForm.reset(); // Reset consumption form when location changes
+    consumptionForm.reset(); 
   };
 
   const handleConsumptionSubmit = async (data: ConsumptionDetailsFormData) => {
@@ -288,7 +302,7 @@ export default function GeneralConsumptionPage() {
   }, [selectedLocation, isConsumptionAtSelectedUBSGeneralOrSpecific, patients, isLoadingData]);
 
 
-  if (isLoadingData && !currentUserProfile) { // Check for currentUserProfile as well
+  if (isLoadingData && !currentUserProfile) { 
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-10rem)]">
         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
@@ -304,14 +318,16 @@ export default function GeneralConsumptionPage() {
   const canUserSelectHospital = currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator';
   const canUserSelectUnit = canUserSelectHospital || (currentUserProfile.associatedHospitalId && !currentUserProfile.associatedUnitId);
 
-  // New button disabled logic
   const isLocationSubmitButtonDisabled = 
     isLoadingData || 
     !locationForm.getValues('hospitalId') || 
     (
       locationForm.getValues('hospitalId') !== CENTRAL_WAREHOUSE_ID && 
-      !locationForm.getValues('unitId')
+      !locationForm.getValues('unitId') && // This now means unitId must be something (actual ID or placeholder)
+      !(locationForm.getValues('hospitalId') && isSelectedHospitalUBS && locationForm.getValues('unitId') === GENERAL_STOCK_UNIT_ID_PLACEHOLDER) && // Allow if it's UBS general stock selected
+      !(locationForm.getValues('hospitalId') && availableUnitsForSelection.length > 0 && locationForm.getValues('unitId')) // Allow if a specific unit is selected
     );
+
 
   return (
     <div className="container mx-auto py-2 max-w-2xl">
@@ -336,7 +352,10 @@ export default function GeneralConsumptionPage() {
                     <FormItem>
                       <FormLabel className="flex items-center gap-1"><Building className="h-4 w-4" /> Hospital/Local de Consumo</FormLabel>
                       <Select 
-                        onValueChange={field.onChange} 
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          locationForm.setValue('unitId', undefined); // Reset unit when hospital changes
+                        }} 
                         value={field.value} 
                         disabled={!canUserSelectHospital || isLoadingData}
                       >
@@ -384,7 +403,7 @@ export default function GeneralConsumptionPage() {
                             ))}
                           </SelectContent>
                         </Select>
-                        <FormDescription>Se for uma UBS, pode ser "Estoque Geral da UBS".</FormDescription>
+                        <FormDescription>Se for uma UBS, pode ser "Estoque Geral da UBS". Se for um Hospital, selecione uma unidade.</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -509,5 +528,3 @@ export default function GeneralConsumptionPage() {
   );
 }
         
-
-    
