@@ -26,11 +26,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useRouter } from 'next/navigation';
 
 
-const CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE = "CENTRAL_WAREHOUSE_DIRECT_EXIT";
+const CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE = "__CENTRAL_WAREHOUSE_DIRECT_EXIT__";
 const UBS_GENERAL_STOCK_SUFFIX = "UBSGENERAL";
+const GENERAL_STOCK_UNIT_ID_PLACEHOLDER = "__GENERAL_STOCK_UNIT__";
 
 
-// Schema for Entry/Exit movements only
+// Schema for Entry/Exit movements only (Admin/CentralOp)
 const movementSchema = z.object({
   itemId: z.string().min(1, "A seleção do item é obrigatória."),
   type: z.enum(['entry', 'exit'], { required_error: "O tipo de movimentação é obrigatório." }),
@@ -39,20 +40,29 @@ const movementSchema = z.object({
   unitId: z.string().optional(),     // For exit to unit
   date: z.string().refine((date) => !isNaN(Date.parse(date)), { message: "Data inválida." }),
   notes: z.string().optional(),
+  // PatientId is removed as it's not for entry/exit from central
 }).refine(data => {
-  if (data.type === 'exit' && data.hospitalId && data.hospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE && !data.unitId) {
-    // If exiting to a specific hospital (not direct warehouse exit), and that hospital is a UBS, unitId is not strictly required (implies general stock)
-    // However, if it's a regular hospital, unitId should be there.
-    // This check is now simpler as 'consumption' is out.
-    // For 'exit' to a specific hospital, unit must be provided or it's a direct exit/baixa
-    // For now, let's assume if hospitalId is given for 'exit', unitId is expected unless it's a UBS general stock (handled by placeholder)
-    // Or, if hospitalId is CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE, then unitId must NOT be present.
-    // This schema does not use GENERAL_STOCK_UNIT_ID_PLACEHOLDER, that's UI only.
-    // The transaction logic will infer general UBS stock if hospital is UBS and unitId is undefined.
+  if (data.type === 'exit' && data.hospitalId && data.hospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE) {
+    const isUbsGeneralStock = !data.unitId || data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER;
+    // If exiting to a specific hospital (not direct warehouse exit),
+    // and that hospital is NOT a UBS being targeted for general stock,
+    // then a specific unitId (not the placeholder) must be provided.
+    // This check assumes `hospitals` array is available or this validation needs to happen elsewhere.
+    // For schema, we ensure that if hospitalId is provided and is not for direct exit,
+    // then unitId should exist or be the placeholder.
+    // A more robust check would involve knowing if the hospital is a UBS here.
+    // For now, if hospitalId is given (and not direct exit), unitId is expected (can be placeholder).
+    if (!data.unitId && data.unitId !== GENERAL_STOCK_UNIT_ID_PLACEHOLDER) {
+      // This condition is tricky to validate purely in Zod without access to hospital type.
+      // The UI logic tries to enforce it. The transaction will ultimately fail if invalid.
+      // The main purpose here is user feedback.
+      // Let's assume for now that if a hospital is selected for exit, a unit (or placeholder) is needed.
+      // return false; // Could enable this if we want strict unit selection for non-UBS or non-direct exits.
+    }
   }
   return true;
 }, {
-  message: "Para Saída para um Hospital específico, a Unidade Servida deve ser selecionada (ou ser baixa direta).",
+  message: "Para Saída para um Hospital/UBS, a Unidade Servida (ou Estoque Geral da UBS) deve ser selecionada.",
   path: ["unitId"],
 });
 
@@ -67,12 +77,12 @@ export async function processMovementRowTransaction(
   allMasterItems: Item[],
   allMasterHospitals: Hospital[],
   allMasterServedUnits: ServedUnit[],
-  allMasterPatients: Patient[],
-  rowIndexForLog?: number, // For batch import logging
-  itemCodeForLog?: string, // For batch import logging
-  hospitalNameForLog?: string, // For batch import logging
-  unitNameForLog?: string, // For batch import logging
-  notesForLog?: string // For batch import logging
+  allMasterPatients: Patient[], // Keep for signature consistency, even if not used for entry/exit
+  rowIndexForLog?: number,
+  itemCodeForLog?: string,
+  hospitalNameForLog?: string,
+  unitNameForLog?: string,
+  notesForLog?: string
 ) {
     const itemDocRef = doc(firestore, "items", movementData.itemId);
     const itemSnap = await transaction.get(itemDocRef);
@@ -87,15 +97,15 @@ export async function processMovementRowTransaction(
 
     const hospitalForMovement = movementData.hospitalId ? allMasterHospitals.find(h => h.id === movementData.hospitalId) : null;
     const isUbsGeneralStockMovement =
-        (movementData.type === 'consumption' || movementData.type === 'exit') && // Exit to UBS general is also possible
+        (movementData.type === 'exit' || movementData.type === 'consumption') && // Exit to UBS general or consumption from UBS general
         movementData.hospitalId &&
-        !movementData.unitId &&
+        !movementData.unitId && // unitId is undefined after placeholder processing
         (hospitalForMovement?.name.toLowerCase().includes('ubs') || false);
 
-    if (movementData.hospitalId) {
-        if (movementData.unitId) {
+    if (movementData.hospitalId) { // True for exit to unit/UBS-general, or consumption from unit/UBS-general
+        if (movementData.unitId) { // Specific unit
             unitConfigDocId = `${movementData.itemId}_${movementData.unitId}`;
-        } else if (isUbsGeneralStockMovement) {
+        } else if (isUbsGeneralStockMovement) { // General stock of a UBS
             unitConfigDocId = `${movementData.itemId}_${movementData.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
         }
         if (unitConfigDocId) {
@@ -111,18 +121,23 @@ export async function processMovementRowTransaction(
         let currentCentralQty = currentItemData.currentQuantityCentral || 0;
         const newQuantityCentral = currentCentralQty + movementData.quantity;
         transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
-    } else if (movementData.type === 'exit') {
+    } else if (movementData.type === 'exit') { // Transfer or Direct Write-off
         if (currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator') {
             throw new Error("Apenas Admin ou Operador Central podem registrar saídas/transferências.");
         }
-         if (!movementData.hospitalId && !unitConfigDocId) { // Baixa direta do Central (hospitalId is falsy, e.g. CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE was selected and processed)
+         // Case 1: Direct write-off from Central Warehouse
+         // This is when hospitalId was CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE in form, now undefined here.
+         // And unitConfigDocId is null (because hospitalId is undefined or not UBS general, and unitId is undefined)
+        if (!movementData.hospitalId && !unitConfigDocId) {
             let currentCentralQty = currentItemData.currentQuantityCentral || 0;
             if (currentCentralQty < movementData.quantity) {
                 throw new Error(`Estoque insuficiente (${currentCentralQty}) no Armazém Central para ${currentItemData.name}. Necessário: ${movementData.quantity}`);
             }
             const newQuantityCentral = currentCentralQty - movementData.quantity;
             transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
-        } else if (movementData.hospitalId && unitConfigDocRef) { // Transferência para unidade/UBS Geral
+        }
+        // Case 2: Transfer to a specific unit or to a UBS's general stock
+        else if (movementData.hospitalId && unitConfigDocRef) {
             let currentCentralQty = currentItemData.currentQuantityCentral || 0;
             if (currentCentralQty < movementData.quantity) {
                 throw new Error(`Estoque insuficiente (${currentCentralQty}) no Armazém Central para ${currentItemData.name}. Necessário: ${movementData.quantity}`);
@@ -135,27 +150,50 @@ export async function processMovementRowTransaction(
                 currentTargetQty = unitConfigSnap.data().currentQuantity || 0;
             }
             const newTargetQuantity = currentTargetQty + movementData.quantity;
+            
+            // Base data for target config
             const targetConfigData: Partial<FirestoreStockConfig> & { itemId: string; hospitalId: string; currentQuantity: number; unitId?: string } = {
                 itemId: movementData.itemId,
                 hospitalId: movementData.hospitalId,
                 currentQuantity: newTargetQuantity,
+                // minQuantity and strategicStockLevel are not set by transfers, only by config page
+                // If config doesn't exist, they remain undefined and UI will show "Not Configured"
             };
-             if(movementData.unitId) targetConfigData.unitId = movementData.unitId;
+            // Add unitId only if it was a specific unit, not UBS general stock
+             if(movementData.unitId) { // This unitId would be the actual ID, not placeholder
+                targetConfigData.unitId = movementData.unitId;
+             }
+            // Ensure minQuantity and strategicStockLevel from existing config are preserved if they exist
+            if (unitConfigSnap && unitConfigSnap.exists()) {
+                const existingConfig = unitConfigSnap.data();
+                targetConfigData.minQuantity = existingConfig.minQuantity ?? 0;
+                targetConfigData.strategicStockLevel = existingConfig.strategicStockLevel ?? 0;
+            } else {
+                targetConfigData.minQuantity = 0; // Default for new config
+                targetConfigData.strategicStockLevel = 0; // Default for new config
+            }
+
             transaction.set(unitConfigDocRef, targetConfigData, { merge: true });
         } else {
-            throw new Error("Destino (Hospital e Unidade/Estoque Geral UBS, ou Baixa Direta) é obrigatório para saída/transferência.");
+            throw new Error("Destino (Hospital e Unidade/Estoque Geral UBS, ou Baixa Direta) é obrigatório e deve ser válido para saída/transferência.");
         }
     } else if (movementData.type === 'consumption') {
-        // This part of the transaction is primarily for the consumption page or admin/centralOp doing consumption
+        // This block handles consumption, typically called from the consumption page or by admin/central_op
+        let consumedFromCentral = false;
         if (currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator') {
-            if (!movementData.hospitalId && !unitConfigDocRef) { // Consumo direto do Central
+            // Admin/CentralOp consuming:
+            // Case 1: Directly from Central Warehouse (hospitalId and unitId are undefined)
+            if (!movementData.hospitalId && !unitConfigDocId) {
                 let currentCentralQty = currentItemData.currentQuantityCentral || 0;
                 if (currentCentralQty < movementData.quantity) {
                     throw new Error(`Estoque insuficiente (${currentCentralQty}) no Armazém Central para ${currentItemData.name}. Necessário: ${movementData.quantity}`);
                 }
                 const newCentralQuantity = currentCentralQty - movementData.quantity;
                 transaction.update(itemDocRef, { currentQuantityCentral: newCentralQuantity });
-            } else if (unitConfigDocRef) { // Consumo de uma unidade/UBS Geral por Admin/Central
+                consumedFromCentral = true;
+            }
+            // Case 2: From a specific unit or UBS general stock (unitConfigDocRef is valid)
+            else if (unitConfigDocRef) {
                  if (!unitConfigSnap || !unitConfigSnap.exists()) {
                     throw new Error(`Configuração de estoque não encontrada para ${currentItemData.name} no local de consumo (ID: ${unitConfigDocId}). Estoque inicial pode não ter sido transferido.`);
                 }
@@ -169,25 +207,21 @@ export async function processMovementRowTransaction(
                  throw new Error("Destino de consumo inválido para Admin/Operador Central.");
             }
         } else if (currentUserProfile.role === 'hospital_operator' || currentUserProfile.role === 'ubs_operator') {
-            // This specific block will be more relevant for the dedicated consumption page
+            // Hospital/UBS Operator consuming:
             if (!movementData.hospitalId || currentUserProfile.associatedHospitalId !== movementData.hospitalId) {
                 throw new Error("Operador não autorizado para este hospital.");
             }
-             // Check if unitId is required based on user's associatedUnitId
-            if (currentUserProfile.associatedUnitId && currentUserProfile.associatedUnitId !== movementData.unitId) {
+            if (currentUserProfile.associatedUnitId && currentUserProfile.associatedUnitId !== movementData.unitId) { // User tied to a specific unit
                  throw new Error("Operador não autorizado para esta unidade específica.");
             }
-             // If user is a general UBS operator (no associatedUnitId) but unitId is provided in movement (not placeholder)
-            if (!currentUserProfile.associatedUnitId && movementData.unitId) {
-                // Allow if unitId belongs to the operator's hospital
+            // If user is general for hospital/UBS (no associatedUnitId)
+            if (!currentUserProfile.associatedUnitId && movementData.unitId) { // And movement IS for a specific unit (not general UBS stock)
                 const unit = allMasterServedUnits.find(u => u.id === movementData.unitId);
-                if (!unit || unit.hospitalId !== currentUserProfile.associatedHospitalId) {
-                     throw new Error("Operador UBS geral não autorizado para esta unidade específica fora do seu hospital.");
+                if (!unit || unit.hospitalId !== currentUserProfile.associatedHospitalId) { // Unit must belong to their hospital
+                     throw new Error("Operador geral não autorizado para consumir de unidade específica fora do seu hospital.");
                 }
             }
-
-
-            if (!unitConfigDocRef) {
+            if (!unitConfigDocRef) { // Should always be true for operators as hospitalId is enforced by UI
                  throw new Error("Local de consumo (unidade ou estoque geral UBS) não especificado ou inválido para operador.");
             }
             if (!unitConfigSnap || !unitConfigSnap.exists()) {
@@ -204,6 +238,7 @@ export async function processMovementRowTransaction(
         }
     }
 
+    // Log the movement
     const itemDetailsForLog = allMasterItems.find(i => i.id === movementData.itemId);
     const hospitalDetailsForLog = movementData.hospitalId ? allMasterHospitals.find(h => h.id === movementData.hospitalId) : null;
     const unitDetailsForLog = movementData.unitId ? allMasterServedUnits.find(u => u.id === movementData.unitId) : null;
@@ -218,11 +253,11 @@ export async function processMovementRowTransaction(
         notes: movementData.notes || notesForLog || null,
         hospitalId: movementData.hospitalId || null,
         hospitalName: hospitalDetailsForLog?.name || hospitalNameForLog || null,
-        unitId: movementData.unitId || null,
-        unitName: unitDetailsForLog?.name || unitNameForLog || (isUbsGeneralStockMovement ? `Estoque Geral (${hospitalDetailsForLog?.name})` : null),
+        unitId: movementData.unitId || null, // Actual unitId if present, or null if general UBS stock or central
+        unitName: unitDetailsForLog?.name || unitNameForLog || (isUbsGeneralStockMovement ? `Estoque Geral (${hospitalDetailsForLog?.name})` : (movementData.type === 'entry' || (!movementData.hospitalId && (movementData.type === 'exit' || movementData.type === 'consumption')) ? 'Armazém Central' : null)),
         patientId: movementData.patientId || null,
         patientName: patientDetailsForLog?.name || null,
-        userId: currentUserProfile.id || "unknown_user_id",
+        userId: currentUserProfile.id || "unknown_user_id", // Ensure UserProfile has an id (Firebase UID)
         userDisplayName: currentUserProfile.name || "Unknown User",
     };
     const stockMovementsCollectionRef = collection(firestore, "stockMovements");
@@ -233,12 +268,14 @@ export async function processMovementRowTransaction(
 const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { items: Item[], servedUnits: ServedUnit[], hospitals: Hospital[], stockConfigs: FirestoreStockConfig[] }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
-  const { currentUserProfile, user: firebaseUser } = useAuth(); // Not using firebaseUser directly here
+  const { currentUserProfile, user: firebaseUser } = useAuth();
+  const router = useRouter(); // Add router for redirection if needed
+
 
   const form = useForm<MovementFormData>({
     resolver: zodResolver(movementSchema),
     defaultValues: {
-      type: 'entry', // Default for this page
+      type: 'entry',
       quantity: 1,
       date: new Date().toISOString().split('T')[0],
       notes: '',
@@ -251,21 +288,41 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
   const movementType = form.watch('type');
   const selectedHospitalIdForm = form.watch('hospitalId');
 
+  // Role-based form setup and restrictions
   useEffect(() => {
-    // This form is only for entry/exit, patientId is not relevant here.
-    // Reset hospital/unit if type is entry
-    if (movementType === 'entry') {
-        form.setValue('hospitalId', undefined, { shouldValidate: false });
-        form.setValue('unitId', undefined, { shouldValidate: false });
-    }
-  }, [movementType, form]);
+    if (!currentUserProfile) return;
 
-   useEffect(() => {
-     // Reset unit if hospital changes
-    if(form.getValues('hospitalId') !== selectedHospitalIdForm && selectedHospitalIdForm !== form.getValues('hospitalId')) {
-        form.setValue('unitId', undefined, { shouldValidate: true }); // Validate as unit might become required
+    if (currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator') {
+      // Non-admin/central_op users should not be on this page for entry/exit.
+      // The page itself should handle redirection or access denial.
+      // This form component assumes it's rendered for an authorized user for entry/exit.
+      return;
     }
-  }, [selectedHospitalIdForm, form]);
+
+    // For admin/central_op, no automatic form changes are needed here based on profile.
+    // They control the type of movement.
+
+  }, [currentUserProfile, form, router, toast]);
+
+
+  // Reset unit if hospital changes or if type becomes 'entry'
+ useEffect(() => {
+    const currentType = form.getValues('type');
+    const currentHospitalId = form.getValues('hospitalId');
+
+    if (currentType === 'entry') {
+        if (form.getValues('hospitalId') || form.getValues('unitId')) {
+            form.setValue('hospitalId', undefined, { shouldValidate: false });
+            form.setValue('unitId', undefined, { shouldValidate: false });
+        }
+    } else if (currentType === 'exit') {
+        // If hospital changes, unitId should be reset
+        // This relies on selectedHospitalIdForm being up-to-date from watch
+        if (selectedHospitalIdForm !== currentHospitalId && form.getValues('unitId')) {
+             form.setValue('unitId', undefined, { shouldValidate: true });
+        }
+    }
+  }, [movementType, selectedHospitalIdForm, form]);
 
 
   const availableUnits = useMemo(() => {
@@ -277,32 +334,36 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
 
 
   const getDisplayStockForItem = (item: Item): number | string => {
-    if (!currentUserProfile) return item.currentQuantityCentral; // Fallback, though profile should exist
+    if (!currentUserProfile) return item.currentQuantityCentral;
 
     const formValues = form.getValues();
     const currentMovementType = formValues.type;
-    const currentHospitalId = formValues.hospitalId;
-    const currentUnitIdValue = formValues.unitId;
+    const currentHospitalId = formValues.hospitalId; // This is the ID from the form
+    const currentUnitIdValue = formValues.unitId;   // This can be actual ID or placeholder
 
-    // For this form (entry/exit by admin/central_op)
-    if (currentMovementType === 'entry' || (!currentHospitalId || currentHospitalId === CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE)) {
-        // If entry, or if exit is direct from central, show central stock
+    // For Entry or Direct Exit/Write-off from Central by Admin/CentralOp
+    if (currentMovementType === 'entry' || (currentMovementType === 'exit' && (!currentHospitalId || currentHospitalId === CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE))) {
         return item.currentQuantityCentral;
     }
 
-    // If exiting TO a specific unit/UBS general stock, we still show Central stock as source
-    // because the transfer reduces central stock. The target stock is not the primary concern for this form's "available" display.
+    // For Exit (Transfer) TO a specific unit/UBS general stock by Admin/CentralOp
+    // We show the Central Warehouse stock as the SOURCE of the transfer.
+    if (currentMovementType === 'exit' && currentHospitalId && currentHospitalId !== CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE) {
+         return item.currentQuantityCentral;
+    }
+    
+    // Fallback or unexpected scenario, show central stock
     return item.currentQuantityCentral;
   };
 
 
   const onSubmit = async (data: MovementFormData) => {
-    if (!currentUserProfile || !firebaseUser) { // firebaseUser needed for UID in transaction
+    if (!currentUserProfile || !firebaseUser) {
         toast({ title: "Erro de Autenticação", description: "Usuário não autenticado.", variant: "destructive" });
         return;
     }
     if (currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator') {
-        toast({ title: "Permissão Negada", description: "Apenas Administradores ou Operadores do Almoxarifado Central podem realizar esta operação.", variant: "destructive" });
+        toast({ title: "Permissão Negada", description: "Apenas Administradores ou Operadores do Almoxarifado Central podem realizar entradas ou saídas.", variant: "destructive" });
         return;
     }
 
@@ -310,24 +371,25 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
 
     let processedData = {...data};
     if (data.hospitalId === CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE) {
-        processedData.hospitalId = undefined; // Process CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE to undefined
+        processedData.hospitalId = undefined;
         processedData.unitId = undefined;
+    } else if (data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER) {
+        processedData.unitId = undefined; // unitId becomes undefined for general UBS stock
     }
 
-    const movementForTransaction: Omit<StockMovement, 'id' | 'itemName' | 'hospitalName' | 'unitName' | 'patientName' | 'userDisplayName' | 'userId' | 'patientId'> & { itemId: string } = {
+    const movementForTransaction: Omit<StockMovement, 'id' | 'itemName' | 'hospitalName' | 'unitName' | 'patientName' | 'patientId' | 'userDisplayName' | 'userId'> & { itemId: string } = {
         itemId: processedData.itemId,
-        type: processedData.type,
+        type: processedData.type, // Will be 'entry' or 'exit'
         quantity: processedData.quantity,
         date: processedData.date,
         notes: processedData.notes,
-        hospitalId: processedData.hospitalId,
-        unitId: processedData.unitId,
+        hospitalId: processedData.hospitalId, // undefined for entry or direct central exit
+        unitId: processedData.unitId,         // undefined for entry, direct central exit, or general UBS stock exit
     };
 
 
     try {
-      // Dummy patients array for processMovementRowTransaction as it's not used for entry/exit
-      const dummyPatients: Patient[] = [];
+      const dummyPatients: Patient[] = []; // Patients not relevant for entry/exit
       await runTransaction(firestore, (transaction) =>
         processMovementRowTransaction(
             transaction,
@@ -342,16 +404,17 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
 
       if (processedData.type === 'exit') {
           const hospitalDesc = processedData.hospitalId ? hospitals.find(h => h.id === processedData.hospitalId) : null;
-          const unitDesc = processedData.unitId ? servedUnits.find(u => u.id === processedData.unitId) : null;
+          const unitDesc = processedData.unitId ? servedUnits.find(u => u.id === processedData.unitId) : null; // unitId is actual ID here if specific unit
           const hospitalForMovement = processedData.hospitalId ? hospitals.find(h => h.id === processedData.hospitalId) : null;
-          const isUbsGeneralStockMovementForDesc = processedData.hospitalId && !processedData.unitId && (hospitalForMovement?.name.toLowerCase().includes('ubs') || false);
+          // isUbsGeneralStockMovementForDesc needs to check if original form unitId was placeholder or if processedData.unitId is now undefined AND hospital is UBS
+          const isUbsGeneralStockExit = processedData.hospitalId && !processedData.unitId && (hospitalForMovement?.name.toLowerCase().includes('ubs') || false);
 
 
-          if (unitDesc && hospitalDesc) {
+          if (unitDesc && hospitalDesc) { // Exit to specific unit
               description += ` para ${unitDesc.name} (${hospitalDesc.name}).`;
-          } else if (hospitalDesc && isUbsGeneralStockMovementForDesc) {
+          } else if (hospitalDesc && isUbsGeneralStockExit) { // Exit to general UBS stock
               description += ` para Estoque Geral (${hospitalDesc.name}).`;
-          } else if (!processedData.hospitalId) { // Implies CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE was chosen
+          } else if (!processedData.hospitalId) { // Direct write-off from Central
               description += ` (Baixa direta do Armazém Central).`;
           }
       }
@@ -383,12 +446,15 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
     }
   };
 
+
   if (!currentUserProfile) {
     return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-8 w-8" /> <p className="ml-2">Carregando perfil...</p></div>;
   }
 
-  // This page is now only for admin and central_operator
+  // This page is ONLY for admin and central_operator
   if (currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator') {
+    // Redirection or access denied message should be handled by the main page component.
+    // This form component should ideally not be rendered at all if the user is not authorized.
     return (
         <Card className="max-w-2xl mx-auto shadow-lg">
             <CardHeader>
@@ -396,10 +462,12 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
             </CardHeader>
             <CardContent>
                 <p>Esta funcionalidade é restrita a Administradores e Operadores do Almoxarifado Central.</p>
+                 <Button onClick={() => router.push('/')} className="mt-4">Voltar ao Painel</Button>
             </CardContent>
         </Card>
     );
   }
+
 
   return (
       <Card className="max-w-2xl mx-auto shadow-lg">
@@ -466,10 +534,10 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
                     name="hospitalId"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Hospital de Destino (para Transferência)</FormLabel>
+                        <FormLabel>Hospital de Destino (para Transferência/Baixa)</FormLabel>
                         <Select
                             onValueChange={field.onChange}
-                            value={field.value ?? CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE}
+                            value={field.value ?? CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE} // Default to direct exit if nothing selected
                         >
                           <FormControl><SelectTrigger><SelectValue placeholder="Selecione um hospital ou baixa direta" /></SelectTrigger></FormControl>
                           <SelectContent>
@@ -478,7 +546,7 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
                           </SelectContent>
                         </Select>
                          <FormDescription>
-                            Selecione o hospital para transferir ou "Nenhum" para baixa direta.
+                            Selecione o hospital para transferir ou "Nenhum" para baixa direta do estoque central.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -494,25 +562,28 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
                           <FormLabel>Unidade Servida de Destino</FormLabel>
                           <Select
                             onValueChange={field.onChange}
-                            value={field.value ?? undefined}
-                            disabled={!selectedHospitalIdForm || availableUnits.length === 0 && !hospitals.find(h=>h.id === selectedHospitalIdForm)?.name.toLowerCase().includes('ubs')}
+                            value={field.value ?? undefined} // Use undefined for placeholder if nothing selected initially
+                            disabled={!selectedHospitalIdForm || (availableUnits.length === 0 && !hospitals.find(h=>h.id === selectedHospitalIdForm)?.name.toLowerCase().includes('ubs'))}
                           >
                             <FormControl><SelectTrigger>
                                 <SelectValue placeholder={
-                                    availableUnits.length > 0 || hospitals.find(h=>h.id === selectedHospitalIdForm)?.name.toLowerCase().includes('ubs')
+                                    !selectedHospitalIdForm || selectedHospitalIdForm === CENTRAL_WAREHOUSE_DIRECT_EXIT_VALUE
+                                    ? "Selecione um hospital primeiro"
+                                    : availableUnits.length > 0 || hospitals.find(h=>h.id === selectedHospitalIdForm)?.name.toLowerCase().includes('ubs')
                                     ? "Selecione unidade ou Estoque Geral UBS"
-                                    : "Nenhuma unidade/Estoque Geral p/ este hospital"
+                                    : "Nenhuma unidade configurada para este hospital"
                                 } />
                             </SelectTrigger></FormControl>
                             <SelectContent>
+                              {/* Option for General UBS Stock if the selected hospital is a UBS */}
                               {hospitals.find(h=>h.id === selectedHospitalIdForm)?.name.toLowerCase().includes('ubs') &&
-                                <SelectItem value={""} >Estoque Geral da UBS</SelectItem>
+                                <SelectItem value={GENERAL_STOCK_UNIT_ID_PLACEHOLDER} >Estoque Geral da UBS</SelectItem>
                               }
                               {availableUnits.map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>)}
                             </SelectContent>
                           </Select>
                            <FormDescription>
-                                Unidade para a qual o item está sendo transferido. Se for uma UBS, pode ser "Estoque Geral da UBS".
+                                Unidade para a qual o item está sendo transferido. Se for uma UBS, pode ser "Estoque Geral da UBS". Obrigatório se hospital não for baixa direta.
                            </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -569,7 +640,7 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
 };
 
 
-const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingDataFromParent }: { items: Item[], servedUnits: ServedUnit[], hospitals: Hospital[], isLoadingDataFromParent: boolean }) => {
+const BatchImportMovementsForm = ({ items, servedUnits, hospitals, stockConfigs, isLoadingDataFromParent }: { items: Item[], servedUnits: ServedUnit[], hospitals: Hospital[], stockConfigs: FirestoreStockConfig[], isLoadingDataFromParent: boolean }) => {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const { toast } = useToast();
@@ -596,12 +667,11 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
 
   const handleDownloadTemplate = () => {
     const BOM = "\uFEFF";
-    const csvHeader = "Código do Item,Tipo,Quantidade,Data,Nome do Hospital Destino,Nome da Unidade Destino,Observações\n"; // Sem Paciente
-    const csvExampleRow1 = "ITEM001,entrada,100,2024-01-15,,,,\n";
-    const csvExampleRow2 = "ITEM002,saida,10,2024-01-16,Hospital Central,UTI Geral,Transferência urgente\n";
-    const csvExampleRow3 = "ITEM001,saida,5,2024-01-18,,,Baixa por ajuste de inventário\n";
-    const csvExampleRow4 = "ITEM004,saida,20,2024-01-19,UBS Vila Sol,,Transferência para estoque geral da UBS\n";
-
+    const csvHeader = "Código do Item,Tipo,Quantidade,Data,Nome do Hospital Destino,Nome da Unidade Destino,Observações\n";
+    const csvExampleRow1 = "ITEM001,entrada,100,2024-01-15,,,,\n"; // Entrada
+    const csvExampleRow2 = "ITEM002,saida,10,2024-01-16,Hospital Central,UTI Geral,Transferência urgente\n"; // Saída para unidade
+    const csvExampleRow3 = "ITEM001,saida,5,2024-01-18,,,Baixa por ajuste de inventário\n"; // Saída como baixa direta
+    const csvExampleRow4 = "ITEM004,saida,20,2024-01-19,UBS Vila Sol,,Transferência para estoque geral da UBS\n"; // Saída para Estoque Geral UBS
 
     const csvContent = BOM + csvHeader + csvExampleRow1 + csvExampleRow2 + csvExampleRow3 + csvExampleRow4;
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -675,14 +745,14 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
           let successfulImports = 0;
           const importErrors: string[] = [];
 
-          const BATCH_SIZE_DOCS = 150;
+          const BATCH_SIZE_DOCS = 150; // Firestore transaction limit is around 500 writes. Each movement is 1 item update + 1 log write + potentially 1 stockConfig write.
           for (let i = 0; i < rows.length; i += BATCH_SIZE_DOCS) {
             const batchRows = rows.slice(i, i + BATCH_SIZE_DOCS);
 
             for (let j = 0; j < batchRows.length; j++) {
                 const row = batchRows[j];
-                const originalRowIndex = i + j + 2;
-                let itemCodeForRow = row["Código do Item"]?.trim() || "N/A";
+                const originalRowIndex = i + j + 2; // CSV row number (1-based for header, then data)
+                let itemCodeForRow = row["Código do Item"]?.trim() || "N/A"; // For error logging
 
                 try {
                     let typeStrRaw = row["Tipo"];
@@ -693,32 +763,33 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
 
                     const quantityStr = row["Quantidade"]?.trim();
                     const dateStr = row["Data"]?.trim();
-                    const hospitalNameCsv = row["Nome do Hospital Destino"]?.trim(); // Nome da coluna ajustado
-                    const unitNameCsv = row["Nome da Unidade Destino"]?.trim();   // Nome da coluna ajustado
+                    const hospitalNameCsv = row["Nome do Hospital Destino"]?.trim();
+                    const unitNameCsv = row["Nome da Unidade Destino"]?.trim();
                     const notesCsv = row["Observações"]?.trim();
 
+                    // Basic Validations
                     if (!itemCodeForRow || itemCodeForRow === "N/A" || !typeStr || !quantityStr || !dateStr) {
                         importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Código do Item, Tipo, Quantidade e Data são obrigatórios.`);
                         continue;
                     }
-                    const isValidType = typeStr === 'entrada' || typeStr === 'saida'; // Apenas entrada ou saida
+                    const isValidType = typeStr === 'entrada' || typeStr === 'saida';
                     if (!isValidType) {
                         importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Tipo inválido ('${row["Tipo"]}'). Use 'entrada' ou 'saida'.`);
                         continue;
                     }
                     const quantity = parseInt(quantityStr, 10);
                     if (isNaN(quantity) || quantity <= 0) {
-                        importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Quantidade inválida ('${quantityStr}').`);
+                        importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Quantidade inválida ('${quantityStr}'). Deve ser um número positivo.`);
                         continue;
                     }
                     const dateRegex = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/;
                     if (!dateRegex.test(dateStr)) {
-                        importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Data inválida ('${dateStr}'). Use AAAA-MM-DD.`);
+                        importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Data inválida ('${dateStr}'). Use o formato AAAA-MM-DD.`);
                         continue;
                     }
-                     const parsedDate = new Date(dateStr + "T00:00:00Z"); // Assegurar que é tratado como UTC para evitar problemas de fuso
+                    const parsedDate = new Date(dateStr + "T00:00:00Z"); // Treat as UTC to avoid timezone issues converting to ISO string
                     if (isNaN(parsedDate.getTime())) {
-                         importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Data inválida ('${dateStr}') após parsing.`);
+                         importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Data inválida ('${dateStr}') após parsing interno.`);
                          continue;
                     }
                     const formattedDate = parsedDate.toISOString().split('T')[0];
@@ -726,7 +797,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
 
                     const item = items.find(it => it.code === itemCodeForRow);
                     if (!item) {
-                        importErrors.push(`Linha ${originalRowIndex}: Item com código '${itemCodeForRow}' não encontrado.`);
+                        importErrors.push(`Linha ${originalRowIndex}: Item com código '${itemCodeForRow}' não encontrado no sistema.`);
                         continue;
                     }
 
@@ -734,40 +805,37 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
                     let unitId: string | undefined = undefined;
 
                     if (typeStr === 'saida') {
-                        if (hospitalNameCsv) {
+                        if (hospitalNameCsv) { // Saída para um hospital/UBS
                             const hospital = hospitals.find(h => h.name.toLowerCase() === hospitalNameCsv.toLowerCase());
                             if (!hospital) {
-                                importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Hospital '${hospitalNameCsv}' não encontrado.`);
+                                importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Hospital de destino '${hospitalNameCsv}' não encontrado.`);
                                 continue;
                             }
                             hospitalId = hospital.id;
-                            if (unitNameCsv) {
+                            if (unitNameCsv) { // Saída para uma unidade específica dentro do hospital
                                 const unit = servedUnits.find(u => u.name.toLowerCase() === unitNameCsv.toLowerCase() && u.hospitalId === hospitalId);
                                 if (!unit) {
-                                    importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Unidade '${unitNameCsv}' não encontrada ou não pertence ao hospital '${hospitalNameCsv}'.`);
+                                    importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Unidade de destino '${unitNameCsv}' não encontrada ou não pertence ao hospital '${hospitalNameCsv}'.`);
                                     continue;
                                 }
                                 unitId = unit.id;
-                            } else {
-                                 // Se hospitalNameCsv está presente mas unitNameCsv não,
-                                 // pode ser uma transferência para o estoque geral de uma UBS.
-                                 // A lógica em processMovementRowTransaction tratará unitId como undefined para este caso.
-                                 const hospitalIsUbs = hospital?.name.toLowerCase().includes('ubs');
-                                 if (!hospitalIsUbs && typeStr === 'saida') { // Saída para hospital não-UBS requer unidade
-                                     importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Saída para Hospital ('${hospitalNameCsv}') que não é UBS requer uma unidade específica.`);
-                                     continue;
-                                 }
+                            } else { // Sem unidade específica, pode ser para o estoque geral de uma UBS
+                                const hospitalIsUbs = hospital?.name.toLowerCase().includes('ubs');
+                                if (!hospitalIsUbs) { // Se não for UBS, e não tiver unidade, é um erro de dados (a menos que seja uma baixa direta, que não teria hospitalNameCsv)
+                                    importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): Saída para Hospital ('${hospitalNameCsv}') que não é UBS requer uma unidade de destino específica.`);
+                                    continue;
+                                }
+                                // Para UBS sem unitNameCsv, unitId fica undefined (general stock)
                             }
-                        } // Se hospitalNameCsv não estiver presente para 'saida', é uma baixa direta do central.
+                        } // Se typeStr === 'saida' e hospitalNameCsv for vazio, é uma baixa direta do armazém central
                     }
 
                     const movementDataForTx: Omit<StockMovement, 'id' | 'itemName' | 'hospitalName' | 'unitName' | 'patientName' | 'patientId' | 'userDisplayName' | 'userId'> & { itemId: string } = {
                         itemId: item.id, type: typeStr as 'entry' | 'exit', quantity, date: formattedDate,
                         hospitalId, unitId, notes: notesCsv
                     };
-
-                    // Dummy patients array for processMovementRowTransaction as it's not used for entry/exit
-                    const dummyPatients: Patient[] = [];
+                    
+                    const dummyPatients: Patient[] = []; // Patients not relevant for entry/exit
                     await runTransaction(firestore, (transaction) =>
                         processMovementRowTransaction(
                             transaction,
@@ -780,7 +848,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
                     successfulImports++;
 
                 } catch (rowError: any) {
-                    importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): ${rowError.message}`);
+                    importErrors.push(`Linha ${originalRowIndex} (${itemCodeForRow}): ${rowError.message || 'Erro desconhecido na linha.'}`);
                 }
             }
           }
@@ -797,7 +865,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
             toast({ title: "Importação Concluída", description: `${successfulImports} de ${rows.length} movimentaçõe(s) processada(s) com sucesso.`, variant: "default", duration: 10000 });
           }
           if (successfulImports === 0 && importErrors.length === 0 && rows.length > 0) {
-            toast({ title: "Nenhuma Movimentação Válida", description: "Nenhuma movimentação válida encontrada.", variant: "default" });
+            toast({ title: "Nenhuma Movimentação Válida", description: "Nenhuma movimentação válida encontrada na planilha após validação.", variant: "default" });
           }
 
           setIsProcessing(false);
@@ -811,16 +879,17 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
         }
       });
     };
-    reader.readAsText(file, 'UTF-8');
+    reader.readAsText(file, 'UTF-8'); // Specify UTF-8 encoding
   };
 
 
   return (
     <Card className="shadow-lg">
       <CardHeader>
-        <CardTitle className="font-headline">Importar Entradas/Saídas em Lote</CardTitle>
+        <CardTitle className="font-headline">Importar Entradas/Saídas (Alm. Central) em Lote</CardTitle>
         <CardDescription>
-          Faça o upload de um arquivo .csv. A primeira linha deve ser o cabeçalho. Apenas Admin/Op.Central.
+          Faça o upload de um arquivo .csv com as movimentações. A primeira linha deve ser o cabeçalho.
+          Apenas Administradores e Operadores do Almoxarifado Central podem usar esta funcionalidade.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -828,22 +897,22 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
             <Download className="h-4 w-4" />
             <AlertTitle>Formato da Planilha de Entradas/Saídas</AlertTitle>
             <AlertDescription>
-              <p className="mb-2">Colunas (nesta ordem):</p>
+              <p className="mb-2">Sua planilha CSV deve ter as seguintes colunas, nesta ordem:</p>
               <ul className="list-disc list-inside text-sm space-y-1">
                 <li><code>Código do Item</code> (Texto, Obrigatório)</li>
                 <li><code>Tipo</code> (Texto, Obrigatório - 'entrada' ou 'saida')</li>
                 <li><code>Quantidade</code> (Número, Obrigatório - Positivo)</li>
                 <li><code>Data</code> (Data AAAA-MM-DD, Obrigatório)</li>
-                <li><code>Nome do Hospital Destino</code> (Texto, Opcional - para 'saida')</li>
-                <li><code>Nome da Unidade Destino</code> (Texto, Opcional - para 'saida' para unidade específica)</li>
+                <li><code>Nome do Hospital Destino</code> (Texto, Opcional - para 'saida' para hospital/UBS)</li>
+                <li><code>Nome da Unidade Destino</code> (Texto, Opcional - para 'saida' para unidade específica dentro do hospital)</li>
                 <li><code>Observações</code> (Texto, Opcional)</li>
               </ul>
               <p className="mt-3 text-xs text-muted-foreground">
-                <strong>Notas:</strong><br/>
-                - Para <strong>entrada</strong>: Deixe Hospital e Unidade em branco.<br/>
-                - Para <strong>saida (baixa direta do Armazém Central)</strong>: Deixe Hospital e Unidade em branco.<br/>
-                - Para <strong>saida (transferência para unidade específica)</strong>: Preencha Hospital e Unidade. <br/>
-                - Para <strong>saida (transferência para estoque geral de UBS)</strong>: Preencha Hospital (nome da UBS), deixe Unidade em branco.
+                <strong>Notas Importantes:</strong><br/>
+                - Para <strong>entrada</strong>: Deixe "Nome do Hospital Destino" e "Nome da Unidade Destino" em branco.<br/>
+                - Para <strong>saida (baixa direta do Armazém Central)</strong>: Deixe "Nome do Hospital Destino" e "Nome da Unidade Destino" em branco.<br/>
+                - Para <strong>saida (transferência para unidade específica)</strong>: Preencha "Nome do Hospital Destino" e "Nome da Unidade Destino". <br/>
+                - Para <strong>saida (transferência para estoque geral de uma UBS)</strong>: Preencha "Nome do Hospital Destino" (com o nome da UBS) e deixe "Nome da Unidade Destino" em branco.
               </p>
               <Button variant="outline" size="sm" onClick={handleDownloadTemplate} className="mt-4">
                 <Download className="mr-2 h-4 w-4" /> Baixar Planilha Modelo (.csv)
@@ -852,7 +921,7 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
           </Alert>
 
         <div className="grid w-full max-w-md items-center gap-2">
-          <Label htmlFor="batch-movements-file-input">Arquivo CSV</Label>
+          <Label htmlFor="batch-movements-file-input">Arquivo CSV (codificação UTF-8)</Label>
           <Input
             id="batch-movements-file-input"
             type="file"
@@ -868,11 +937,11 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, isLoadingData
         <Button onClick={handleSubmit} disabled={!file || isProcessing || isLoadingDataFromParent || (currentUserProfile?.role !== 'admin' && currentUserProfile?.role !== 'central_operator')}>
           {isLoadingDataFromParent ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Carregando dados...
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Carregando dados de referência...
             </>
           ) : isProcessing ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processando...
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processando planilha...
             </>
           ) : (
             <>
@@ -890,8 +959,7 @@ export default function StockMovementsPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
-  // Patients state not needed here as this page is for entry/exit, not consumption directly
-  const [stockConfigs, setStockConfigs] = useState<FirestoreStockConfig[]>([]);
+  const [stockConfigs, setStockConfigs] = useState<FirestoreStockConfig[]>([]); // Adicionado
   const { toast } = useToast();
   const [isLoadingData, setIsLoadingData] = useState(true);
   const { currentUserProfile } = useAuth();
@@ -901,53 +969,41 @@ export default function StockMovementsPage() {
   useEffect(() => {
     setIsLoadingData(true);
     const listeners = [
-      { coll: "items", setter: setItems, msg: "Itens" },
-      { coll: "hospitals", setter: setHospitals, msg: "Hospitais" },
-      { coll: "servedUnits", setter: setServedUnits, msg: "Unidades Servidas" },
-      { coll: "stockConfigs", setter: setStockConfigs, msg: "Configurações de Estoque" },
+      { coll: "items", setter: setItems, msg: "Itens", orderByField: "name" },
+      { coll: "hospitals", setter: setHospitals, msg: "Hospitais", orderByField: "name" },
+      { coll: "servedUnits", setter: setServedUnits, msg: "Unidades Servidas", orderByField: "name" },
+      { coll: "stockConfigs", setter: setStockConfigs, msg: "Configurações de Estoque", queryDirect: query(collection(firestore, "stockConfigs")) }, // Query direta para stockConfigs
     ];
 
     let loadedCount = 0;
     const unsubscribers: (()=>void)[] = [];
 
     listeners.forEach(config => {
-      const q = query(collection(firestore, config.coll), orderBy("name", "asc"));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
+      const queryToRun = config.queryDirect ? config.queryDirect : query(collection(firestore, config.coll), orderBy(config.orderByField!, "asc"));
+      const unsubscribe = onSnapshot(queryToRun, (snapshot) => {
         config.setter(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
-        loadedCount++;
-        if (loadedCount === listeners.length) setIsLoadingData(false);
-      }, (error) => {
-        console.error(`Erro ao buscar ${config.msg}: `, error);
-        toast({ title: `Erro ao Carregar ${config.msg}`, variant: "destructive" });
-        loadedCount++;
-        if (loadedCount === listeners.length) setIsLoadingData(false);
-      });
-      unsubscribers.push(unsubscribe);
-    });
-
-    // Ajuste para stockConfigs que não tem campo 'name' para orderBy padrão
-    const stockConfigsQuery = query(collection(firestore, "stockConfigs"));
-    const unsubscribeStockConfigs = onSnapshot(stockConfigsQuery, (snapshot) => {
-        setStockConfigs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig)));
-        const stockConfigsListener = listeners.find(l => l.coll === "stockConfigs");
-        if (stockConfigsListener && !stockConfigsListener.msg.startsWith("Loaded_")) { // Evitar contagem dupla
+        
+        // Evitar contagem dupla se já marcado
+        const listenerConfig = listeners.find(l => l.coll === config.coll);
+        if (listenerConfig && !listenerConfig.msg.startsWith("Loaded_")) {
             loadedCount++;
-            stockConfigsListener.msg = "Loaded_" + stockConfigsListener.msg; // Marcar como carregado
+            listenerConfig.msg = "Loaded_" + listenerConfig.msg; 
         }
         if (loadedCount >= listeners.length) setIsLoadingData(false);
 
-    }, (error) => {
-         console.error(`Erro ao buscar Configurações de Estoque: `, error);
-         toast({ title: `Erro ao Carregar Configurações de Estoque`, variant: "destructive" });
-         const stockConfigsListener = listeners.find(l => l.coll === "stockConfigs");
-         if (stockConfigsListener && !stockConfigsListener.msg.startsWith("Loaded_")) {
+      }, (error) => {
+        console.error(`Erro ao buscar ${config.msg.replace("Loaded_","")}: `, error);
+        toast({ title: `Erro ao Carregar ${config.msg.replace("Loaded_","")}`, variant: "destructive" });
+        
+        const listenerConfig = listeners.find(l => l.coll === config.coll);
+        if (listenerConfig && !listenerConfig.msg.startsWith("Loaded_")) {
             loadedCount++;
-            stockConfigsListener.msg = "Loaded_" + stockConfigsListener.msg;
-         }
-         if (loadedCount >= listeners.length) setIsLoadingData(false);
+            listenerConfig.msg = "Loaded_" + listenerConfig.msg;
+        }
+        if (loadedCount >= listeners.length) setIsLoadingData(false);
+      });
+      unsubscribers.push(unsubscribe);
     });
-    unsubscribers.push(unsubscribeStockConfigs);
-
 
     return () => unsubscribers.forEach(unsub => unsub());
   }, [toast]);
@@ -1010,6 +1066,7 @@ export default function StockMovementsPage() {
                 items={items}
                 servedUnits={servedUnits}
                 hospitals={hospitals}
+                stockConfigs={stockConfigs}
                 isLoadingDataFromParent={isLoadingData}
             />
           ) : (
