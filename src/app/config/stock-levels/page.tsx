@@ -7,16 +7,18 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Settings2, Save, AlertCircle, Loader2 } from 'lucide-react';
+import { Settings2, Save, AlertCircle, Loader2, ShieldAlert } from 'lucide-react';
 import type { StockItemConfig as GlobalStockItemConfig, Item, ServedUnit, Hospital, UserProfile } from '@/types';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, writeBatch } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, writeBatch, getDocs } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext';
+import { Alert } from '@/components/ui/alert';
+
 
 interface FirestoreStockConfig {
-  id?: string; // ID do documento do Firestore (itemId_unitId ou itemId_central ou itemId_hospitalId_UBSGENERAL)
+  id?: string; 
   itemId: string;
   unitId?: string;
   hospitalId?: string;
@@ -43,6 +45,7 @@ export default function StockLevelsConfigPage() {
   const { toast } = useToast();
 
   const userCanSeeAll = currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator';
+  const canEditConfigs = currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator';
 
   useEffect(() => {
     if (!currentUserProfile) return;
@@ -65,7 +68,6 @@ export default function StockLevelsConfigPage() {
     unsubscribers.push(onSnapshot(hospitalsQuery, snapshot => {
         const hospitalsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital));
         setAllHospitals(hospitalsData);
-        // Se o usuário não for admin/central, pré-selecionar e travar o filtro do hospital
         if (!userCanSeeAll && currentUserProfile?.associatedHospitalId) {
           setHospitalFilter(currentUserProfile.associatedHospitalId);
         }
@@ -76,7 +78,6 @@ export default function StockLevelsConfigPage() {
         setDbStockConfigs(snapshot.docs.map(docData => ({ id: docData.id, ...docData.data() } as FirestoreStockConfig & {id: string})));
     }));
 
-    // Check if all initial data might be loaded
     Promise.all([
         getDocs(itemsQuery), getDocs(unitsQuery), getDocs(hospitalsQuery), getDocs(stockConfigsQuery)
     ]).catch(error => {
@@ -96,7 +97,6 @@ export default function StockLevelsConfigPage() {
 
   useEffect(() => {
     if (!currentUserProfile || firestoreItems.length === 0 && allServedUnits.length === 0 && allHospitals.length === 0 && dbStockConfigs.length === 0) {
-      // Ainda esperando dados ou não há dados. Se não estiver carregando e não há itens, pode sair.
       if (!isLoading && firestoreItems.length === 0) {
         setIsLoading(false);
         setStockConfigsForDisplay([]);
@@ -104,16 +104,14 @@ export default function StockLevelsConfigPage() {
       return;
     }
     
-    // Só executa se todos os dados base estiverem disponíveis e o perfil do usuário carregado.
     if (firestoreItems.length >= 0 && allServedUnits.length >= 0 && allHospitals.length >= 0 && dbStockConfigs.length >=0) {
         setIsLoading(true); 
         let combinedConfigs: DisplayStockConfig[] = [];
 
         firestoreItems.forEach(item => {
-            // Armazém Central
             const centralDbConfigId = `${item.id}_central`;
             const centralDbConfig = dbStockConfigs.find(c => c.id === centralDbConfigId);
-            if (userCanSeeAll || currentUserProfile?.role === 'central_operator') { // Central operator can see central warehouse
+            if (userCanSeeAll || currentUserProfile?.role === 'central_operator') { 
                 combinedConfigs.push({
                     id: centralDbConfigId, 
                     itemId: item.id,
@@ -125,15 +123,12 @@ export default function StockLevelsConfigPage() {
             }
 
             allServedUnits.forEach(unit => {
-                 // Se o usuário não for admin/central, só mostrar unidades do seu hospital
                 if (!userCanSeeAll && unit.hospitalId !== currentUserProfile?.associatedHospitalId) {
                     return;
                 }
-                 // Se o usuário for hospital_operator com associatedUnitId, só mostrar sua unidade
                 if (currentUserProfile?.role === 'hospital_operator' && currentUserProfile.associatedUnitId && unit.id !== currentUserProfile.associatedUnitId) {
                     return;
                 }
-
 
                 const unitDbConfigId = `${item.id}_${unit.id}`;
                 const unitDbConfig = dbStockConfigs.find(c => c.id === unitDbConfigId);
@@ -161,6 +156,7 @@ export default function StockLevelsConfigPage() {
 
 
   const handleInputChange = (configId: string, field: keyof DisplayStockConfig, value: string) => {
+    if (!canEditConfigs) return;
     setStockConfigsForDisplay(prevConfigs =>
       prevConfigs.map(config =>
         config.id === configId ? { ...config, [field]: Number(value) < 0 ? 0 : Number(value) } : config
@@ -169,6 +165,14 @@ export default function StockLevelsConfigPage() {
   };
 
   const handleSaveAll = async () => {
+    if (!canEditConfigs) {
+      toast({
+        title: "Permissão Negada",
+        description: "Você não tem permissão para salvar estas configurações.",
+        variant: "destructive",
+      });
+      return;
+    }
     setIsLoading(true);
     const batch = writeBatch(firestore);
 
@@ -209,18 +213,14 @@ export default function StockLevelsConfigPage() {
 
   const filteredConfigs = stockConfigsForDisplay.filter(config => {
     if (!userCanSeeAll && currentUserProfile?.associatedHospitalId) {
-      // Se for operador, o hospitalFilter já está travado para o seu hospital.
-      // Se ele tiver um associatedUnitId, ele só vê essa unidade.
-      // Se não tiver associatedUnitId (ex: Op. de UBS geral), ele vê todas as unidades do seu hospital.
       if (currentUserProfile.associatedUnitId) {
           return config.unitId === currentUserProfile.associatedUnitId;
       }
-      return config.hospitalId === currentUserProfile.associatedHospitalId || !config.hospitalId; // !config.hospitalId é para o armazém central (se visível)
+      return config.hospitalId === currentUserProfile.associatedHospitalId || !config.hospitalId; 
     }
 
-    // Lógica de filtro para admin/central_operator
     if (hospitalFilter === 'all') return true;
-    if (hospitalFilter === 'central' && !config.unitId) return true; // Armazém Central
+    if (hospitalFilter === 'central' && !config.unitId && config.unitName === 'Armazém Central') return true;
     return config.hospitalId === hospitalFilter;
   });
 
@@ -231,10 +231,12 @@ export default function StockLevelsConfigPage() {
         description="Configure os níveis estratégicos e mínimos para itens no armazém central e unidades servidas por hospital."
         icon={Settings2}
         actions={
-          <Button onClick={handleSaveAll} disabled={isLoading}>
-            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-             Salvar Todas as Alterações
-          </Button>
+          canEditConfigs && (
+            <Button onClick={handleSaveAll} disabled={isLoading}>
+              {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              Salvar Todas as Alterações
+            </Button>
+          )
         }
       />
       <Card className="shadow-lg">
@@ -244,6 +246,16 @@ export default function StockLevelsConfigPage() {
             Defina os níveis de estoque desejados. Alertas serão acionados se o estoque atual cair abaixo desses níveis.
             Quantidade mínima é o menor nível absoluto antes de um alerta crítico.
           </CardDescription>
+          {!canEditConfigs && (
+            <Alert variant="default" className="mt-4 bg-blue-50 border-blue-200">
+                <ShieldAlert className="h-5 w-5 text-blue-600" />
+                <CardTitle className="text-blue-700">Modo Somente Leitura</CardTitle>
+                <CardDescription className="text-blue-600">
+                Você pode visualizar as configurações de estoque para seu hospital/unidade.
+                Apenas Administradores ou Operadores do Almoxarifado Central podem modificar estas configurações.
+                </CardDescription>
+            </Alert>
+          )}
           <div className="mt-4">
             <Select 
               value={hospitalFilter} 
@@ -295,6 +307,7 @@ export default function StockLevelsConfigPage() {
                             onChange={(e) => handleInputChange(config.id, 'minQuantity', e.target.value)}
                             className="w-24 text-right ml-auto"
                             min="0"
+                            disabled={!canEditConfigs}
                           />
                         </TableCell>
                         <TableCell className="text-right">
@@ -304,6 +317,7 @@ export default function StockLevelsConfigPage() {
                             onChange={(e) => handleInputChange(config.id, 'strategicStockLevel', e.target.value)}
                             className="w-24 text-right ml-auto"
                             min="0"
+                            disabled={!canEditConfigs}
                           />
                         </TableCell>
                       </TableRow>
@@ -337,6 +351,4 @@ export default function StockLevelsConfigPage() {
     </div>
   );
 }
-    
-
     

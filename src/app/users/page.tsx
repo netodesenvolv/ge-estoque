@@ -10,14 +10,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Users as UsersIcon, PlusCircle, Edit3, Trash2, Search, Loader2, ShieldAlert } from 'lucide-react';
-import type { User } from '@/types'; // User type now includes more details
+import type { User } from '@/types'; 
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
 import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 import type { FirestoreError } from 'firebase/firestore';
-import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
+import { useAuth } from '@/contexts/AuthContext'; 
 
 export default function UsersPage() {
   const [userProfiles, setUserProfiles] = useState<User[]>([]);
@@ -26,9 +26,25 @@ export default function UsersPage() {
   const [permissionDeniedError, setPermissionDeniedError] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
-  const { currentUserProfile } = useAuth(); // Get current user's profile
+  const { currentUserProfile } = useAuth(); 
 
   useEffect(() => {
+    if (!currentUserProfile) {
+      setIsLoading(false);
+      return; 
+    }
+
+    if (currentUserProfile.role !== 'admin') {
+      setIsLoading(false);
+      setPermissionDeniedError(true); // Explicitly set permission denied for non-admins
+      toast({
+        title: "Acesso Restrito",
+        description: "A visualização da lista de usuários é permitida apenas para administradores.",
+        variant: "default", 
+      });
+      return;
+    }
+
     setIsLoading(true);
     setPermissionDeniedError(false); 
     const usersCollectionRef = collection(firestore, "user_profiles");
@@ -36,9 +52,9 @@ export default function UsersPage() {
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const profilesData = querySnapshot.docs.map(docSnap => ({
-        id: docSnap.id, // This is the Firebase Auth UID
+        id: docSnap.id, 
         ...docSnap.data(),
-      } as User)); // Cast to User type
+      } as User)); 
       setUserProfiles(profilesData);
       setIsLoading(false);
     }, (error: FirestoreError) => {
@@ -55,7 +71,7 @@ export default function UsersPage() {
     });
 
     return () => unsubscribe();
-  }, [toast]);
+  }, [toast, currentUserProfile]);
 
   const filteredUsers = userProfiles.filter(user =>
     user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -73,8 +89,6 @@ export default function UsersPage() {
       toast({ title: "Permissão Negada", description: "Apenas administradores podem excluir usuários.", variant: "destructive" });
       return;
     }
-    // Note: Deleting from Firestore 'user_profiles' does NOT delete the Firebase Auth user.
-    // True user deletion requires Firebase Admin SDK on a backend.
     const userProfileDocRef = doc(firestore, "user_profiles", userId);
     try {
       await deleteDoc(userProfileDocRef);
@@ -139,6 +153,7 @@ export default function UsersPage() {
               className="pl-10 w-full md:w-1/2"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              disabled={permissionDeniedError || isLoading} // Disable search if permission denied or loading
             />
           </div>
         </CardHeader>
@@ -153,37 +168,11 @@ export default function UsersPage() {
               <ShieldAlert className="h-12 w-12 text-destructive mb-3" />
               <h3 className="text-lg font-semibold text-destructive">Acesso Negado à Lista de Usuários</h3>
               <p className="text-muted-foreground mt-1">
-                Você não tem permissão para visualizar esta lista.
+                Apenas administradores podem visualizar esta lista.
               </p>
               <p className="text-sm text-muted-foreground mt-2">
-                <strong>Causa provável:</strong> Suas Regras de Segurança do Firestore não permitem que o usuário atual leia a coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>.
-                 Verifique suas regras no Console do Firebase.
-              </p>
-               <p className="text-xs text-muted-foreground mt-3">
-                Exemplo de regra para permitir que administradores leiam todos os perfis (requer que o perfil do admin tenha <code className="bg-muted px-1 py-0.5 rounded text-xs">role: 'admin'</code> no documento <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles/&#123;UID_DO_ADMIN&#125;</code>):
-              </p>
-              <pre className="mt-1 p-2 bg-gray-100 dark:bg-gray-800 rounded text-xs text-left overflow-x-auto w-full max-w-2xl">
-                <code>
-{`service cloud.firestore {
-  match /databases/{database}/documents {
-    function isAdmin() {
-      // Verifica se o usuário está autenticado e se seu perfil tem role == 'admin'
-      return request.auth != null &&
-             get(/databases/$(database)/documents/user_profiles/$(request.auth.uid)).data.role == 'admin';
-    }
-    match /user_profiles/{userId} {
-      // Admins podem listar (consultar) a coleção.
-      allow list: if isAdmin(); 
-      // Admins podem ler perfis individuais, usuários podem ler o próprio.
-      allow get: if request.auth.uid == userId || isAdmin();
-      // ... (outras regras de create, update, delete)
-    }
-  }
-}`}
-                </code>
-              </pre>
-               <p className="text-sm text-muted-foreground mt-3">
-                Certifique-se também de que o usuário administrador com o qual você está testando realmente possui o campo <code className="bg-muted px-1 py-0.5 rounded text-xs">role</code> com o valor <code className="bg-muted px-1 py-0.5 rounded text-xs">'admin'</code> em seu documento na coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code>.
+                Se você é um administrador e está vendo esta mensagem, verifique suas Regras de Segurança do Firestore.
+                A regra para listar a coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code> deve permitir acesso ao seu UID de administrador.
               </p>
             </div>
           ) : (
