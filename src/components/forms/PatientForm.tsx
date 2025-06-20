@@ -115,29 +115,35 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
   const onSubmit = async (data: PatientFormData) => {
     const selectedUBS = ubsList.find(ubs => ubs.id === data.registeredUBSId);
 
-    const patientDataToSave: Omit<Patient, 'id'> = {
+    const patientDataToSave: Partial<Omit<Patient, 'id'>> = {
       name: data.name,
       susCardNumber: data.susCardNumber,
-      birthDate: data.birthDate || undefined,
-      address: data.address || undefined,
-      phone: data.phone || undefined,
-      sex: data.sex || undefined,
-      healthAgentName: data.healthAgentName || undefined,
-      registeredUBSId: data.registeredUBSId || undefined,
-      registeredUBSName: selectedUBS?.name || undefined,
     };
+
+    if (data.birthDate) patientDataToSave.birthDate = data.birthDate;
+    if (data.address) patientDataToSave.address = data.address;
+    if (data.phone) patientDataToSave.phone = data.phone;
+    if (data.sex) patientDataToSave.sex = data.sex;
+    if (data.healthAgentName) patientDataToSave.healthAgentName = data.healthAgentName;
+    if (data.registeredUBSId && data.registeredUBSId !== LOADING_UBS_VALUE) {
+        patientDataToSave.registeredUBSId = data.registeredUBSId;
+        if (selectedUBS) {
+            patientDataToSave.registeredUBSName = selectedUBS.name;
+        }
+    }
+
 
     try {
       if (patientId) {
         const patientDocRef = doc(firestore, "patients", patientId);
-        await setDoc(patientDocRef, patientDataToSave, { merge: true });
+        await setDoc(patientDocRef, patientDataToSave as Omit<Patient, 'id'>, { merge: true });
         toast({
           title: "Paciente Atualizado",
           description: `${patientDataToSave.name} foi atualizado(a) com sucesso.`,
         });
       } else {
         const patientsCollectionRef = collection(firestore, "patients");
-        await addDoc(patientsCollectionRef, patientDataToSave);
+        await addDoc(patientsCollectionRef, patientDataToSave as Omit<Patient, 'id'>);
         toast({
           title: "Paciente Adicionado",
           description: `${patientDataToSave.name} foi adicionado(a) com sucesso.`,
@@ -145,7 +151,7 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
       }
 
       if (onSubmitSuccess) {
-        onSubmitSuccess({ ...patientDataToSave, id: patientId || 'new_id_placeholder' });
+        onSubmitSuccess({ ...patientDataToSave, id: patientId || 'new_id_placeholder' } as Patient);
       } else {
         router.push('/patients');
       }
