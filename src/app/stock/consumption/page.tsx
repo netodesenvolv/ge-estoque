@@ -29,6 +29,8 @@ const CENTRAL_WAREHOUSE_ID = "__CENTRAL_WAREHOUSE__";
 const locationSelectionSchema = z.object({
   hospitalId: z.string().min(1, "Selecione o hospital/local."),
   unitId: z.string().optional(),
+  // Campo auxiliar para rastrear o hospitalId anterior e decidir se unitId deve ser resetado
+  hospitalId_prev_for_unit_reset: z.string().optional(),
 });
 
 const consumptionDetailsSchema = z.object({
@@ -60,7 +62,7 @@ export default function GeneralConsumptionPage() {
 
   const locationForm = useForm<LocationSelectionFormData>({
     resolver: zodResolver(locationSelectionSchema),
-    defaultValues: { hospitalId: undefined, unitId: undefined },
+    defaultValues: { hospitalId: undefined, unitId: undefined, hospitalId_prev_for_unit_reset: undefined },
   });
 
   const consumptionForm = useForm<ConsumptionDetailsFormData>({
@@ -76,20 +78,16 @@ export default function GeneralConsumptionPage() {
 
   const handleSnapshotError = (collectionName: string, error: FirestoreError) => {
     console.error(`Error loading ${collectionName}:`, error);
+    let description = error.message;
     if (error.code === 'permission-denied') {
-      toast({
-        title: `Permissão Negada ao Ler '${collectionName.charAt(0).toUpperCase() + collectionName.slice(1)}'`,
-        description: `Não foi possível carregar dados de '${collectionName}'. Verifique suas Regras de Segurança do Firestore para permissões de leitura.`,
-        variant: "destructive",
-        duration: 10000,
-      });
-    } else {
-      toast({
-        title: `Erro ao Carregar ${collectionName.charAt(0).toUpperCase() + collectionName.slice(1)}`,
-        description: error.message,
-        variant: "destructive",
-      });
+      description = `Permissão negada ao ler '${collectionName}'. Verifique suas Regras de Segurança do Firestore. Detalhes: ${error.message}`;
     }
+    toast({
+      title: `Erro ao Carregar ${collectionName.charAt(0).toUpperCase() + collectionName.slice(1)}`,
+      description: description,
+      variant: "destructive",
+      duration: 10000,
+    });
   };
 
   useEffect(() => {
@@ -118,9 +116,9 @@ export default function GeneralConsumptionPage() {
         }
       )
     );
-
     return () => unsubscribers.forEach(unsub => unsub());
-  }, [toast]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
 
   useEffect(() => {
@@ -132,10 +130,13 @@ export default function GeneralConsumptionPage() {
       if ((userRole === 'hospital_operator' || userRole === 'ubs_operator') && userHospitalId) {
         if (locationForm.getValues('hospitalId') !== userHospitalId) {
           locationForm.setValue('hospitalId', userHospitalId, { shouldValidate: true });
-          locationForm.setValue('unitId', undefined, { shouldValidate: true });
-        }
-
-        if (userUnitId && locationForm.getValues('unitId') !== userUnitId) {
+          locationForm.setValue('hospitalId_prev_for_unit_reset', userHospitalId, { shouldValidate: false }); // Initialize prev
+          if (userUnitId) {
+            locationForm.setValue('unitId', userUnitId, { shouldValidate: true });
+          } else {
+            locationForm.setValue('unitId', undefined, { shouldValidate: true });
+          }
+        } else if (userUnitId && locationForm.getValues('unitId') !== userUnitId) {
            locationForm.setValue('unitId', userUnitId, { shouldValidate: true });
         }
       }
@@ -144,18 +145,19 @@ export default function GeneralConsumptionPage() {
 
 
   const watchedHospitalId = locationForm.watch('hospitalId');
+  const watchedUnitId = locationForm.watch('unitId');
+  const prevWatchedHospitalId = locationForm.watch('hospitalId_prev_for_unit_reset');
+
 
   useEffect(() => {
-    const userIsOperatorWithFixedHospital =
-      (currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator') &&
-      currentUserProfile?.associatedHospitalId === watchedHospitalId;
-
-    if (!userIsOperatorWithFixedHospital && watchedHospitalId) {
-        if (locationForm.getValues('unitId') !== undefined) {
-             locationForm.setValue('unitId', undefined, { shouldValidate: true });
-        }
+    if (watchedHospitalId && watchedHospitalId !== prevWatchedHospitalId) {
+      if (currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator' || 
+         ((currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator') && !currentUserProfile.associatedUnitId)) {
+        locationForm.setValue('unitId', undefined, { shouldValidate: true });
+      }
+      locationForm.setValue('hospitalId_prev_for_unit_reset', watchedHospitalId, { shouldValidate: false });
     }
-  }, [watchedHospitalId, locationForm, currentUserProfile]);
+  }, [watchedHospitalId, prevWatchedHospitalId, locationForm, currentUserProfile]);
 
 
   const availableUnitsForSelection = useMemo(() => {
@@ -186,10 +188,9 @@ export default function GeneralConsumptionPage() {
     } else if (data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER && hospital?.name.toLowerCase().includes('ubs')) {
       unitNameDisplay = `Estoque Geral (${hospital.name})`;
     } else if (data.hospitalId && (!data.unitId || data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER) && !hospital?.name.toLowerCase().includes('ubs')) {
-      toast({ title: "Erro de Seleção", description: "Para hospitais (não UBS), uma unidade específica deve ser selecionada para consumo.", variant: "destructive" });
+      toast({ title: "Seleção Incompleta", description: "Para hospitais (não UBS), uma unidade específica deve ser selecionada para consumo.", variant: "destructive" });
       return;
     }
-
 
     setSelectedLocation({
       hospitalId: data.hospitalId,
@@ -220,37 +221,40 @@ export default function GeneralConsumptionPage() {
       setIsSubmittingConsumption(false);
       return;
     }
-
-    // Construct movement data for the transaction
+    
     const movementDataForTransaction: Omit<StockMovement, 'id' | 'itemName' | 'hospitalName' | 'unitName' | 'patientName' | 'userDisplayName' | 'userId'> & { itemId: string } = {
       itemId: data.itemId,
       type: 'consumption',
       quantity: data.quantityConsumed,
       date: data.date,
       hospitalId: selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID ? undefined : selectedLocation.hospitalId,
-      unitId: selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID ? undefined : selectedLocation.unitId, // unitId is already undefined for general UBS from handleLocationSubmit
+      unitId: selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID ? undefined : selectedLocation.unitId,
       patientId: data.patientId === NO_PATIENT_ID ? undefined : data.patientId,
       notes: data.notes,
     };
-
-    // ---- START DIAGNOSTIC LOGGING ----
-    console.log("--- Firestore Transaction: Consumption Attempt ---");
-    console.log("Current User Profile:", JSON.parse(JSON.stringify(currentUserProfile)));
-    console.log("Selected Location for Consumption:", JSON.parse(JSON.stringify(selectedLocation)));
-    console.log("Consumption Form Data (Details):", JSON.parse(JSON.stringify(data)));
-    console.log("Movement Data for Transaction:", JSON.parse(JSON.stringify(movementDataForTransaction)));
-
-    let targetStockConfigId = "N/A (Central Warehouse or error)";
+    
+    // --- START DIAGNOSTIC LOGGING (Client-side) ---
+    console.groupCollapsed("--- Firestore Transaction: Consumption Attempt (Client Diagnostics) ---");
+    console.log("Current User Profile (from AuthContext):", JSON.parse(JSON.stringify(currentUserProfile)));
+    console.log("Selected Location for Consumption (state):", JSON.parse(JSON.stringify(selectedLocation)));
+    console.log("Consumption Form Data (raw form values):", JSON.parse(JSON.stringify(data)));
+    console.log("Movement Data to be sent to Transaction:", JSON.parse(JSON.stringify(movementDataForTransaction)));
+    let targetStockConfigId = "N/A (Error in logic or Central Warehouse)";
     if (selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID) {
         if (selectedLocation.unitId) { // Specific unit
             targetStockConfigId = `${data.itemId}_${selectedLocation.unitId}`;
         } else if (selectedLocation.hospitalId && hospitals.find(h => h.id === selectedLocation.hospitalId)?.name.toLowerCase().includes('ubs')) { // General UBS stock
             targetStockConfigId = `${data.itemId}_${selectedLocation.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
         }
+    } else if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
+        targetStockConfigId = `${data.itemId}_central`; // Though central doesn't use stockConfigs in the same way for consumption in transaction
     }
-    console.log("Target stockConfigs Document ID for Update:", targetStockConfigId);
-    console.log("--- End Diagnostic Logging ---");
-    // ---- END DIAGNOSTIC LOGGING ----
+    console.log("Target stockConfigs Document ID for Update (calculated):", targetStockConfigId);
+    const targetStockConfigData = stockConfigs.find(sc => sc.id === targetStockConfigId);
+    console.log("Data of Target stockConfigs Document (if found):", targetStockConfigData ? JSON.parse(JSON.stringify(targetStockConfigData)) : "Not found or not applicable (e.g. Central Warehouse direct)");
+    console.groupEnd();
+    // --- END DIAGNOSTIC LOGGING ---
+
 
     try {
       await runTransaction(firestore, (transaction) =>
@@ -299,9 +303,9 @@ export default function GeneralConsumptionPage() {
     }
 
     let configId: string;
-    if (selectedLocation.unitId) {
+    if (selectedLocation.unitId) { // Specific unit selected
       configId = `${item.id}_${selectedLocation.unitId}`;
-    } else {
+    } else { // Implies general stock for a UBS (unitId is undefined in selectedLocation for this case)
       configId = `${item.id}_${selectedLocation.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
     }
     const config = stockConfigs.find(sc => sc.id === configId);
@@ -334,14 +338,18 @@ export default function GeneralConsumptionPage() {
   }
 
   const canUserSelectHospital = currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator';
-  const canUserSelectUnit = canUserSelectHospital || (currentUserProfile.associatedHospitalId && !currentUserProfile.associatedUnitId);
+  const canUserSelectUnit = 
+    currentUserProfile.role === 'admin' || 
+    currentUserProfile.role === 'central_operator' || 
+    ((currentUserProfile.role === 'hospital_operator' || currentUserProfile.role === 'ubs_operator') && !currentUserProfile.associatedUnitId);
+
 
   const isLocationSubmitButtonDisabled =
     isLoadingData ||
-    !locationForm.getValues('hospitalId') ||
+    !watchedHospitalId ||
     (
-      locationForm.getValues('hospitalId') !== CENTRAL_WAREHOUSE_ID &&
-      !locationForm.getValues('unitId')
+      watchedHospitalId !== CENTRAL_WAREHOUSE_ID &&
+      !watchedUnitId // This will be false if GENERAL_STOCK_UNIT_ID_PLACEHOLDER is selected
     );
 
 
@@ -370,7 +378,7 @@ export default function GeneralConsumptionPage() {
                       <Select
                         onValueChange={(value) => {
                           field.onChange(value);
-                          locationForm.setValue('unitId', undefined, { shouldValidate: true });
+                          // unitId is reset by the useEffect watching watchedHospitalId
                         }}
                         value={field.value}
                         disabled={!canUserSelectHospital || isLoadingData}
@@ -400,7 +408,7 @@ export default function GeneralConsumptionPage() {
                         <FormLabel className="flex items-center gap-1"><MapPin className="h-4 w-4" /> Unidade Servida / Estoque</FormLabel>
                         <Select
                           onValueChange={field.onChange}
-                          value={field.value}
+                          value={field.value || ""} // Ensure value is not undefined for Select if it causes issues, though Radix should handle it
                           disabled={!canUserSelectUnit || isLoadingData || (availableUnitsForSelection.length === 0 && !isSelectedHospitalUBS)}
                         >
                           <FormControl><SelectTrigger>
@@ -428,6 +436,7 @@ export default function GeneralConsumptionPage() {
               </CardContent>
               <CardFooter>
                 <Button type="submit" disabled={isLocationSubmitButtonDisabled}>
+                  {isLoadingData && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Prosseguir para Detalhes do Consumo
                 </Button>
               </CardFooter>
@@ -532,7 +541,21 @@ export default function GeneralConsumptionPage() {
                   {isSubmittingConsumption && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}
                   Registrar Consumo
                 </Button>
-                <Button type="button" variant="outline" onClick={() => { setStage('selectLocation'); setSelectedLocation(null); consumptionForm.reset(); locationForm.reset(currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator' ? { hospitalId: currentUserProfile.associatedHospitalId, unitId: currentUserProfile.associatedUnitId } : {}); }} className="w-full">
+                <Button type="button" variant="outline" onClick={() => { setStage('selectLocation'); setSelectedLocation(null); consumptionForm.reset(); 
+                  // Reset locationForm based on profile
+                  if (currentUserProfile && !isLoadingData) {
+                      const userRole = currentUserProfile.role;
+                      const userHospitalId = currentUserProfile.associatedHospitalId;
+                      const userUnitId = currentUserProfile.associatedUnitId;
+                      if ((userRole === 'hospital_operator' || userRole === 'ubs_operator') && userHospitalId) {
+                          locationForm.reset({ hospitalId: userHospitalId, unitId: userUnitId || undefined, hospitalId_prev_for_unit_reset: userHospitalId });
+                      } else {
+                          locationForm.reset({ hospitalId: undefined, unitId: undefined, hospitalId_prev_for_unit_reset: undefined });
+                      }
+                  } else {
+                      locationForm.reset({ hospitalId: undefined, unitId: undefined, hospitalId_prev_for_unit_reset: undefined });
+                  }
+                }} className="w-full">
                   Alterar Local
                 </Button>
               </CardFooter>
@@ -543,4 +566,5 @@ export default function GeneralConsumptionPage() {
     </div>
   );
 }
-        
+
+    
