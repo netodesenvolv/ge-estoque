@@ -66,8 +66,10 @@ export default function PatientsPage() {
             setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
         } else {
             // Se não houver mais dados, voltamos para a página anterior
-            if(nextPage) {
-                setPage(page > 1 ? page -1 : 1);
+            if(nextPage && page > 1) { // Apenas decrementar se nextPage for true e não estiver na primeira página
+                setPage(page -1);
+            } else if (!nextPage && page ===1 && patientsData.length === 0) {
+                // Se está na primeira página e não há resultados, não faz nada ou poderia limpar a lista
             }
         }
     } catch (error) {
@@ -80,19 +82,50 @@ export default function PatientsPage() {
     } finally {
         setIsLoading(false);
     }
-  }, [lastVisible, firstVisible, page, toast]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastVisible, firstVisible, page, toast]); // Removido 'page' da dependência explícita para evitar loop com setPage
 
   useEffect(() => {
-    fetchPatients();
-  }, []);
+    // Fetch inicial
+    setIsLoading(true);
+    const patientsCollectionRef = collection(firestore, "patients");
+    const q = query(patientsCollectionRef, orderBy("name", "asc"), limit(PATIENTS_PER_PAGE));
+    const unsubscribe = onSnapshot(q, (documentSnapshots) => {
+        const patientsData = documentSnapshots.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+        } as Patient));
+        setPatients(patientsData);
+        if (documentSnapshots.docs.length > 0) {
+            setFirstVisible(documentSnapshots.docs[0]);
+            setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
+        } else {
+            setFirstVisible(null);
+            setLastVisible(null);
+        }
+        setIsLoading(false);
+    }, (error) => {
+        console.error("Erro ao buscar pacientes (onSnapshot): ", error);
+        toast({
+            title: "Erro ao Carregar Pacientes",
+            description: "Não foi possível carregar os pacientes do banco de dados.",
+            variant: "destructive",
+        });
+        setIsLoading(false);
+    });
+     return () => unsubscribe();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toast]); // Dependência apenas no toast para o listener inicial
 
 
   const fetchNextPage = () => {
+    if (!lastVisible) return; // Não buscar se não houver último visível (fim da lista)
     setPage(prev => prev + 1);
     fetchPatients(true);
   };
 
   const fetchPrevPage = () => {
+    if (page <= 1 || !firstVisible) return; // Não buscar se estiver na primeira página ou sem primeiro visível
     setPage(prev => prev - 1);
     fetchPatients(false);
   };
@@ -107,10 +140,7 @@ export default function PatientsPage() {
   );
 
   const handleEdit = (id: string) => {
-    toast({
-      title: "Funcionalidade Pendente",
-      description: "A edição de pacientes ainda não foi implementada.",
-    });
+    router.push(`/patients/${id}/edit`);
   };
 
   const handleDelete = async (id: string) => {
@@ -121,7 +151,25 @@ export default function PatientsPage() {
         title: "Paciente Excluído",
         description: "Paciente foi removido do banco de dados.",
       });
-      fetchPatients(); 
+      // Re-fetch a primeira página após a exclusão para atualizar a lista
+      setPage(1);
+      setLastVisible(null); 
+      setFirstVisible(null);
+      // A chamada inicial do useEffect (onSnapshot) deve pegar a atualização.
+      // Se for necessário um refetch mais direto:
+      // const patientsCollectionRef = collection(firestore, "patients");
+      // const q = query(patientsCollectionRef, orderBy("name", "asc"), limit(PATIENTS_PER_PAGE));
+      // const documentSnapshots = await getDocs(q);
+      // const patientsData = documentSnapshots.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient));
+      // setPatients(patientsData);
+      // if (documentSnapshots.docs.length > 0) {
+      //     setFirstVisible(documentSnapshots.docs[0]);
+      //     setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
+      // } else {
+      //     setFirstVisible(null);
+      //     setLastVisible(null);
+      // }
+
     } catch (error) {
       console.error("Erro ao excluir paciente: ", error);
       toast({
@@ -135,7 +183,14 @@ export default function PatientsPage() {
   const formatBirthDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
-      const date = parseISO(dateString);
+      // Tentar parsear AAAA-MM-DD. Se falhar, pode ser DD/MM/AAAA do CSV
+      let date = parseISO(dateString); // parseISO espera AAAA-MM-DD
+      if (!isValid(date) && dateString.includes('/')) {
+        const parts = dateString.split('/');
+        if (parts.length === 3) {
+          date = parseISO(`${parts[2]}-${parts[1]}-${parts[0]}`);
+        }
+      }
       if (isValid(date)) {
         return format(date, 'dd/MM/yyyy', { locale: ptBR });
       }
@@ -193,10 +248,10 @@ export default function PatientsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading ? (
+                {isLoading && patients.length === 0 ? ( // Mostra carregando apenas se a lista estiver vazia
                     <TableRow>
                         <TableCell colSpan={8} className="text-center h-24">
-                            Carregando...
+                            Carregando pacientes...
                         </TableCell>
                     </TableRow>
                 ) : filteredPatients.length > 0 ? (
@@ -233,15 +288,17 @@ export default function PatientsPage() {
               </TableBody>
             </Table>
           </div>
-          <div className="flex justify-between items-center mt-4">
-            <Button onClick={fetchPrevPage} disabled={page <= 1 || isLoading}>
-              Anterior
-            </Button>
-            <span>Página {page}</span>
-            <Button onClick={fetchNextPage} disabled={isLoading || patients.length < PATIENTS_PER_PAGE}>
-              Próxima
-            </Button>
-          </div>
+          {filteredPatients.length > 0 && ( // Mostrar paginação apenas se houver itens filtrados
+            <div className="flex justify-between items-center mt-4">
+              <Button onClick={fetchPrevPage} disabled={page <= 1 || isLoading}>
+                Anterior
+              </Button>
+              <span>Página {page}</span>
+              <Button onClick={fetchNextPage} disabled={isLoading || patients.length < PATIENTS_PER_PAGE || !lastVisible}>
+                Próxima
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

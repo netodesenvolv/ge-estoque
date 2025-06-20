@@ -25,9 +25,12 @@ const patientSexOptions: { value: PatientSex; label: string }[] = [
   { value: 'ignorado', label: 'Prefiro não informar / Ignorado' },
 ];
 
-const patientSchema = z.object({
+// Schema para validação do formulário
+const patientFormSchema = z.object({
   name: z.string().min(3, { message: "O nome do paciente deve ter pelo menos 3 caracteres." }),
-  birthDate: z.string().optional(),
+  birthDate: z.string().optional().refine(val => !val || /^\d{4}-\d{2}-\d{2}$/.test(val), {
+    message: "Data de Nascimento deve estar no formato AAAA-MM-DD ou ser deixada em branco.",
+  }),
   susCardNumber: z.string()
     .min(15, { message: "O número do Cartão SUS deve ter 15 dígitos." })
     .max(15, { message: "O número do Cartão SUS deve ter 15 dígitos." })
@@ -39,12 +42,12 @@ const patientSchema = z.object({
   registeredUBSId: z.string().optional(),
 });
 
-type PatientFormData = z.infer<typeof patientSchema>;
+export type PatientFormData = z.infer<typeof patientFormSchema>;
 
 interface PatientFormProps {
-  initialData?: Patient;
-  patientId?: string;
-  onSubmitSuccess?: (data: Patient) => void;
+  initialData?: Partial<PatientFormData>; // Em edição, virá da página de edição.
+  patientId?: string; // Presente apenas no modo de edição.
+  onSubmitSuccess?: (data: Patient) => void; // Callback opcional
 }
 
 const LOADING_UBS_VALUE = "__LOADING_UBS__";
@@ -58,10 +61,10 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
   useEffect(() => {
     setIsLoadingUbs(true);
     const hospitalsCollectionRef = collection(firestore, "hospitals");
+    // Filtra para mostrar apenas entidades que são UBS (ajustar lógica se necessário)
     const q = query(hospitalsCollectionRef, orderBy("name", "asc"));
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const allHospitals = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital));
-      // Simple filter for UBS - can be improved if there's a specific field
       setUbsList(allHospitals.filter(h => h.name.toLowerCase().includes('ubs')));
       setIsLoadingUbs(false);
     }, (error) => {
@@ -77,15 +80,16 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
   }, [toast]);
 
   const form = useForm<PatientFormData>({
-    resolver: zodResolver(patientSchema),
+    resolver: zodResolver(patientFormSchema),
     defaultValues: initialData ? {
-      ...initialData,
-      birthDate: initialData.birthDate || '',
-      address: initialData.address || '',
-      phone: initialData.phone || '',
-      sex: initialData.sex || undefined,
-      healthAgentName: initialData.healthAgentName || '',
-      registeredUBSId: initialData.registeredUBSId || undefined,
+        name: initialData.name || '',
+        susCardNumber: initialData.susCardNumber || '',
+        birthDate: initialData.birthDate || '', // Deve ser string AAAA-MM-DD
+        address: initialData.address || '',
+        phone: initialData.phone || '',
+        sex: initialData.sex || undefined,
+        healthAgentName: initialData.healthAgentName || '',
+        registeredUBSId: initialData.registeredUBSId || undefined,
     } : {
       name: '',
       susCardNumber: '',
@@ -98,11 +102,13 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
     },
   });
 
+  // Reset form when initialData changes (e.g., data fetched for editing)
   useEffect(() => {
     if (initialData) {
       form.reset({
-        ...initialData,
-        birthDate: initialData.birthDate || '',
+        name: initialData.name || '',
+        susCardNumber: initialData.susCardNumber || '',
+        birthDate: initialData.birthDate || '', // Garanta que seja string ou undefined
         address: initialData.address || '',
         phone: initialData.phone || '',
         sex: initialData.sex || undefined,
@@ -120,7 +126,7 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
       susCardNumber: data.susCardNumber,
     };
 
-    if (data.birthDate) patientDataToSave.birthDate = data.birthDate;
+    if (data.birthDate) patientDataToSave.birthDate = data.birthDate; // AAAA-MM-DD string
     if (data.address) patientDataToSave.address = data.address;
     if (data.phone) patientDataToSave.phone = data.phone;
     if (data.sex) patientDataToSave.sex = data.sex;
@@ -130,18 +136,33 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
         if (selectedUBS) {
             patientDataToSave.registeredUBSName = selectedUBS.name;
         }
+    } else {
+      // Se registeredUBSId for undefined, LOADING_UBS_VALUE ou não encontrado,
+      // garantir que os campos relacionados à UBS sejam removidos ou definidos como null.
+      // Firestore não aceita 'undefined', mas aceita 'null' ou omissão do campo.
+      // Para consistência, podemos omitir ou definir como null.
+      // A omissão é mais limpa se o campo não é obrigatório.
+      // No entanto, se queremos explicitamente 'limpar' o campo no update, null seria melhor.
+      // A lógica atual de não incluir se `data.registeredUBSId` for falsy já cobre isso para omissão.
+      // Se for um update e queremos remover o valor, o `setDoc` com `merge:true` não remove campos que não estão no objeto.
+      // Seria necessário passar explicitamente `registeredUBSId: null, registeredUBSName: null`.
+      // Para este caso, a omissão (não incluir no objeto) é suficiente se o campo for novo ou se `merge:true`
+      // não for usado de forma que sobrescreva todo o documento.
+      // Com merge:true, campos não presentes no objeto de atualização são deixados como estão no Firestore.
+      // Se queremos *remover* um campo, precisamos passar `{fieldName: firebase.firestore.FieldValue.delete()}`.
+      // Isso está fora do escopo atual.
     }
 
 
     try {
-      if (patientId) {
+      if (patientId) { // Modo de Edição
         const patientDocRef = doc(firestore, "patients", patientId);
         await setDoc(patientDocRef, patientDataToSave as Omit<Patient, 'id'>, { merge: true });
         toast({
           title: "Paciente Atualizado",
           description: `${patientDataToSave.name} foi atualizado(a) com sucesso.`,
         });
-      } else {
+      } else { // Modo de Adição
         const patientsCollectionRef = collection(firestore, "patients");
         await addDoc(patientsCollectionRef, patientDataToSave as Omit<Patient, 'id'>);
         toast({
@@ -153,13 +174,13 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
       if (onSubmitSuccess) {
         onSubmitSuccess({ ...patientDataToSave, id: patientId || 'new_id_placeholder' } as Patient);
       } else {
-        router.push('/patients');
+        router.push('/patients'); // Redireciona para a página de listagem
       }
     } catch (error) {
       console.error("Erro ao salvar paciente: ", error);
       toast({
         title: `Erro ao ${patientId ? 'Atualizar' : 'Adicionar'} Paciente`,
-        description: "Não foi possível salvar o paciente.",
+        description: "Não foi possível salvar os dados do paciente. Verifique o console.",
         variant: "destructive",
       });
     }
@@ -290,7 +311,7 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
             </div>
           </CardContent>
           <CardFooter className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => router.back()}>
+            <Button type="button" variant="outline" onClick={() => router.push('/patients')}>
               Cancelar
             </Button>
             <Button type="submit" disabled={form.formState.isSubmitting || isLoadingUbs}>
