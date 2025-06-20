@@ -25,80 +25,92 @@ import {
   ChevronDown,
   ListChecks,
   PlusCircle,
-  Users2, // Ícone para o menu principal de Usuários
+  Users2, 
+  LogIn, // Ícone para Entradas/Saídas
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useSidebar } from '@/components/ui/sidebar';
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
 
-const navItems = [
-  { href: '/', label: 'Painel', icon: Home },
+const navItemsBase = [
+  { href: '/', label: 'Painel', icon: Home, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator', 'user'] },
   {
     label: 'Catálogo',
     icon: Package,
+    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator', 'user'],
     subItems: [
-      { href: '/items', label: 'Ver Itens', icon: Archive },
-      { href: '/items/add', label: 'Adicionar Item', icon: PlusCircle },
+      { href: '/items', label: 'Ver Itens', icon: Archive, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator', 'user'] },
+      { href: '/items/add', label: 'Adicionar Item', icon: PlusCircle, roles: ['admin', 'central_operator'] },
     ],
   },
   {
     label: 'Estoque',
     icon: Warehouse,
+    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator', 'user'],
     subItems: [
-      { href: '/stock', label: 'Estoque Atual', icon: ClipboardList },
-      { href: '/stock/movements', label: 'Registrar Movimentação', icon: ArrowRightLeft },
+      { href: '/stock', label: 'Estoque Atual', icon: ClipboardList, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator', 'user'] },
+      { href: '/stock/movements', label: 'Entradas/Saídas (Central)', icon: LogIn, roles: ['admin', 'central_operator'] },
+      // O registro de consumo será feito via página de Unidades Servidas
     ],
   },
   {
     label: 'Pacientes',
     icon: Contact,
+    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'], // Usuário padrão não mexe com pacientes diretamente aqui
     subItems: [
-      { href: '/patients', label: 'Ver Pacientes', icon: Users },
-      { href: '/patients/add', label: 'Adicionar Paciente', icon: UserPlus },
+      { href: '/patients', label: 'Ver Pacientes', icon: Users, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/patients/add', label: 'Adicionar Paciente', icon: UserPlus, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
     ],
   },
   {
     label: 'Hospitais e UBS',
     icon: Building,
+    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'],
     subItems: [
-      { href: '/hospitals', label: 'Ver Hospitais/UBS', icon: Building },
-      { href: '/hospitals/add', label: 'Adicionar Hospital/UBS', icon: PlusCircle },
+      { href: '/hospitals', label: 'Ver Hospitais/UBS', icon: Building, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/hospitals/add', label: 'Adicionar Hospital/UBS', icon: PlusCircle, roles: ['admin', 'central_operator'] },
     ],
   },
   {
     label: 'Unidades Servidas',
-    icon: Users, // Manter Users para unidades, usar Users2 para gerenciamento de usuários
+    icon: Users, 
+    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'],
     subItems: [
-      { href: '/served-units', label: 'Ver Unidades', icon: Users },
-      { href: '/served-units/add', label: 'Adicionar Unidade', icon: PlusCircle },
+      { href: '/served-units', label: 'Ver Unidades', icon: Users, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/served-units/add', label: 'Adicionar Unidade', icon: PlusCircle, roles: ['admin', 'central_operator'] },
+      // O botão "Registrar Consumo" para cada unidade está na página /served-units
     ],
   },
-  { href: '/trends', label: 'Tendências de Consumo', icon: TrendingUp },
+  { href: '/trends', label: 'Tendências IA', icon: TrendingUp, roles: ['admin', 'central_operator'] }, // Tendências mais para admin/central
   {
     label: 'Relatórios',
     icon: FileText,
+    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'],
     subItems: [
-      { href: '/reports/general-consumption', label: 'Consumo Geral', icon: BarChart3 },
-      { href: '/reports/patient-consumption', label: 'Consumo por Paciente', icon: UserCheck },
-      { href: '/reports/expiring-items', label: 'Itens a Vencer', icon: CalendarClock },
-      { href: '/reports/consumption-history', label: 'Histórico de Consumo', icon: History },
-      { href: '/reports/low-stock-levels', label: 'Níveis Baixos/Alerta', icon: ListChecks },
+      { href: '/reports/general-consumption', label: 'Consumo Geral', icon: BarChart3, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/reports/patient-consumption', label: 'Consumo por Paciente', icon: UserCheck, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/reports/expiring-items', label: 'Itens a Vencer', icon: CalendarClock, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/reports/consumption-history', label: 'Histórico de Consumo', icon: History, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/reports/low-stock-levels', label: 'Níveis Baixos/Alerta', icon: ListChecks, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
     ],
   },
    {
     label: 'Usuários',
-    icon: Users2, // Novo ícone para o menu de Usuários
+    icon: Users2,
+    roles: ['admin'], // Apenas admin pode gerenciar usuários
     subItems: [
-      { href: '/users', label: 'Ver Usuários', icon: Users },
-      { href: '/users/add', label: 'Adicionar Usuário', icon: UserPlus },
+      { href: '/users', label: 'Ver Usuários', icon: Users, roles: ['admin'] },
+      { href: '/users/add', label: 'Adicionar Usuário', icon: UserPlus, roles: ['admin'] },
     ],
   },
   {
     label: 'Configuração',
     icon: Settings2,
+    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'],
     subItems: [
-      { href: '/config/stock-levels', label: 'Níveis Estratégicos', icon: ShoppingCart },
+      { href: '/config/stock-levels', label: 'Níveis Estratégicos', icon: ShoppingCart, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
     ],
   },
 ];
@@ -106,8 +118,17 @@ const navItems = [
 export default function AppNavigation() {
   const pathname = usePathname();
   const { state: sidebarState, isMobile } = useSidebar();
+  const { currentUserProfile } = useAuth();
+  const userRole = currentUserProfile?.role;
 
-  const defaultOpenAccordionItems = navItems.reduce<string[]>((acc, item, index) => {
+  const filteredNavItems = navItemsBase.filter(item => 
+    item.roles.includes(userRole || 'user') // Se userRole for null, trata como 'user' para segurança
+  ).map(item => ({
+    ...item,
+    subItems: item.subItems ? item.subItems.filter(subItem => subItem.roles.includes(userRole || 'user')) : undefined,
+  })).filter(item => item.href || (item.subItems && item.subItems.length > 0)); // Remove itens de menu que ficaram sem subitens visíveis
+
+  const defaultOpenAccordionItems = filteredNavItems.reduce<string[]>((acc, item, index) => {
     if (item.subItems && item.subItems.some(sub => pathname.startsWith(sub.href))) {
       acc.push(`item-${index}`);
     }
@@ -120,9 +141,9 @@ export default function AppNavigation() {
   return (
     <nav className="flex flex-col p-2">
       <Accordion type="multiple" className="w-full" defaultValue={defaultOpenAccordionItems}>
-        {navItems.map((item, index) => {
+        {filteredNavItems.map((item, index) => {
           const isDirectActive = !item.subItems && pathname === item.href;
-          const isSubItemActive = item.subItems && item.subItems.some(sub => pathname.startsWith(sub.href) && sub.href !== '/'); // Evitar que '/' ative todos os submenus
+          const isSubItemActive = item.subItems && item.subItems.some(sub => pathname.startsWith(sub.href) && sub.href !== '/'); 
           const isActive = isDirectActive || isSubItemActive;
 
           if (item.subItems) {
@@ -133,10 +154,10 @@ export default function AppNavigation() {
                     <AccordionTrigger
                       className={cn(
                         baseLinkStyles,
-                        "w-full justify-between group", 
-                        (isSubItemActive && !isDirectActive) && activeLinkStyles 
+                        "w-full justify-between group",
+                        (isSubItemActive && !isDirectActive) && activeLinkStyles
                       )}
-                      data-active={(isSubItemActive && !isDirectActive)} 
+                      data-active={(isSubItemActive && !isDirectActive)}
                     >
                       <span className="flex w-full items-center justify-between">
                         <span className="flex items-center gap-2 truncate">
@@ -159,7 +180,7 @@ export default function AppNavigation() {
                           href={subItem.href}
                           className={cn(
                             baseLinkStyles,
-                            "text-xs", 
+                            "text-xs",
                             pathname.startsWith(subItem.href) && (subItem.href !== '/' || pathname === '/') && activeLinkStyles
                           )}
                           data-active={pathname.startsWith(subItem.href) && (subItem.href !== '/' || pathname === '/')}
@@ -209,3 +230,4 @@ export default function AppNavigation() {
     </nav>
   );
 }
+

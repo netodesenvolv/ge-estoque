@@ -7,34 +7,37 @@ import * as z from 'zod';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea'; // Import Textarea
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { TrendingDown, CheckCircle, User, Loader2, ShieldAlert } from 'lucide-react';
-import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile } from '@/types'; // Added UserProfile
+import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockMovementType, FirestoreStockConfig } from '@/types';
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useParams, useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext'; // Added useAuth
+import { useAuth } from '@/contexts/AuthContext';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, runTransaction, addDoc } from 'firebase/firestore';
-import { processMovementRowTransaction } from '@/app/stock/movements/page'; // Import the transaction function
+import { collection, query, orderBy, onSnapshot, doc, runTransaction, getDoc } from 'firebase/firestore';
+import { processMovementRowTransaction } from '@/app/stock/movements/page.tsx'; // Import the transaction function
 
 const consumptionSchema = z.object({
   itemId: z.string().min(1, "A seleção do item é obrigatória."),
   quantityConsumed: z.coerce.number().positive("A quantidade deve ser um número positivo."),
   date: z.string().refine((date) => !isNaN(Date.parse(date)), { message: "Data inválida." }),
   patientId: z.string().optional(),
-  notes: z.string().optional(), // Added notes field
+  notes: z.string().optional(),
+  // Type is implicitly 'consumption' for this page
 });
 
 type ConsumptionFormData = z.infer<typeof consumptionSchema>;
 
 const NO_PATIENT_ID = "__NO_PATIENT__";
+const UBS_GENERAL_STOCK_SUFFIX = "UBSGENERAL"; // Define this if not already globally available
 
 export default function RecordUnitConsumptionPage() {
   const params = useParams();
-  const unitIdParams = params.id as string; // ID da unidade servida da URL
+  const unitIdParams = params.id as string;
   const router = useRouter();
   const { toast } = useToast();
   const { currentUserProfile, user: firebaseUser } = useAuth();
@@ -43,6 +46,7 @@ export default function RecordUnitConsumptionPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [servedUnit, setServedUnit] = useState<ServedUnit | null>(null);
   const [hospital, setHospital] = useState<Hospital | null>(null);
+  const [stockConfigs, setStockConfigs] = useState<FirestoreStockConfig[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -57,7 +61,8 @@ export default function RecordUnitConsumptionPage() {
     const itemQuery = query(collection(firestore, "items"), orderBy("name", "asc"));
     const patientQuery = query(collection(firestore, "patients"), orderBy("name", "asc"));
     const unitDocRef = doc(firestore, "servedUnits", unitIdParams);
-    
+    const stockConfigsQuery = query(collection(firestore, "stockConfigs"));
+
     const allHospitalsQuery = query(collection(firestore, "hospitals"), orderBy("name", "asc"));
     const allServedUnitsQuery = query(collection(firestore, "servedUnits"), orderBy("name", "asc"));
 
@@ -65,6 +70,7 @@ export default function RecordUnitConsumptionPage() {
     const unsubscribers = [
       onSnapshot(itemQuery, snapshot => setItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Item)))),
       onSnapshot(patientQuery, snapshot => setPatients(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Patient)))),
+      onSnapshot(stockConfigsQuery, snapshot => setStockConfigs(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as FirestoreStockConfig)))),
       onSnapshot(allHospitalsQuery, snapshot => setAllHospitals(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Hospital)))),
       onSnapshot(allServedUnitsQuery, snapshot => setAllServedUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ServedUnit)))),
       onSnapshot(unitDocRef, async (unitSnap) => {
@@ -90,43 +96,40 @@ export default function RecordUnitConsumptionPage() {
         toast({ title: "Erro ao Carregar Dados", description: error.message, variant: "destructive" });
       })
     ];
-    
-    // Check when all initial data might be loaded (simplified check)
+
     Promise.all([
-        getDocs(itemQuery), getDocs(patientQuery), getDoc(unitDocRef), getDocs(allHospitalsQuery), getDocs(allServedUnitsQuery)
-    ]).then(() => {
-      // setIsLoading(false) // Authorization check will set loading state
-    }).catch(err => {
+        getDoc(unitDocRef) // Just ensure the critical unit data is attempted
+    ]).catch(err => {
         console.error("Error in initial data fetch for consumption page:", err);
-        setIsLoading(false); // Stop loading on error
+    }).finally(() => {
+      // Authorization check will set loading state
     });
 
     return () => unsubscribers.forEach(unsub => unsub());
   }, [unitIdParams, toast]);
 
   useEffect(() => {
-    if (!currentUserProfile || !servedUnit || !hospital) {
-      if (!isLoading && (currentUserProfile === null || servedUnit === null || hospital === null)) {
-        // If still loading initial profile/unit/hospital, wait. Otherwise, if any are null after loading, it's an issue.
+    if (!currentUserProfile || !servedUnit || !hospital || items.length === 0 || stockConfigs.length === 0) {
+      // Wait for all essential data
+      if (!isLoading && (!currentUserProfile || !servedUnit || !hospital)) {
+         // If not loading and critical data is missing, it's an error or unauthorized state handled below
       }
       return;
     }
 
     let authorized = false;
     if (currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator') {
-      authorized = true;
+      authorized = true; // Admins/CentralOps can consume on behalf of units
     } else if (currentUserProfile.role === 'hospital_operator' || currentUserProfile.role === 'ubs_operator') {
       if (currentUserProfile.associatedHospitalId === hospital.id) {
-        if (currentUserProfile.associatedUnitId) { // Operator tied to a specific unit
-          authorized = currentUserProfile.associatedUnitId === servedUnit.id;
-        } else { // Operator tied to the whole hospital/UBS
-          authorized = true;
-        }
+        // If operator is tied to a specific unit, it must be this unit
+        // If operator is general for hospital/UBS, they can consume for any unit in their hospital (this page is specific to one unit)
+        authorized = currentUserProfile.associatedUnitId ? currentUserProfile.associatedUnitId === servedUnit.id : true;
       }
     }
     setIsAuthorized(authorized);
-    setIsLoading(false); // Data needed for auth check is now available
-  }, [currentUserProfile, servedUnit, hospital, isLoading]);
+    setIsLoading(false);
+  }, [currentUserProfile, servedUnit, hospital, items, stockConfigs, isLoading]);
 
 
   const form = useForm<ConsumptionFormData>({
@@ -136,6 +139,7 @@ export default function RecordUnitConsumptionPage() {
       date: new Date().toISOString().split('T')[0],
       patientId: undefined,
       notes: '',
+      itemId: undefined,
     },
   });
 
@@ -153,9 +157,9 @@ export default function RecordUnitConsumptionPage() {
       return;
     }
 
-    const movementDataForTransaction = {
+    const movementDataForTransaction: Omit<StockMovement, 'id' | 'itemName' | 'hospitalName' | 'unitName' | 'patientName' | 'userDisplayName' | 'userId'> & { itemId: string } = {
       itemId: data.itemId,
-      type: 'consumption' as StockMovementType,
+      type: 'consumption', // Hardcoded for this page
       quantity: data.quantityConsumed,
       date: data.date,
       hospitalId: hospital.id,
@@ -169,19 +173,16 @@ export default function RecordUnitConsumptionPage() {
         processMovementRowTransaction(
           transaction,
           movementDataForTransaction,
-          itemForRow,
-          0, // rowIndex for logging
-          itemForRow.code, // itemCode for logging
+          currentUserProfile,
           items, // master list items
           allHospitals, // master list hospitals
           allServedUnits, // master list units
           patients, // master list patients
+          0, // rowIndex for logging (not batch)
+          itemForRow.code, // itemCode for logging
           hospital.name, // hospitalNameLog
           servedUnit.name, // unitNameLog
-          data.notes, // notesLog
-          currentUserProfile,
-          firebaseUser.uid,
-          firebaseUser.displayName || currentUserProfile.name
+          data.notes // notesLog
         )
       );
 
@@ -195,7 +196,7 @@ export default function RecordUnitConsumptionPage() {
         action: <CheckCircle className="text-green-500" />,
       });
       form.reset({
-        itemId: '',
+        itemId: undefined,
         quantityConsumed: 1,
         date: new Date().toISOString().split('T')[0],
         patientId: undefined,
@@ -213,6 +214,14 @@ export default function RecordUnitConsumptionPage() {
     }
   };
 
+  const getDisplayStockForItemInUnit = (item: Item): number => {
+    if (!servedUnit) return 0;
+    const configId = `${item.id}_${servedUnit.id}`;
+    const unitConfig = stockConfigs.find(sc => sc.id === configId);
+    return unitConfig?.currentQuantity ?? 0;
+  };
+
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-10rem)]">
@@ -221,7 +230,7 @@ export default function RecordUnitConsumptionPage() {
       </div>
     );
   }
-  
+
   if (!isAuthorized) {
      return (
         <div className="container mx-auto py-2 max-w-md">
@@ -231,7 +240,7 @@ export default function RecordUnitConsumptionPage() {
                     <CardTitle className="text-destructive">Permissão Insuficiente</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <p>Você não tem permissão para registrar consumo para esta unidade servida ({servedUnit?.name} em {hospital?.name}).</p>
+                    <p>Você não tem permissão para registrar consumo para esta unidade servida ({servedUnit?.name || 'Desconhecida'} em {hospital?.name || 'Desconhecido'}).</p>
                     <p className="mt-2">Contate um administrador se você acredita que isso é um erro.</p>
                     <Button onClick={() => router.back()} className="mt-4">Voltar</Button>
                 </CardContent>
@@ -243,20 +252,20 @@ export default function RecordUnitConsumptionPage() {
   if (!servedUnit || !hospital) {
     return <PageHeader title="Erro" description="Unidade servida ou hospital não pôde ser carregado." />;
   }
-  
+
   const isConsumptionAtUBS = hospital?.name.toLowerCase().includes('ubs');
 
   return (
     <div className="container mx-auto py-2 max-w-lg">
       <PageHeader
         title={`Registrar Consumo`}
-        description={`Unidade: ${servedUnit.name} (${servedUnit.location}) - ${hospital.name}`}
+        description={`Unidade: ${servedUnit.name} (${servedUnit.location || 'N/D'}) - ${hospital.name}`}
         icon={TrendingDown}
       />
       <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle className="font-headline text-xl">Detalhes do Consumo</CardTitle>
-           <CardDescription>Usuário: {currentUserProfile?.name} ({currentUserProfile?.role})</CardDescription>
+          <CardTitle className="font-headline text-xl">Detalhes do Consumo na Unidade</CardTitle>
+           <CardDescription>Operador: {currentUserProfile?.name} ({currentUserProfile?.role})</CardDescription>
         </CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -267,7 +276,7 @@ export default function RecordUnitConsumptionPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Item Consumido</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value} value={field.value || ""}>
+                    <Select onValueChange={field.onChange} value={field.value ?? ""}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Selecione um item" />
@@ -275,11 +284,13 @@ export default function RecordUnitConsumptionPage() {
                       </FormControl>
                       <SelectContent>
                         {items.map(item => (
-                          <SelectItem key={item.id} value={item.id}>{item.name} ({item.code})</SelectItem>
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.name} ({item.code}) - Disp. na Unidade: {getDisplayStockForItemInUnit(item)}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <FormDescription>Apenas itens com estoque nesta unidade serão processados.</FormDescription>
+                    <FormDescription>Apenas itens com estoque configurado para esta unidade serão processados.</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -310,19 +321,18 @@ export default function RecordUnitConsumptionPage() {
                   </FormItem>
                 )}
               />
-              {isConsumptionAtUBS && ( // Show patient selection if it's a UBS or any unit where patient tracking is desired
+              {isConsumptionAtUBS && (
                  <FormField
                   control={form.control}
                   name="patientId"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel className="flex items-center gap-1">
-                        <User className="h-4 w-4 text-muted-foreground"/> Paciente (Opcional)
+                        <User className="h-4 w-4 text-muted-foreground"/> Paciente (Opcional se consumo geral da UBS)
                       </FormLabel>
                       <Select
                         onValueChange={(value) => field.onChange(value === NO_PATIENT_ID ? undefined : value)}
                         value={field.value || NO_PATIENT_ID}
-                        defaultValue={field.value || NO_PATIENT_ID}
                       >
                         <FormControl>
                           <SelectTrigger>
@@ -330,8 +340,10 @@ export default function RecordUnitConsumptionPage() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value={NO_PATIENT_ID}>Nenhum paciente específico</SelectItem>
-                          {patients.map(patient => (
+                          <SelectItem value={NO_PATIENT_ID}>Nenhum paciente específico (consumo geral da unidade)</SelectItem>
+                          {patients
+                            .filter(p => p.registeredUBSId === hospital?.id || (!p.registeredUBSId && isConsumptionAtUBS)) // Melhorar filtro se necessário
+                            .map(patient => (
                             <SelectItem key={patient.id} value={patient.id}>{patient.name} - SUS: {patient.susCardNumber}</SelectItem>
                           ))}
                         </SelectContent>
@@ -355,9 +367,9 @@ export default function RecordUnitConsumptionPage() {
               />
             </CardContent>
             <CardFooter className="flex flex-col gap-3">
-              <Button type="submit" className="w-full" disabled={isSubmitting}>
+              <Button type="submit" className="w-full" disabled={isSubmitting || isLoading}>
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}
-                Registrar Consumo
+                Registrar Consumo na Unidade
               </Button>
               <Button type="button" variant="outline" onClick={() => router.back()} className="w-full">
                 Voltar
@@ -369,3 +381,4 @@ export default function RecordUnitConsumptionPage() {
     </div>
   );
 }
+
