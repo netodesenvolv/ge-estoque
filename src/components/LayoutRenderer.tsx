@@ -62,12 +62,9 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isAuthRoute = pathname === '/login' || pathname === '/signup';
 
-  // Render a consistent minimal loader until mounted to avoid hydration issues
-  // This is also a good place to check for browser extensions if hydration errors persist,
-  // as indicated by the error message about "id='odg_limar'".
   if (!isMounted) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
+      <div className="flex h-screen items-center justify-center"> {/* Removed bg-background */}
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Inicializando...</p>
       </div>
@@ -80,7 +77,7 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
 
   if (authLoading) {
      return (
-      <div className="flex h-screen items-center justify-center bg-background">
+      <div className="flex h-screen items-center justify-center"> {/* Removed bg-background */}
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Carregando aplicação...</p>
       </div>
@@ -91,7 +88,7 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
     // The AuthProvider already handles redirection.
     // This state is for the brief moment before redirection if AuthProvider's effect hasn't run.
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
+      <div className="flex h-screen items-center justify-center"> {/* Removed bg-background */}
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Verificando autenticação...</p>
       </div>
@@ -104,7 +101,7 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
 
   // Fallback for unexpected states
   return (
-    <div className="flex h-screen items-center justify-center bg-background">
+    <div className="flex h-screen items-center justify-center"> {/* Removed bg-background */}
        <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
        <p className="text-lg text-muted-foreground">Redirecionando...</p>
     </div>
