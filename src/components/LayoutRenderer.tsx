@@ -13,7 +13,7 @@ import { UserCircle, LogOut, Loader2 } from 'lucide-react';
 
 // Extracted UI component for authenticated users
 function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
-  const { user, logout } = useAuth();
+  const { user, logout, currentUserProfile } = useAuth();
 
   return (
     <SidebarProvider defaultOpen>
@@ -46,7 +46,7 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
           <div className="flex-1">
           </div>
           <div>
-            {user && <span className="text-sm text-muted-foreground">Olá, {user.email}</span>}
+            {currentUserProfile && <span className="text-sm text-muted-foreground">Olá, {currentUserProfile.name || user?.email}</span>}
           </div>
         </header>
         <main className="flex-1 p-4 md:p-6">
@@ -62,10 +62,12 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isAuthRoute = pathname === '/login' || pathname === '/signup';
 
+  // Render a consistent minimal loader until mounted to avoid hydration issues
+  // This is also a good place to check for browser extensions if hydration errors persist,
+  // as indicated by the error message about "id='odg_limar'".
   if (!isMounted) {
-    // Renderiza um loader consistente no servidor e na primeira renderização do cliente antes da montagem
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-screen items-center justify-center bg-background">
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Inicializando...</p>
       </div>
@@ -78,7 +80,7 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
 
   if (authLoading) {
      return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-screen items-center justify-center bg-background">
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Carregando aplicação...</p>
       </div>
@@ -86,10 +88,10 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
   }
 
   if (!user && !isAuthRoute) {
-    // O AuthProvider já lida com o redirecionamento.
-    // Este estado é para o breve momento antes do redirecionamento do useEffect no AuthProvider ocorrer.
+    // The AuthProvider already handles redirection.
+    // This state is for the brief moment before redirection if AuthProvider's effect hasn't run.
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-screen items-center justify-center bg-background">
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Verificando autenticação...</p>
       </div>
@@ -100,10 +102,9 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
     return <AuthenticatedLayout>{children}</AuthenticatedLayout>;
   }
 
-  // Fallback para o caso de rotas de autenticação se o usuário já estiver logado (embora o AuthProvider deva redirecionar)
-  // Ou se algo inesperado acontecer.
+  // Fallback for unexpected states
   return (
-    <div className="flex h-screen items-center justify-center">
+    <div className="flex h-screen items-center justify-center bg-background">
        <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
        <p className="text-lg text-muted-foreground">Redirecionando...</p>
     </div>
