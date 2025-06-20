@@ -64,8 +64,9 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
 
   if (!isMounted) {
     return (
-      <div className="flex h-screen items-center justify-center"> {/* Removed bg-background */}
-        <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
+      <div className="flex h-screen items-center justify-center"> {/* Removed bg-background as per previous step */}
+        {/* Replaced Loader2 with simple text for diagnosing hydration */}
+        <span className="mr-2 text-primary">[Carregando Ícone...]</span>
         <p className="text-lg text-muted-foreground">Inicializando...</p>
       </div>
     );
@@ -85,8 +86,6 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
   }
 
   if (!user && !isAuthRoute) {
-    // The AuthProvider already handles redirection.
-    // This state is for the brief moment before redirection if AuthProvider's effect hasn't run.
     return (
       <div className="flex h-screen items-center justify-center"> {/* Removed bg-background */}
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
