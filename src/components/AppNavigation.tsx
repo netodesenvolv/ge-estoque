@@ -52,13 +52,13 @@ const navItemsBase = [
     subItems: [
       { href: '/stock', label: 'Estoque Atual', icon: ClipboardList, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator', 'user'] },
       { href: '/stock/movements', label: 'Entradas/Saídas (Central)', icon: LogIn, roles: ['admin', 'central_operator'] },
-      // O registro de consumo será feito via página de Unidades Servidas
+      { href: '/stock/consumption', label: 'Registrar Consumo', icon: ShoppingCart, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
     ],
   },
   {
     label: 'Pacientes',
     icon: Contact,
-    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'], // Usuário padrão não mexe com pacientes diretamente aqui
+    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'], 
     subItems: [
       { href: '/patients', label: 'Ver Pacientes', icon: Users, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
       { href: '/patients/add', label: 'Adicionar Paciente', icon: UserPlus, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
@@ -80,10 +80,9 @@ const navItemsBase = [
     subItems: [
       { href: '/served-units', label: 'Ver Unidades', icon: Users, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
       { href: '/served-units/add', label: 'Adicionar Unidade', icon: PlusCircle, roles: ['admin', 'central_operator'] },
-      // O botão "Registrar Consumo" para cada unidade está na página /served-units
     ],
   },
-  { href: '/trends', label: 'Tendências IA', icon: TrendingUp, roles: ['admin', 'central_operator'] }, // Tendências mais para admin/central
+  { href: '/trends', label: 'Tendências IA', icon: TrendingUp, roles: ['admin', 'central_operator'] },
   {
     label: 'Relatórios',
     icon: FileText,
@@ -99,7 +98,7 @@ const navItemsBase = [
    {
     label: 'Usuários',
     icon: Users2,
-    roles: ['admin'], // Apenas admin pode gerenciar usuários
+    roles: ['admin'], 
     subItems: [
       { href: '/users', label: 'Ver Usuários', icon: Users, roles: ['admin'] },
       { href: '/users/add', label: 'Adicionar Usuário', icon: UserPlus, roles: ['admin'] },
@@ -122,11 +121,11 @@ export default function AppNavigation() {
   const userRole = currentUserProfile?.role;
 
   const filteredNavItems = navItemsBase.filter(item => 
-    item.roles.includes(userRole || 'user') // Se userRole for null, trata como 'user' para segurança
+    item.roles.includes(userRole || 'user') 
   ).map(item => ({
     ...item,
     subItems: item.subItems ? item.subItems.filter(subItem => subItem.roles.includes(userRole || 'user')) : undefined,
-  })).filter(item => item.href || (item.subItems && item.subItems.length > 0)); // Remove itens de menu que ficaram sem subitens visíveis
+  })).filter(item => item.href || (item.subItems && item.subItems.length > 0)); 
 
   const defaultOpenAccordionItems = filteredNavItems.reduce<string[]>((acc, item, index) => {
     if (item.subItems && item.subItems.some(sub => pathname.startsWith(sub.href))) {
@@ -143,7 +142,18 @@ export default function AppNavigation() {
       <Accordion type="multiple" className="w-full" defaultValue={defaultOpenAccordionItems}>
         {filteredNavItems.map((item, index) => {
           const isDirectActive = !item.subItems && pathname === item.href;
-          const isSubItemActive = item.subItems && item.subItems.some(sub => pathname.startsWith(sub.href) && sub.href !== '/'); 
+          
+          const isCurrentPathExactlySubItem = item.subItems?.some(sub => sub.href === pathname);
+          const isCurrentPathStartsWithSubItem = item.subItems?.some(sub => pathname.startsWith(sub.href) && sub.href !== '/');
+          
+          let isSubItemActive = false;
+          if (item.subItems) {
+            if (item.label === 'Estoque' && pathname.startsWith('/stock/consumption')) {
+                 isSubItemActive = true; // Explicitamente ativa "Estoque" para "/stock/consumption"
+            } else if (item.subItems.some(sub => pathname.startsWith(sub.href) && (sub.href === '/' ? pathname === '/' : true))) {
+                 isSubItemActive = true;
+            }
+          }
           const isActive = isDirectActive || isSubItemActive;
 
           if (item.subItems) {
@@ -174,16 +184,24 @@ export default function AppNavigation() {
                 </Tooltip>
                 <AccordionContent className="pb-0 pl-4 border-l border-sidebar-border ml-[18px]">
                   <ul className="flex w-full min-w-0 flex-col gap-1 pt-1">
-                    {item.subItems.map((subItem) => (
+                    {item.subItems.map((subItem) => {
+                      let currentSubItemIsActive = false;
+                      if (subItem.href === '/stock/consumption' && pathname.startsWith('/stock/consumption')) {
+                          currentSubItemIsActive = true;
+                      } else if (pathname.startsWith(subItem.href) && (subItem.href === '/' ? pathname === '/' : true)) {
+                          currentSubItemIsActive = true;
+                      }
+                      
+                      return (
                       <li key={subItem.href}>
                         <Link
                           href={subItem.href}
                           className={cn(
                             baseLinkStyles,
                             "text-xs",
-                            pathname.startsWith(subItem.href) && (subItem.href !== '/' || pathname === '/') && activeLinkStyles
+                            currentSubItemIsActive && activeLinkStyles
                           )}
-                          data-active={pathname.startsWith(subItem.href) && (subItem.href !== '/' || pathname === '/')}
+                          data-active={currentSubItemIsActive}
                         >
                           <span className="flex items-center gap-2 truncate">
                             <subItem.icon className="h-4 w-4" />
@@ -191,7 +209,8 @@ export default function AppNavigation() {
                           </span>
                         </Link>
                       </li>
-                    ))}
+                    );
+                    })}
                   </ul>
                 </AccordionContent>
               </AccordionItem>
@@ -230,4 +249,4 @@ export default function AppNavigation() {
     </nav>
   );
 }
-
+        
