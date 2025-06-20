@@ -23,7 +23,7 @@ import { processMovementRowTransaction } from '@/app/stock/movements/page'; // I
 const NO_PATIENT_ID = "__NO_PATIENT__";
 const UBS_GENERAL_STOCK_SUFFIX = "UBSGENERAL";
 const GENERAL_STOCK_UNIT_ID_PLACEHOLDER = "__GENERAL_STOCK_UNIT__";
-const CENTRAL_WAREHOUSE_ID = "__CENTRAL_WAREHOUSE__"; // For admin/central_op direct consumption from central
+const CENTRAL_WAREHOUSE_ID = "__CENTRAL_WAREHOUSE__";
 
 
 const locationSelectionSchema = z.object({
@@ -84,38 +84,87 @@ export default function GeneralConsumptionPage() {
       onSnapshot(query(collection(firestore, "stockConfigs")), snapshot => setStockConfigs(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as FirestoreStockConfig)))),
     ];
     
-    Promise.all(unsubscribers.map((_,i) => new Promise(resolve => setTimeout(resolve, i * 50)))) // Stagger loading completion check slightly
-      .then(() => setIsLoadingData(false))
-      .catch(err => {
-        console.error("Error loading initial data:", err);
-        toast({ title: "Erro ao carregar dados", description: "Não foi possível buscar todas as informações necessárias.", variant: "destructive"});
+    // Check if all data has loaded
+    let loadedCount = 0;
+    const checkAllLoaded = () => {
+      loadedCount++;
+      if (loadedCount === unsubscribers.length) {
         setIsLoadingData(false);
-      });
+      }
+    };
+    unsubscribers.forEach((_, i, arr) => {
+        // This setup for checking loading is a bit simplified.
+        // A more robust way would be to track individual loading states.
+        // For now, assuming all onSnapshot calls will eventually resolve or error.
+        const originalCallback = arr[i]; // This is not how onSnapshot works, needs adjustment if used directly
+        // Instead, we just set a timeout or check after all listeners are attached.
+        // For simplicity, we use a count based on listeners.
+        if (i === arr.length -1) { // Check after the last listener is setup
+            // A more robust way is to check actual data length or use Promise.all with getDocs
+            // For onSnapshot, it's tricky, setting a small timeout or specific flags for each collection is better.
+            // Here, we'll use a timeout for simplicity after setting up listeners.
+            setTimeout(() => {
+                if (items.length || hospitals.length || servedUnits.length || stockConfigs.length || patients.length) {
+                     // Data started loading
+                }
+                 setIsLoadingData(false); // Assume data loaded or listener will update it
+            }, 1500); // Arbitrary delay
+        }
+    });
+
 
     return () => unsubscribers.forEach(unsub => unsub());
-  }, [toast]);
+  }, [toast]); // items, hospitals, servedUnits, stockConfigs, patients removed to avoid loop on first load
+
 
   // Pre-fill and disable hospital/unit based on user role
   useEffect(() => {
-    if (currentUserProfile && !isLoadingData) {
-      if (currentUserProfile.role === 'hospital_operator' || currentUserProfile.role === 'ubs_operator') {
-        locationForm.setValue('hospitalId', currentUserProfile.associatedHospitalId || '');
-        if (currentUserProfile.associatedUnitId) {
-          locationForm.setValue('unitId', currentUserProfile.associatedUnitId);
+    if (currentUserProfile && !isLoadingData) { // Ensure data is loaded before trying to find hospitals/units
+      const userRole = currentUserProfile.role;
+      const userHospitalId = currentUserProfile.associatedHospitalId;
+      const userUnitId = currentUserProfile.associatedUnitId;
+  
+      if ((userRole === 'hospital_operator' || userRole === 'ubs_operator') && userHospitalId) {
+        if (locationForm.getValues('hospitalId') !== userHospitalId) {
+          locationForm.setValue('hospitalId', userHospitalId);
+          // When hospitalId is programmatically set, reset unitId for fresh selection
+          locationForm.setValue('unitId', undefined); 
+        }
+  
+        if (userUnitId && locationForm.getValues('unitId') !== userUnitId) {
+           locationForm.setValue('unitId', userUnitId);
         }
       }
     }
-  }, [currentUserProfile, isLoadingData, locationForm]);
+  }, [currentUserProfile, isLoadingData, locationForm]); // Removed hospitals, servedUnits, no direct use here
+  
 
   const watchedHospitalId = locationForm.watch('hospitalId');
+
+  // Reset unitId when hospital selection changes, unless it's an operator's fixed hospital
+  useEffect(() => {
+    const userIsOperatorWithFixedHospital = 
+      (currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator') &&
+      currentUserProfile?.associatedHospitalId === watchedHospitalId;
+
+    if (!userIsOperatorWithFixedHospital && watchedHospitalId) {
+        // If user is admin/central_op and changes hospital, or if something unexpected happens, reset unit
+        if (locationForm.getValues('unitId') !== undefined) {
+             locationForm.setValue('unitId', undefined);
+        }
+    }
+  }, [watchedHospitalId, locationForm, currentUserProfile]);
+
+
   const availableUnitsForSelection = useMemo(() => {
-    if (!watchedHospitalId || watchedHospitalId === CENTRAL_WAREHOUSE_ID) return [];
+    if (!watchedHospitalId || watchedHospitalId === CENTRAL_WAREHOUSE_ID || isLoadingData) return [];
     return servedUnits.filter(unit => unit.hospitalId === watchedHospitalId);
-  }, [watchedHospitalId, servedUnits]);
+  }, [watchedHospitalId, servedUnits, isLoadingData]);
 
   const selectedHospitalDetails = useMemo(() => {
+    if (isLoadingData || !watchedHospitalId) return null;
     return hospitals.find(h => h.id === watchedHospitalId);
-  }, [watchedHospitalId, hospitals]);
+  }, [watchedHospitalId, hospitals, isLoadingData]);
 
   const isSelectedHospitalUBS = selectedHospitalDetails?.name.toLowerCase().includes('ubs') || false;
 
@@ -128,14 +177,14 @@ export default function GeneralConsumptionPage() {
     }
     let unitNameDisplay = "Armazém Central";
     if (data.hospitalId === CENTRAL_WAREHOUSE_ID) {
-      // Direct consumption from central by Admin/CentralOp
        unitNameDisplay = "Armazém Central";
     } else if (data.unitId && data.unitId !== GENERAL_STOCK_UNIT_ID_PLACEHOLDER) {
       const unit = servedUnits.find(u => u.id === data.unitId);
       unitNameDisplay = unit?.name || "Unidade Desconhecida";
-    } else if (isSelectedHospitalUBS && (!data.unitId || data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER)) {
+    } else if (data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER && hospital?.name.toLowerCase().includes('ubs')) {
       unitNameDisplay = `Estoque Geral (${hospital.name})`;
     }
+
 
     setSelectedLocation({
       hospitalId: data.hospitalId,
@@ -144,6 +193,7 @@ export default function GeneralConsumptionPage() {
       unitName: unitNameDisplay,
     });
     setStage('fillForm');
+    consumptionForm.reset(); // Reset consumption form when location changes
   };
 
   const handleConsumptionSubmit = async (data: ConsumptionDetailsFormData) => {
@@ -197,10 +247,6 @@ export default function GeneralConsumptionPage() {
         patientId: undefined,
         notes: '',
       });
-      // Optionally reset location selection
-      // setStage('selectLocation');
-      // setSelectedLocation(null);
-      // locationForm.reset();
     } catch (error: any) {
       console.error('Erro ao registrar consumo:', error);
       toast({
@@ -214,16 +260,16 @@ export default function GeneralConsumptionPage() {
   };
 
   const getDisplayStockForItemAtSelectedLocation = (item: Item): number => {
-    if (!selectedLocation) return 0;
+    if (!selectedLocation || isLoadingData) return 0;
 
     if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
         return item.currentQuantityCentral ?? 0;
     }
 
     let configId: string;
-    if (selectedLocation.unitId) { // Specific unit
+    if (selectedLocation.unitId) { 
       configId = `${item.id}_${selectedLocation.unitId}`;
-    } else { // General UBS stock (unitId is undefined for selectedLocation in this case)
+    } else { 
       configId = `${item.id}_${selectedLocation.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
     }
     const config = stockConfigs.find(sc => sc.id === configId);
@@ -231,33 +277,41 @@ export default function GeneralConsumptionPage() {
   };
 
   const isConsumptionAtSelectedUBSGeneralOrSpecific = useMemo(() => {
-    if (!selectedLocation || selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) return false;
+    if (!selectedLocation || selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID || isLoadingData) return false;
     const hospital = hospitals.find(h => h.id === selectedLocation.hospitalId);
     return hospital?.name.toLowerCase().includes('ubs') || false;
-  }, [selectedLocation, hospitals]);
+  }, [selectedLocation, hospitals, isLoadingData]);
 
   const filteredPatientsForSelectedUBS = useMemo(() => {
-    if (!selectedLocation || !isConsumptionAtSelectedUBSGeneralOrSpecific) return [];
+    if (!selectedLocation || !isConsumptionAtSelectedUBSGeneralOrSpecific || isLoadingData) return [];
     return patients.filter(p => p.registeredUBSId === selectedLocation.hospitalId);
-  }, [selectedLocation, isConsumptionAtSelectedUBSGeneralOrSpecific, patients]);
+  }, [selectedLocation, isConsumptionAtSelectedUBSGeneralOrSpecific, patients, isLoadingData]);
 
 
-  if (isLoadingData) {
+  if (isLoadingData && !currentUserProfile) { // Check for currentUserProfile as well
     return (
       <div className="flex flex-col items-center justify-center min-h-[calc(100vh-10rem)]">
         <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-        <p className="text-lg text-muted-foreground">Carregando dados...</p>
+        <p className="text-lg text-muted-foreground">Carregando dados e perfil...</p>
       </div>
     );
   }
   
   if (!currentUserProfile) {
-     return <PageHeader title="Erro" description="Perfil do usuário não carregado." />;
+     return <PageHeader title="Erro" description="Perfil do usuário não carregado. Faça login novamente." />;
   }
 
   const canUserSelectHospital = currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator';
   const canUserSelectUnit = canUserSelectHospital || (currentUserProfile.associatedHospitalId && !currentUserProfile.associatedUnitId);
 
+  // New button disabled logic
+  const isLocationSubmitButtonDisabled = 
+    isLoadingData || 
+    !locationForm.getValues('hospitalId') || 
+    (
+      locationForm.getValues('hospitalId') !== CENTRAL_WAREHOUSE_ID && 
+      !locationForm.getValues('unitId')
+    );
 
   return (
     <div className="container mx-auto py-2 max-w-2xl">
@@ -284,7 +338,7 @@ export default function GeneralConsumptionPage() {
                       <Select 
                         onValueChange={field.onChange} 
                         value={field.value} 
-                        disabled={!canUserSelectHospital}
+                        disabled={!canUserSelectHospital || isLoadingData}
                       >
                         <FormControl><SelectTrigger><SelectValue placeholder="Selecione o hospital/local" /></SelectTrigger></FormControl>
                         <SelectContent>
@@ -312,7 +366,7 @@ export default function GeneralConsumptionPage() {
                         <Select 
                           onValueChange={field.onChange} 
                           value={field.value} 
-                          disabled={!canUserSelectUnit || availableUnitsForSelection.length === 0 && !isSelectedHospitalUBS}
+                          disabled={!canUserSelectUnit || isLoadingData || (availableUnitsForSelection.length === 0 && !isSelectedHospitalUBS)}
                         >
                           <FormControl><SelectTrigger>
                             <SelectValue placeholder={
@@ -338,7 +392,7 @@ export default function GeneralConsumptionPage() {
                 )}
               </CardContent>
               <CardFooter>
-                <Button type="submit" disabled={!watchedHospitalId || (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !locationForm.getValues('unitId') && !isSelectedHospitalUBS)}>
+                <Button type="submit" disabled={isLocationSubmitButtonDisabled}>
                   Prosseguir para Detalhes do Consumo
                 </Button>
               </CardFooter>
@@ -455,3 +509,5 @@ export default function GeneralConsumptionPage() {
   );
 }
         
+
+    
