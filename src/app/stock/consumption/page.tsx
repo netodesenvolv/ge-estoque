@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useForm, useFieldArray } from 'react-hook-form';
@@ -11,12 +12,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { ShoppingCart, User, Loader2, X } from 'lucide-react';
-import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockItemConfig, User as AppUser, FirestoreStockConfig } from '@/types';
+import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockItemConfig as FirestoreStockConfig, User as AppUser } from '@/types';
 import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { firestore } from '@/lib/firebase';
 import { collection, query, orderBy, onSnapshot, doc, runTransaction, type DocumentSnapshot } from 'firebase/firestore';
+
 
 // --- Constants ---
 const CENTRAL_WAREHOUSE_ID = "__CENTRAL_WAREHOUSE__";
@@ -51,7 +53,7 @@ type ConsumptionDetailsFormData = z.infer<typeof consumptionDetailsSchema>;
 // --- Component ---
 export default function GeneralConsumptionPage() {
   const { toast } = useToast();
-  const { currentUserProfile, user } = useAuth(); // Use 'user' for ID
+  const { currentUserProfile, user } = useAuth();
   
   // Master Data States
   const [items, setItems] = useState<Item[]>([]);
@@ -71,33 +73,38 @@ export default function GeneralConsumptionPage() {
     unitName: string;
   } | null>(null);
 
-  const locationForm = useForm<LocationSelectionFormData>({ resolver: zodResolver(locationSelectionSchema) });
+  const locationForm = useForm<LocationSelectionFormData>({
+    resolver: zodResolver(locationSelectionSchema),
+    defaultValues: { hospitalId: '', unitId: '' }
+  });
   const consumptionForm = useForm<ConsumptionDetailsFormData>({
     resolver: zodResolver(consumptionDetailsSchema),
     defaultValues: { items: [], date: new Date().toISOString().split('T')[0] },
   });
   const { fields, append, remove } = useFieldArray({ control: consumptionForm.control, name: "items" });
 
-  useEffect(() => {
+ useEffect(() => {
     let loadedCount = 0;
     const totalToLoad = 5;
 
     const createListener = (collectionName: string, q: any, setter: React.Dispatch<React.SetStateAction<any[]>>) => {
-        return onSnapshot(q, (snapshot) => {
-            setter(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
-            if (++loadedCount >= totalToLoad) setIsLoadingData(false);
-        }, (error) => {
-            toast({ title: `Erro ao carregar ${collectionName}`, description: error.message, variant: "destructive" });
-            if (++loadedCount >= totalToLoad) setIsLoadingData(false);
-        });
+      return onSnapshot(q, (snapshot) => {
+        setter(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
+        loadedCount++;
+        if (loadedCount >= totalToLoad) setIsLoadingData(false);
+      }, (error) => {
+        toast({ title: `Erro ao carregar ${collectionName}`, description: error.message, variant: "destructive" });
+        loadedCount++;
+        if (loadedCount >= totalToLoad) setIsLoadingData(false);
+      });
     };
 
     const unsubscribers = [
-        createListener("items", query(collection(firestore, "items"), orderBy("name")), setItems),
-        createListener("patients", query(collection(firestore, "patients"), orderBy("name")), setPatients),
-        createListener("hospitals", query(collection(firestore, "hospitals"), orderBy("name")), setHospitals),
-        createListener("servedUnits", query(collection(firestore, "servedUnits"), orderBy("name")), setServedUnits),
-        createListener("stockConfigs", query(collection(firestore, "stockConfigs")), setStockConfigs),
+      createListener("items", query(collection(firestore, "items"), orderBy("name")), setItems),
+      createListener("patients", query(collection(firestore, "patients"), orderBy("name")), setPatients),
+      createListener("hospitals", query(collection(firestore, "hospitals"), orderBy("name")), setHospitals),
+      createListener("servedUnits", query(collection(firestore, "servedUnits"), orderBy("name")), setServedUnits),
+      createListener("stockConfigs", query(collection(firestore, "stockConfigs")), setStockConfigs),
     ];
 
     return () => unsubscribers.forEach(unsub => unsub());
@@ -105,14 +112,13 @@ export default function GeneralConsumptionPage() {
 
   useEffect(() => {
     if (!isLoadingData && currentUserProfile) {
-        if (currentUserProfile.associatedHospitalId) {
-            locationForm.setValue('hospitalId', currentUserProfile.associatedHospitalId);
-            if (currentUserProfile.associatedUnitId) {
-                locationForm.setValue('unitId', currentUserProfile.associatedUnitId);
-            }
-        }
+      locationForm.reset({
+          hospitalId: currentUserProfile.associatedHospitalId,
+          unitId: currentUserProfile.associatedUnitId,
+      });
     }
   }, [currentUserProfile, isLoadingData, locationForm]);
+
 
   const watchedHospitalId = locationForm.watch('hospitalId');
   const watchedUnitId = locationForm.watch('unitId');
@@ -125,7 +131,10 @@ export default function GeneralConsumptionPage() {
   }, [selectedLocation, patients]);
 
 
-  const isLocationSubmitButtonDisabled = isLoadingData || !watchedHospitalId || (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !watchedUnitId);
+  const isLocationSubmitButtonDisabled =
+    isLoadingData ||
+    !watchedHospitalId ||
+    (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !watchedUnitId);
 
   const handleLocationSubmit = (data: LocationSelectionFormData) => {
     const hospital = data.hospitalId === CENTRAL_WAREHOUSE_ID ? { id: CENTRAL_WAREHOUSE_ID, name: 'Almoxarifado Central' } : hospitals.find(h => h.id === data.hospitalId);
@@ -137,7 +146,7 @@ export default function GeneralConsumptionPage() {
     if (data.hospitalId !== CENTRAL_WAREHOUSE_ID) {
         if (data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER) {
             unitName = `Estoque Geral (${hospital.name})`;
-            unitIdForTx = undefined; // Processed as undefined for transaction logic
+            unitIdForTx = undefined; 
         } else {
             const unit = servedUnits.find(u => u.id === data.unitId);
             if (!unit) return toast({ title: "Unidade inválida", variant: "destructive" });
@@ -152,6 +161,7 @@ export default function GeneralConsumptionPage() {
     consumptionForm.reset({ items: [{ itemId: '', quantityConsumed: 1, notes: '' }], date: new Date().toISOString().split('T')[0] });
   };
 
+
   const handleConsumptionSubmit = async (data: ConsumptionDetailsFormData) => {
     if (!currentUserProfile || !user || !selectedLocation) {
         toast({ title: "Dados de usuário ou local insuficientes", variant: "destructive" });
@@ -162,7 +172,6 @@ export default function GeneralConsumptionPage() {
 
     try {
         await runTransaction(firestore, async (transaction) => {
-            // --- 1. READ PHASE ---
             const jobsToProcess: {
                 formInput: (typeof data.items)[0];
                 itemSnap: DocumentSnapshot<Item>;
@@ -170,6 +179,7 @@ export default function GeneralConsumptionPage() {
                 unitConfigDocId?: string;
             }[] = [];
 
+            // 1. Read Phase
             for (const itemData of data.items) {
                 if (!itemData.itemId || itemData.quantityConsumed <= 0) continue;
 
@@ -191,14 +201,14 @@ export default function GeneralConsumptionPage() {
                 jobsToProcess.push({ formInput: itemData, itemSnap, unitConfigSnap, unitConfigDocId });
             }
 
-            // --- 2. VALIDATION PHASE ---
+            // 2. Validation Phase
             for (const job of jobsToProcess) {
                 const currentItemData = job.itemSnap.data()!;
                 const quantityToConsume = job.formInput.quantityConsumed;
 
                 if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
                     if ((currentItemData.currentQuantityCentral ?? 0) < quantityToConsume) {
-                        throw new Error(`Estoque insuficiente no Almoxarifado Central para ${currentItemData.name}. Disponível: ${currentItemData.currentQuantityCentral}, Necessário: ${quantityToConsume}.`);
+                        throw new Error(`Estoque insuficiente no Almoxarifado Central para ${currentItemData.name}. Disponível: ${currentItemData.currentQuantityCentral ?? 0}, Necessário: ${quantityToConsume}.`);
                     }
                 } else {
                     if (!job.unitConfigSnap?.exists()) {
@@ -211,12 +221,11 @@ export default function GeneralConsumptionPage() {
                 }
             }
 
-            // --- 3. WRITE PHASE ---
+            // 3. Write Phase
             for (const job of jobsToProcess) {
                 const currentItemData = job.itemSnap.data()!;
                 const quantityToConsume = job.formInput.quantityConsumed;
 
-                // A. Update Stock Level
                 if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
                     const newQuantity = (currentItemData.currentQuantityCentral ?? 0) - quantityToConsume;
                     transaction.update(job.itemSnap.ref, { currentQuantityCentral: newQuantity });
@@ -227,7 +236,6 @@ export default function GeneralConsumptionPage() {
                     transaction.update(unitConfigDocRef, { currentQuantity: newQuantity });
                 }
 
-                // B. Create Movement Log
                 const patientDetails = data.patientId && data.patientId !== NO_PATIENT_ID ? patients.find(p => p.id === data.patientId) : null;
                 const newMovementRef = doc(collection(firestore, "stockMovements"));
                 
@@ -244,16 +252,16 @@ export default function GeneralConsumptionPage() {
                     patientId: patientDetails?.id,
                     patientName: patientDetails?.name,
                     notes: job.formInput.notes || null,
-                    userId: userWithId.id,
+                    userId: userWithId.id || "unknown_user_id",
                     userDisplayName: userWithId.name,
                 };
-
-                 Object.keys(movementLog).forEach(
-                    key => (movementLog as any)[key] === undefined && delete (movementLog as any)[key]
-                );
-                 Object.keys(movementLog).forEach(
-                    key => (movementLog as any)[key] === null && delete (movementLog as any)[key]
-                );
+                
+                Object.keys(movementLog).forEach(keyStr => {
+                    const key = keyStr as keyof typeof movementLog;
+                    if (movementLog[key] === undefined || movementLog[key] === null) {
+                        delete movementLog[key];
+                    }
+                });
 
                 transaction.set(newMovementRef, movementLog);
             }
@@ -262,7 +270,7 @@ export default function GeneralConsumptionPage() {
         toast({ title: "Consumo Registrado com Sucesso!" });
         setSelectedLocation(null);
         setStage('selectLocation');
-        locationForm.reset();
+        locationForm.reset({ hospitalId: '', unitId: ''});
         consumptionForm.reset();
 
     } catch (error: any) {
@@ -324,9 +332,20 @@ export default function GeneralConsumptionPage() {
                         <FormControl><SelectTrigger><SelectValue placeholder="Selecione a unidade..." /></SelectTrigger></FormControl>
                         <SelectContent>
                             {isLoadingData && <SelectItem value={LOADING_PLACEHOLDER} disabled>Carregando...</SelectItem>}
-                            {!isLoadingData && availableUnitsForSelection.length === 0 && !isSelectedHospitalUBS && <SelectItem value={NO_UNITS_FOR_HOSPITAL_PLACEHOLDER} disabled>Nenhuma unidade para este hospital</SelectItem>}
-                            {isSelectedHospitalUBS && <SelectItem value={GENERAL_STOCK_UNIT_ID_PLACEHOLDER} key={`key-${GENERAL_STOCK_UNIT_ID_PLACEHOLDER}`}>Estoque Geral da UBS</SelectItem>}
+                            
+                            {isSelectedHospitalUBS && (
+                                <SelectItem value={GENERAL_STOCK_UNIT_ID_PLACEHOLDER} key={GENERAL_STOCK_UNIT_ID_PLACEHOLDER}>
+                                    Estoque Geral da UBS
+                                </SelectItem>
+                            )}
+
                             {availableUnitsForSelection.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+
+                             {!isLoadingData && availableUnitsForSelection.length === 0 && !isSelectedHospitalUBS && (
+                                <SelectItem value={NO_UNITS_FOR_HOSPITAL_PLACEHOLDER} disabled>
+                                    Nenhuma unidade para este hospital
+                                </SelectItem>
+                             )}
                         </SelectContent>
                       </Select>
                        <FormDescription>Selecione a unidade específica ou o estoque geral da UBS.</FormDescription>
@@ -378,7 +397,7 @@ export default function GeneralConsumptionPage() {
                 )}
                 <FormField
                     control={consumptionForm.control}
-                    name="items.0.notes" // This is a bit of a hack, assumes notes are general
+                    name="items.0.notes" 
                     render={({ field }) => (
                     <FormItem>
                         <FormLabel>Observações Gerais (Opcional)</FormLabel>
