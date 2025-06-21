@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useForm } from 'react-hook-form';
@@ -20,7 +19,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, runTransaction, Transaction } from 'firebase/firestore';
+import { collection, doc, query, orderBy, onSnapshot, runTransaction, Transaction } from 'firebase/firestore';
 import Papa, { type ParseError } from 'papaparse';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useRouter } from 'next/navigation';
@@ -153,7 +152,7 @@ export async function processMovementRowTransaction(
                 itemId: movementData.itemId,
                 hospitalId: movementData.hospitalId!, // Should be valid at this point
                 currentQuantity: newTargetQuantity,
-                unitId: movementData.unitId || null, // Ensure it's explicitly null if not present
+                unitId: movementData.unitId ?? undefined, // Ensure it's explicitly null if not present
             };
 
             if (unitConfigSnap && unitConfigSnap.exists()) {
@@ -220,16 +219,21 @@ export async function processMovementRowTransaction(
         type: movementData.type as StockMovementType,
         quantity: movementData.quantity,
         date: movementData.date,
-        notes: movementData.notes || notesForLog || null,
-        hospitalId: movementData.hospitalId || null,
-        hospitalName: hospitalDetailsForLog?.name || hospitalNameForLog || null,
-        unitId: movementData.unitId || null,
-        unitName: unitDetailsForLog?.name || unitNameForLog || (isUbsGeneralStockMovement ? `Estoque Geral (${hospitalDetailsForLog?.name})` : (movementData.type === 'entry' || (!movementData.hospitalId && (movementData.type === 'exit' || movementData.type === 'consumption')) ? 'Armazém Central' : null)),
-        patientId: movementData.patientId || null,
-        patientName: patientDetailsForLog?.name || null,
-        userId: currentUserProfile.id || "unknown_user_id",
-        userDisplayName: currentUserProfile.name || "Unknown User",
+        notes: movementData.notes ?? notesForLog ?? undefined,
+        hospitalId: movementData.hospitalId ?? undefined,
+        hospitalName: hospitalDetailsForLog?.name ?? hospitalNameForLog ?? undefined,
+        unitId: movementData.unitId ?? undefined,
+        unitName: unitDetailsForLog?.name ?? unitNameForLog ?? (isUbsGeneralStockMovement ? `Estoque Geral (${hospitalDetailsForLog?.name})` : (movementData.type === 'entry' || (!movementData.hospitalId && (movementData.type === 'exit' || movementData.type === 'consumption')) ? 'Armazém Central' : undefined)),
+        patientId: movementData.patientId ?? undefined,
+        patientName: patientDetailsForLog?.name ?? undefined,
+        userId: (currentUserProfile as any).id || "unknown_user_id",
+        userDisplayName: currentUserProfile.name ?? "Unknown User",
     };
+    // Remove campos undefined
+    Object.keys(movementLog).forEach(
+      key => movementLog[key as keyof typeof movementLog] === undefined && delete movementLog[key as keyof typeof movementLog]
+    );
+    // Agora pode salvar no Firestore
     const stockMovementsCollectionRef = collection(firestore, "stockMovements");
     transaction.set(doc(stockMovementsCollectionRef), movementLog);
 }
@@ -855,8 +859,12 @@ const BatchImportMovementsForm = ({ items, servedUnits, hospitals, stockConfigs,
           const fileInput = document.getElementById('batch-movements-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
         },
-        error: (err) => {
-          toast({ title: "Erro Crítico de Leitura do CSV", description: `Não foi possível processar o arquivo CSV: ${err.message}. Verifique o formato.`, variant: "destructive" });
+        error: (error: Error, file: File) => {
+          toast({
+            title: "Erro Crítico de Leitura do CSV",
+            description: `Não foi possível processar o arquivo CSV: ${error.message}. Verifique o formato.`,
+            variant: "destructive"
+          });
           setIsProcessing(false);
         }
       });
@@ -1004,11 +1012,11 @@ export default function StockMovementsPage() {
       <PageHeader title="Registrar Entradas/Saídas (Almoxarifado Central)" description="Registre entradas de itens no sistema ou saídas para unidades/baixas." icon={ArrowRightLeft} />
       <Tabs defaultValue="manual" className="w-full">
         <TabsList className="grid w-full grid-cols-2 md:w-1/2 lg:w-1/3 mb-6">
-          <TabsTrigger value="manual" disabled={isLoadingData || (currentUserProfile && currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator')}>
+          <TabsTrigger value="manual" disabled={(isLoadingData || (currentUserProfile && currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator')) ?? false}>
             {isLoadingData && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Registrar Manualmente
           </TabsTrigger>
-          <TabsTrigger value="import" disabled={isLoadingData || (currentUserProfile && currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator')}>
+          <TabsTrigger value="import" disabled={(isLoadingData || (currentUserProfile && currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator')) ?? false}>
             {isLoadingData && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Importar Planilha CSV
           </TabsTrigger>
@@ -1039,7 +1047,7 @@ export default function StockMovementsPage() {
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="ml-3 text-muted-foreground">Carregando dados...</p>
             </div>
-          ) : (currentUserProfile && (currentUserProfile.role === 'admin' || currentUserProfile.role !== 'central_operator')) ? ( // Incorrect logic here, should be &&
+          ) : (currentUserProfile && (currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator')) ? (
             <BatchImportMovementsForm
                 items={items}
                 servedUnits={servedUnits}
@@ -1058,6 +1066,5 @@ export default function StockMovementsPage() {
     </div>
   );
 }
-    
 
-    
+

@@ -1,4 +1,3 @@
-
 export interface Item {
   id: string;
   name: string;
@@ -112,5 +111,15 @@ export interface UserProfile {
 // Represents the user object used throughout the app, including the id (uid from Auth)
 export interface User extends UserProfile {
   id: string; // Firebase Auth UID
+}
+
+export interface FirestoreStockConfig {
+  id?: string;
+  itemId: string;
+  unitId?: string;
+  hospitalId?: string;
+  strategicStockLevel: number;
+  minQuantity: number;
+  currentQuantity?: number;
 }
 
