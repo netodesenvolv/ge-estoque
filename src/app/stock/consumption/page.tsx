@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ShoppingCart, Loader2, X, Search } from 'lucide-react';
 import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, FirestoreStockConfig, User as AppUser } from '@/types';
 import { useState, useEffect, useMemo } from 'react';
@@ -363,8 +364,8 @@ export default function GeneralConsumptionPage() {
   }, [toast]);
   
   useEffect(() => {
-    if (isLoadingData || !currentUserProfile) {
-      return; 
+    if (isLoadingData || authLoading || !currentUserProfile) {
+      return;
     }
   
     const { role, associatedHospitalId, associatedUnitId } = currentUserProfile;
@@ -373,10 +374,9 @@ export default function GeneralConsumptionPage() {
     // Logic for operators with specific associations to bypass selection
     if (isOperator && associatedHospitalId) {
       const hospital = hospitals.find(h => h.id === associatedHospitalId);
-      if (!hospital) return; 
+      if (!hospital) return;
   
       let locationToSet = null;
-      // Case 1: Operator is tied to a specific unit.
       if (associatedUnitId) {
         const unit = servedUnits.find(u => u.id === associatedUnitId);
         if (unit) {
@@ -387,8 +387,7 @@ export default function GeneralConsumptionPage() {
             unitName: unit.name,
           };
         }
-      // Case 2: UBS Operator without a specific unit consumes from general stock.
-      } else if (role === 'ubs_operator') {
+      } else if (role === 'ubs_operator' || hospital.name.toLowerCase().includes('ubs')) {
         locationToSet = {
           hospitalId: associatedHospitalId,
           unitId: null,
@@ -397,26 +396,25 @@ export default function GeneralConsumptionPage() {
         };
       }
   
-      if (locationToSet) {
+      if (locationToSet && stage === 'selectLocation') {
         setSelectedLocation(locationToSet);
         setStage('fillForm');
-        consumptionForm.reset({ items: [], date: new Date().toISOString().split('T')[0] });
-        return; // Bypassed, so exit
+        consumptionForm.reset({ items: [{ itemId: '', quantityConsumed: 1, notes: '' }], date: new Date().toISOString().split('T')[0] });
+        return;
       }
     }
 
-    // Logic for pre-filling but not bypassing
     if (stage === 'selectLocation') {
-       if (currentUserProfile?.role === 'hospital_operator' && currentUserProfile?.associatedHospitalId) {
+       if (isOperator && associatedHospitalId) {
           locationForm.reset({
-            hospitalId: currentUserProfile.associatedHospitalId,
+            hospitalId: associatedHospitalId,
             unitId: undefined,
           });
        } else {
          locationForm.reset({ hospitalId: '', unitId: '' });
        }
     }
-  }, [stage, isLoadingData, currentUserProfile, hospitals, servedUnits, locationForm, consumptionForm]);
+  }, [stage, isLoadingData, authLoading, currentUserProfile, hospitals, servedUnits, locationForm, consumptionForm]);
 
 
   const isSelectedHospitalUBS = useMemo(() => {
@@ -462,57 +460,60 @@ export default function GeneralConsumptionPage() {
     try {
         const patientsRef = collection(firestore, "patients");
         const ubsId = isSelectedHospitalUBS ? selectedLocation?.hospitalId : null;
-        const results: { [id: string]: Patient } = {};
-
-        // Query for SUS card number first - this is efficient
-        if (/^\d{15}$/.test(patientSearchTerm)) {
-            const susQueryParts: any[] = [where("susCardNumber", "==", patientSearchTerm), limit(10)];
-            if (ubsId) {
-                susQueryParts.unshift(where("registeredUBSId", "==", ubsId));
-            }
-            const susQuery = query(patientsRef, ...susQueryParts);
-            const susSnap = await getDocs(susQuery);
-            susSnap.docs.forEach(doc => {
-                results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
-            });
-        }
         
-        // Query for name. This logic avoids the composite index error.
-        let nameQuery;
         if (ubsId) {
-            // This is the inefficient query to avoid the index error.
-            // It fetches ALL patients for the UBS.
-            nameQuery = query(patientsRef, where("registeredUBSId", "==", ubsId));
-        } else {
-            // This query is fine as it doesn't need a composite index.
-            nameQuery = query(patientsRef, where("name", ">=", patientSearchTerm), where("name", "<=", patientSearchTerm + '\uf8ff'), limit(10));
-        }
-        const nameSnap = await getDocs(nameQuery);
-        let nameDocs = nameSnap.docs;
+            // SCENARIO: User is at a UBS. Scope the search.
+            const q = query(patientsRef, where("registeredUBSId", "==", ubsId));
+            const querySnapshot = await getDocs(q);
 
-        // If we fetched all patients for a UBS, we must filter them on the client.
-        if (ubsId) {
-            nameDocs = nameDocs.filter(doc => 
-                doc.data().name.toLowerCase().includes(patientSearchTerm.toLowerCase())
-            );
-        }
+            const searchTermLower = patientSearchTerm.toLowerCase();
+            
+            const filteredPatients = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient))
+                .filter(patient => 
+                    patient.name.toLowerCase().includes(searchTermLower) || 
+                    patient.susCardNumber.includes(patientSearchTerm)
+                );
 
-        nameDocs.forEach(doc => {
-            if (!results[doc.id]) { // Avoid overwriting a perfect SUS match
-                results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+            setPatientSearchResults(filteredPatients.slice(0, 10)); // Limit results on the client
+            if (filteredPatients.length === 0) {
+                 toast({ title: "Nenhum Paciente Encontrado", description: "Nenhum paciente encontrado nesta UBS com os termos da busca." });
             }
-        });
-      
-        const uniqueResults = Object.values(results).slice(0, 10);
-        setPatientSearchResults(uniqueResults);
 
-        if (uniqueResults.length === 0) {
-            toast({ title: "Nenhum Paciente Encontrado" });
+        } else {
+            // SCENARIO: User is at Central Warehouse (or admin). Do a global search.
+            const results: { [id: string]: Patient } = {};
+            const term = patientSearchTerm;
+
+            if (/^\d{15}$/.test(term)) {
+                const susQuery = query(patientsRef, where("susCardNumber", "==", term), limit(10));
+                const susSnap = await getDocs(susQuery);
+                susSnap.docs.forEach(doc => {
+                    results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+                });
+            }
+
+            const nameQuery = query(
+                patientsRef,
+                where("name", ">=", term),
+                where("name", "<=", term + '\uf8ff'),
+                limit(10)
+            );
+            const nameSnap = await getDocs(nameQuery);
+            nameSnap.docs.forEach(doc => {
+                if (!results[doc.id]) {
+                    results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+                }
+            });
+
+            const uniqueResults = Object.values(results);
+            setPatientSearchResults(uniqueResults);
+            if (uniqueResults.length === 0) {
+                 toast({ title: "Nenhum Paciente Encontrado", description: "Verifique os termos de busca e tente novamente." });
+            }
         }
-
     } catch (error) {
-      console.error("Erro na Busca por Pacientes", error);
-      toast({ title: "Erro na Busca por Pacientes", variant: "destructive" });
+      console.error("Erro ao buscar pacientes: ", error);
+      toast({ title: "Erro na Busca", description: "Não foi possível realizar a busca por pacientes.", variant: "destructive" });
     } finally {
       setIsSearchingPatient(false);
     }
@@ -629,7 +630,7 @@ export default function GeneralConsumptionPage() {
 
       toast({ title: "Consumo Registrado com Sucesso!" });
       // Reset logic: if operator with specific role, stay on the form, otherwise go back to selection.
-      if (currentUserProfile.role === 'admin' || (currentUserProfile.role === 'hospital_operator' && !currentUserProfile.associatedUnitId)) {
+      if (currentUserProfile.role === 'admin' || currentUserProfile.role === 'central_operator' || (currentUserProfile.role === 'hospital_operator' && !currentUserProfile.associatedUnitId)) {
         setStage('selectLocation');
         locationForm.reset({ hospitalId: '', unitId: ''});
       }
