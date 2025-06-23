@@ -10,6 +10,7 @@ import AppNavigation from '@/components/AppNavigation';
 import AppLogo from '@/components/AppLogo';
 import { Button } from '@/components/ui/button';
 import { UserCircle, LogOut, Loader2 } from 'lucide-react';
+import { Toaster } from '@/components/ui/toaster';
 
 // Extracted UI component for authenticated users
 function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
@@ -66,38 +67,35 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
     return null;
   }
 
-  if (isAuthRoute) {
-    return <>{children}</>;
-  }
+  let pageContent: React.ReactNode;
 
-  if (authLoading) {
-     return (
+  if (isAuthRoute) {
+    pageContent = <>{children}</>;
+  } else if (authLoading) {
+    pageContent = (
       <div className="flex h-screen items-center justify-center">
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Carregando aplicação...</p>
       </div>
     );
-  }
-
-  if (!user && !isAuthRoute) {
-    return (
+  } else if (!user) {
+    // This case is typically handled by the redirect in AuthContext,
+    // but we can keep a loading screen as a fallback.
+    pageContent = (
       <div className="flex h-screen items-center justify-center">
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Verificando autenticação...</p>
       </div>
     );
-  }
-  
-  if (user) {
-    return <AuthenticatedLayout>{children}</AuthenticatedLayout>;
+  } else {
+    // user is present
+    pageContent = <AuthenticatedLayout>{children}</AuthenticatedLayout>;
   }
 
-  // Fallback for unexpected states
   return (
-    <div className="flex h-screen items-center justify-center">
-       <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
-       <p className="text-lg text-muted-foreground">Redirecionando...</p>
-    </div>
+    <>
+      {pageContent}
+      <Toaster />
+    </>
   );
 }
-    

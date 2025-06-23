@@ -1,7 +1,6 @@
 
 import type { Metadata } from 'next';
 import './globals.css';
-import { Toaster } from '@/components/ui/toaster';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { LayoutRenderer } from '@/components/LayoutRenderer'; // Importar do novo local
 
@@ -27,7 +26,6 @@ export default function RootLayout({
         <AuthProvider>
           <LayoutRenderer>{children}</LayoutRenderer>
         </AuthProvider>
-        <Toaster />
       </body>
     </html>
   );
