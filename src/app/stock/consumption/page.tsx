@@ -1,17 +1,17 @@
+
 'use client';
 
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
-import { ShoppingCart, User, Loader2, X, Search } from 'lucide-react';
-import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockItemConfig as FirestoreStockConfig, User as AppUser } from '@/types';
+import { ShoppingCart, Loader2, X, Search } from 'lucide-react';
+import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockItemConfig as FirestoreStockConfig, User as AppUser, UserRole } from '@/types';
 import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -22,10 +22,8 @@ import { collection, query, orderBy, onSnapshot, doc, runTransaction, type Docum
 const CENTRAL_WAREHOUSE_ID = "__CENTRAL_WAREHOUSE__";
 const GENERAL_STOCK_UNIT_ID_PLACEHOLDER = "__GENERAL_STOCK_UNIT__";
 const UBS_GENERAL_STOCK_SUFFIX = "UBSGENERAL";
-const NO_PATIENT_ID = "__NO_PATIENT__";
-const LOADING_PLACEHOLDER = "__LOADING__";
 const NO_UNITS_FOR_HOSPITAL_PLACEHOLDER = "__NO_UNITS_FOR_HOSPITAL__";
-
+const LOADING_PLACEHOLDER = "__LOADING__";
 
 // --- Zod Schemas ---
 const locationSelectionSchema = z.object({
@@ -47,7 +45,264 @@ const consumptionDetailsSchema = z.object({
 type LocationSelectionFormData = z.infer<typeof locationSelectionSchema>;
 type ConsumptionDetailsFormData = z.infer<typeof consumptionDetailsSchema>;
 
-// --- Component ---
+// --- Helper Components ---
+
+interface LocationSelectionFormProps {
+  locationForm: any; // react-hook-form's `useForm` return type
+  handleLocationSubmit: (data: LocationSelectionFormData) => void;
+  isLoadingData: boolean;
+  currentUserProfile: UserProfile | null;
+  hospitals: Hospital[];
+  servedUnits: ServedUnit[];
+}
+
+const LocationSelectionForm = ({
+  locationForm,
+  handleLocationSubmit,
+  isLoadingData,
+  currentUserProfile,
+  hospitals,
+  servedUnits,
+}: LocationSelectionFormProps) => {
+  const watchedHospitalId = locationForm.watch('hospitalId');
+
+  const isSelectedHospitalUBS = useMemo(() => {
+    if (!watchedHospitalId) return false;
+    return hospitals.find(h => h.id === watchedHospitalId)?.name.toLowerCase().includes('ubs') || false;
+  }, [watchedHospitalId, hospitals]);
+
+  const availableUnitsForSelection = useMemo(() => {
+    if (!watchedHospitalId) return [];
+    return servedUnits.filter(u => u.hospitalId === watchedHospitalId)
+  }, [watchedHospitalId, servedUnits]);
+
+  const isButtonDisabled = !watchedHospitalId || (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !watchedHospitalId);
+
+
+  if (isLoadingData) {
+      return (
+          <Card>
+              <CardHeader>
+                  <CardTitle>1. Selecione o Local do Consumo</CardTitle>
+                  <CardDescription>Indique de onde o item foi consumido.</CardDescription>
+              </CardHeader>
+              <CardContent className="h-48 flex items-center justify-center">
+                  <Loader2 className="animate-spin h-8 w-8 text-primary" />
+                  <p className="ml-2 text-muted-foreground">Carregando locais...</p>
+              </CardContent>
+          </Card>
+      );
+  }
+
+  return (
+    <Card>
+      <Form {...locationForm}>
+        <form onSubmit={locationForm.handleSubmit(handleLocationSubmit)}>
+          <CardHeader>
+            <CardTitle>1. Selecione o Local do Consumo</CardTitle>
+            <CardDescription>Indique de onde o item foi consumido.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <FormField name="hospitalId" control={locationForm.control} render={({ field }) => (
+              <FormItem>
+                <FormLabel>Hospital / Almoxarifado</FormLabel>
+                <Select
+                  onValueChange={(value) => {
+                    field.onChange(value);
+                    locationForm.setValue('unitId', undefined, { shouldValidate: true });
+                  }}
+                  value={field.value}
+                  disabled={!!currentUserProfile?.associatedHospitalId}
+                >
+                  <FormControl><SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger></FormControl>
+                  <SelectContent>
+                    {(currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator') && <SelectItem value={CENTRAL_WAREHOUSE_ID}>Almoxarifado Central</SelectItem>}
+                    {hospitals.map(h => <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
+
+            {watchedHospitalId && watchedHospitalId !== CENTRAL_WAREHOUSE_ID && (
+              <FormField name="unitId" control={locationForm.control} render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Unidade Servida / Estoque Geral</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value} disabled={!!currentUserProfile?.associatedUnitId}>
+                    <FormControl><SelectTrigger><SelectValue placeholder="Selecione a unidade..." /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      {isSelectedHospitalUBS && (
+                        <SelectItem value={GENERAL_STOCK_UNIT_ID_PLACEHOLDER} key={GENERAL_STOCK_UNIT_ID_PLACEHOLDER}>
+                          Estoque Geral da UBS
+                        </SelectItem>
+                      )}
+                      {availableUnitsForSelection.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+                      {!isSelectedHospitalUBS && availableUnitsForSelection.length === 0 && (
+                        <SelectItem value={NO_UNITS_FOR_HOSPITAL_PLACEHOLDER} disabled>
+                          Nenhuma unidade para este hospital
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>Selecione a unidade específica ou o estoque geral da UBS.</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            )}
+          </CardContent>
+          <CardFooter>
+            <Button type="submit" disabled={isButtonDisabled}>
+              Prosseguir para Detalhes do Consumo
+            </Button>
+          </CardFooter>
+        </form>
+      </Form>
+    </Card>
+  );
+};
+
+interface ConsumptionDetailsFormProps {
+  consumptionForm: any;
+  handleConsumptionSubmit: (data: ConsumptionDetailsFormData) => void;
+  isSubmitting: boolean;
+  selectedLocation: { hospitalId: string; unitId?: string | null; hospitalName: string; unitName: string };
+  setSelectedLocation: (location: any) => void;
+  setStage: (stage: 'selectLocation' | 'fillForm') => void;
+  items: Item[];
+  stockConfigs: FirestoreStockConfig[];
+  patientSearchTerm: string;
+  setPatientSearchTerm: (term: string) => void;
+  patientSearchResults: Patient[];
+  handlePatientSearch: () => void;
+  isSearchingPatient: boolean;
+  selectedPatient: Patient | null;
+  handleSelectPatient: (patient: Patient) => void;
+  handleClearPatientSelection: () => void;
+  isSelectedHospitalUBS: boolean;
+}
+
+const ConsumptionDetailsForm = ({
+    consumptionForm,
+    handleConsumptionSubmit,
+    isSubmitting,
+    selectedLocation,
+    setSelectedLocation,
+    setStage,
+    items,
+    stockConfigs,
+    patientSearchTerm,
+    setPatientSearchTerm,
+    patientSearchResults,
+    handlePatientSearch,
+    isSearchingPatient,
+    selectedPatient,
+    handleSelectPatient,
+    handleClearPatientSelection,
+    isSelectedHospitalUBS
+  }: ConsumptionDetailsFormProps) => {
+
+    const { fields, append, remove } = useFieldArray({ control: consumptionForm.control, name: "items" });
+    
+    const getDisplayStockForItemAtSelectedLocation = (itemId: string): number | string => {
+        if (!selectedLocation || !itemId) return 'N/A';
+        
+        if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
+            return items.find(i => i.id === itemId)?.currentQuantityCentral ?? 0;
+        }
+        
+        const configId = selectedLocation.unitId
+          ? `${itemId}_${selectedLocation.unitId}`
+          : `${itemId}_${selectedLocation.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
+          
+        return stockConfigs.find(sc => sc.id === configId)?.currentQuantity ?? 0;
+    };
+
+    return (
+        <Card>
+          <Form {...consumptionForm}>
+            <form onSubmit={consumptionForm.handleSubmit(handleConsumptionSubmit)}>
+              <CardHeader>
+                <CardTitle>2. Detalhes do Consumo</CardTitle>
+                <CardDescription>Local: <span className="font-semibold">{selectedLocation?.unitName}</span></CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div>
+                  {fields.map((field, index) => (
+                    <div key={field.id} className="grid grid-cols-[1fr_auto_auto_auto] items-end gap-2 mb-2 p-2 border rounded-md">
+                      <FormField name={`items.${index}.itemId`} control={consumptionForm.control} render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Item</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Selecione o item" /></SelectTrigger></FormControl><SelectContent>{items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} (Disp: {getDisplayStockForItemAtSelectedLocation(item.id)})</SelectItem>)}</SelectContent></Select>
+                            <FormMessage />
+                          </FormItem>
+                      )} />
+                       <FormField name={`items.${index}.quantityConsumed`} control={consumptionForm.control} render={({ field }) => (
+                        <FormItem><FormLabel>Qtd</FormLabel><FormControl><Input type="number" placeholder="Qtd" {...field} className="w-24" /></FormControl><FormMessage /></FormItem>
+                      )} />
+                       <FormField name={`items.${index}.notes`} control={consumptionForm.control} render={({ field }) => (
+                         <FormItem className="w-full"><FormLabel>Obs.</FormLabel><FormControl><Input placeholder="Lote, etc." {...field} /></FormControl><FormMessage /></FormItem>
+                       )} />
+                      <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)}><X className="h-4 w-4" /></Button>
+                    </div>))}
+                  <Button type="button" variant="outline" size="sm" onClick={() => append({ itemId: '', quantityConsumed: 1, notes: '' })} className="mt-2">Adicionar Item</Button>
+                </div>
+                <FormField name="date" control={consumptionForm.control} render={({ field }) => <FormItem><FormLabel>Data</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>} />
+                
+                {selectedLocation?.hospitalId !== CENTRAL_WAREHOUSE_ID && isSelectedHospitalUBS && (
+                    <div className="space-y-2">
+                      <FormLabel>Paciente (Opcional)</FormLabel>
+                      {selectedPatient ? (
+                          <div className="flex items-center justify-between p-2 border rounded-md bg-muted">
+                            <div>
+                              <p className="font-semibold">{selectedPatient.name}</p>
+                              <p className="text-sm text-muted-foreground">SUS: {selectedPatient.susCardNumber}</p>
+                            </div>
+                            <Button variant="ghost" size="icon" onClick={handleClearPatientSelection}><X className="h-4 w-4" /></Button>
+                          </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2">
+                              <Input
+                                placeholder="Buscar por nome ou nº do Cartão SUS"
+                                value={patientSearchTerm}
+                                onChange={(e) => setPatientSearchTerm(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handlePatientSearch(); }}}
+                              />
+                              <Button type="button" onClick={handlePatientSearch} disabled={isSearchingPatient}>
+                                  {isSearchingPatient ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                              </Button>
+                          </div>
+                          {patientSearchResults.length > 0 && (
+                              <Card className="mt-2 p-2 max-h-48 overflow-y-auto">
+                                <ul className="space-y-1">
+                                  {patientSearchResults.map(p => (
+                                    <li key={p.id} onClick={() => handleSelectPatient(p)}
+                                        className="p-2 rounded-md hover:bg-accent cursor-pointer text-sm">
+                                      <p className="font-semibold">{p.name}</p>
+                                      <p className="text-muted-foreground">SUS: {p.susCardNumber}</p>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </Card>
+                          )}
+                        </>
+                      )}
+                      <FormDescription>Se o consumo for para um paciente específico, busque e selecione-o.</FormDescription>
+                  </div>
+                )}
+              </CardContent>
+              <CardFooter className="flex justify-between">
+                <Button type="button" variant="ghost" onClick={() => { setSelectedLocation(null); setStage('selectLocation'); }}>Voltar</Button>
+                <Button type="submit" disabled={isSubmitting}>{isSubmitting ? <Loader2 className="animate-spin" /> : 'Registrar Consumo'}</Button>
+              </CardFooter>
+            </form>
+          </Form>
+        </Card>
+      );
+};
+
+
+// --- Main Page Component ---
 export default function GeneralConsumptionPage() {
   const { toast } = useToast();
   const { currentUserProfile, user } = useAuth();
@@ -64,7 +319,7 @@ export default function GeneralConsumptionPage() {
   const [stage, setStage] = useState<'selectLocation' | 'fillForm'>('selectLocation');
   const [selectedLocation, setSelectedLocation] = useState<{
     hospitalId: string;
-    unitId?: string;
+    unitId?: string | null;
     hospitalName: string;
     unitName: string;
   } | null>(null);
@@ -84,19 +339,18 @@ export default function GeneralConsumptionPage() {
     resolver: zodResolver(consumptionDetailsSchema),
     defaultValues: { items: [], date: new Date().toISOString().split('T')[0] },
   });
-  const { fields, append, remove } = useFieldArray({ control: consumptionForm.control, name: "items" });
 
   useEffect(() => {
     let loadedCount = 0;
-    const sourcesToLoad = ["items", "hospitals", "servedUnits", "stockConfigs"];
+    const sourcesToLoad = 4;
     
     const checkAllLoaded = () => {
-        if(loadedCount >= sourcesToLoad.length){
+        if(loadedCount >= sourcesToLoad){
             setIsLoadingData(false);
         }
     };
 
-    const createListener = (collectionName: string, q: any, setter: React.Dispatch<React.SetStateAction<any[]>>, sourceKey: string) => {
+    const createListener = (collectionName: string, q: any, setter: React.Dispatch<React.SetStateAction<any[]>>) => {
       return onSnapshot(q, (snapshot) => {
         setter(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
         loadedCount++;
@@ -109,10 +363,10 @@ export default function GeneralConsumptionPage() {
     };
 
     const unsubscribers = [
-      createListener("items", query(collection(firestore, "items"), orderBy("name")), setItems, "items"),
-      createListener("hospitals", query(collection(firestore, "hospitals"), orderBy("name")), setHospitals, "hospitals"),
-      createListener("servedUnits", query(collection(firestore, "servedUnits"), orderBy("name")), setServedUnits, "servedUnits"),
-      createListener("stockConfigs", query(collection(firestore, "stockConfigs")), setStockConfigs, "stockConfigs"),
+      createListener("items", query(collection(firestore, "items"), orderBy("name")), setItems),
+      createListener("hospitals", query(collection(firestore, "hospitals"), orderBy("name")), setHospitals),
+      createListener("servedUnits", query(collection(firestore, "servedUnits"), orderBy("name")), setServedUnits),
+      createListener("stockConfigs", query(collection(firestore, "stockConfigs")), setStockConfigs),
     ];
 
     return () => unsubscribers.forEach(unsub => unsub());
@@ -127,36 +381,30 @@ export default function GeneralConsumptionPage() {
     }
   }, [currentUserProfile, isLoadingData, locationForm]);
 
-  const watchedHospitalId = locationForm.watch('hospitalId');
-  
-  const availableUnitsForSelection = useMemo(() => {
-      if (!watchedHospitalId) return [];
-      return servedUnits.filter(u => u.hospitalId === watchedHospitalId)
-  }, [watchedHospitalId, servedUnits]);
-
   const isSelectedHospitalUBS = useMemo(() => {
-      if (!watchedHospitalId) return false;
-      return hospitals.find(h => h.id === watchedHospitalId)?.name.toLowerCase().includes('ubs') || false;
-  }, [watchedHospitalId, hospitals]);
+    if (!selectedLocation?.hospitalId) return false;
+    return hospitals.find(h => h.id === selectedLocation.hospitalId)?.name.toLowerCase().includes('ubs') || false;
+  }, [selectedLocation, hospitals]);
+
 
   const handleLocationSubmit = (data: LocationSelectionFormData) => {
     const hospital = data.hospitalId === CENTRAL_WAREHOUSE_ID ? { id: CENTRAL_WAREHOUSE_ID, name: 'Almoxarifado Central' } : hospitals.find(h => h.id === data.hospitalId);
     if (!hospital) return toast({ title: "Hospital inválido", variant: "destructive" });
 
     let unitName = hospital.name;
-    let unitIdForTx = data.unitId;
+    let unitIdForTx: string | undefined | null = data.unitId;
 
     if (data.hospitalId !== CENTRAL_WAREHOUSE_ID) {
         if (data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER) {
             unitName = `Estoque Geral (${hospital.name})`;
-            unitIdForTx = undefined; 
+            unitIdForTx = null; // Use null for general stock
         } else {
             const unit = servedUnits.find(u => u.id === data.unitId);
             if (!unit) return toast({ title: "Unidade inválida", variant: "destructive" });
             unitName = unit.name;
         }
     } else {
-        unitIdForTx = undefined;
+        unitIdForTx = null;
     }
 
     setSelectedLocation({ hospitalId: data.hospitalId, unitId: unitIdForTx, hospitalName: hospital.name, unitName });
@@ -295,7 +543,7 @@ export default function GeneralConsumptionPage() {
 
                 const newMovementRef = doc(collection(firestore, "stockMovements"));
                 
-                const movementLog: Partial<Omit<StockMovement, 'id'>> = {
+                const movementLog: Omit<StockMovement, 'id'> = {
                     itemId: job.formInput.itemId,
                     itemName: currentItemData.name,
                     type: 'consumption',
@@ -303,11 +551,11 @@ export default function GeneralConsumptionPage() {
                     date: data.date,
                     hospitalId: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalId : null,
                     hospitalName: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalName : null,
-                    unitId: selectedLocation.unitId,
+                    unitId: selectedLocation.unitId ?? null,
                     unitName: selectedLocation.unitName,
-                    patientId: selectedPatient?.id,
-                    patientName: selectedPatient?.name,
-                    notes: job.formInput.notes || null,
+                    notes: job.formInput.notes ?? null,
+                    patientId: selectedPatient?.id ?? null,
+                    patientName: selectedPatient?.name ?? null,
                     userId: userWithId.id || "unknown_user_id",
                     userDisplayName: userWithId.name,
                 };
@@ -330,177 +578,41 @@ export default function GeneralConsumptionPage() {
     }
   };
 
-  const getDisplayStockForItemAtSelectedLocation = (itemId: string): number | string => {
-    if (!selectedLocation || !itemId) return 'N/A';
-    
-    if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
-        return items.find(i => i.id === itemId)?.currentQuantityCentral ?? 0;
-    }
-    
-    const configId = selectedLocation.unitId
-      ? `${itemId}_${selectedLocation.unitId}`
-      : `${itemId}_${selectedLocation.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
-      
-    return stockConfigs.find(sc => sc.id === configId)?.currentQuantity ?? 0;
-  };
-
-  const LocationSelectionForm = () => {
-    const isButtonDisabled = !watchedHospitalId || (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !locationForm.getValues('unitId'));
-
-    return (
-      <Card>
-        <Form {...locationForm}>
-          <form onSubmit={locationForm.handleSubmit(handleLocationSubmit)}>
-            <CardHeader>
-                <CardTitle>1. Selecione o Local do Consumo</CardTitle>
-                <CardDescription>Indique de onde o item foi consumido.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <FormField name="hospitalId" control={locationForm.control} render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Hospital / Almoxarifado</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value} disabled={!!currentUserProfile?.associatedHospitalId}>
-                    <FormControl><SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger></FormControl>
-                    <SelectContent>
-                      {(currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator') && <SelectItem value={CENTRAL_WAREHOUSE_ID}>Almoxarifado Central</SelectItem>}
-                      {hospitals.map(h => <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )} />
-
-              {watchedHospitalId && watchedHospitalId !== CENTRAL_WAREHOUSE_ID && (
-                <FormField name="unitId" control={locationForm.control} render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Unidade Servida / Estoque Geral</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value} disabled={!!currentUserProfile?.associatedUnitId}>
-                      <FormControl><SelectTrigger><SelectValue placeholder="Selecione a unidade..." /></SelectTrigger></FormControl>
-                      <SelectContent>
-                          {isSelectedHospitalUBS && (
-                              <SelectItem value={GENERAL_STOCK_UNIT_ID_PLACEHOLDER} key={GENERAL_STOCK_UNIT_ID_PLACEHOLDER}>
-                                  Estoque Geral da UBS
-                              </SelectItem>
-                          )}
-                          {availableUnitsForSelection.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
-                           {!isSelectedHospitalUBS && availableUnitsForSelection.length === 0 && (
-                              <SelectItem value={NO_UNITS_FOR_HOSPITAL_PLACEHOLDER} disabled>
-                                  Nenhuma unidade para este hospital
-                              </SelectItem>
-                           )}
-                      </SelectContent>
-                    </Select>
-                     <FormDescription>Selecione a unidade específica ou o estoque geral da UBS.</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )} />
-              )}
-            </CardContent>
-            <CardFooter>
-              <Button type="submit" disabled={isButtonDisabled}>
-                  Prosseguir para Detalhes do Consumo
-              </Button>
-            </CardFooter>
-          </form>
-        </Form>
-      </Card>
-    );
-  };
-
-  const ConsumptionDetailsForm = () => (
-    <Card>
-      <Form {...consumptionForm}>
-        <form onSubmit={consumptionForm.handleSubmit(handleConsumptionSubmit)}>
-          <CardHeader>
-            <CardTitle>2. Detalhes do Consumo</CardTitle>
-            <CardDescription>Local: <span className="font-semibold">{selectedLocation?.unitName}</span></CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div>
-              {fields.map((field, index) => (
-                <div key={field.id} className="grid grid-cols-[1fr_auto_auto_auto] items-end gap-2 mb-2 p-2 border rounded-md">
-                  <FormField name={`items.${index}.itemId`} control={consumptionForm.control} render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Item</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Selecione o item" /></SelectTrigger></FormControl><SelectContent>{items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} (Disp: {getDisplayStockForItemAtSelectedLocation(item.id)})</SelectItem>)}</SelectContent></Select>
-                        <FormMessage />
-                      </FormItem>
-                  )} />
-                   <FormField name={`items.${index}.quantityConsumed`} control={consumptionForm.control} render={({ field }) => (
-                    <FormItem><FormLabel>Qtd</FormLabel><FormControl><Input type="number" placeholder="Qtd" {...field} className="w-24" /></FormControl><FormMessage /></FormItem>
-                  )} />
-                   <FormField name={`items.${index}.notes`} control={consumptionForm.control} render={({ field }) => (
-                     <FormItem className="w-full"><FormLabel>Obs.</FormLabel><FormControl><Input placeholder="Lote, etc." {...field} /></FormControl><FormMessage /></FormItem>
-                   )} />
-                  <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)}><X className="h-4 w-4" /></Button>
-                </div>))}
-              <Button type="button" variant="outline" size="sm" onClick={() => append({ itemId: '', quantityConsumed: 1, notes: '' })} className="mt-2">Adicionar Item</Button>
-            </div>
-            <FormField name="date" control={consumptionForm.control} render={({ field }) => <FormItem><FormLabel>Data</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>} />
-            
-            {selectedLocation?.hospitalId !== CENTRAL_WAREHOUSE_ID && isSelectedHospitalUBS && (
-                <div className="space-y-2">
-                  <FormLabel>Paciente (Opcional)</FormLabel>
-                  {selectedPatient ? (
-                      <div className="flex items-center justify-between p-2 border rounded-md bg-muted">
-                        <div>
-                          <p className="font-semibold">{selectedPatient.name}</p>
-                          <p className="text-sm text-muted-foreground">SUS: {selectedPatient.susCardNumber}</p>
-                        </div>
-                        <Button variant="ghost" size="icon" onClick={handleClearPatientSelection}><X className="h-4 w-4" /></Button>
-                      </div>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2">
-                          <Input
-                            placeholder="Buscar por nome ou nº do Cartão SUS"
-                            value={patientSearchTerm}
-                            onChange={(e) => setPatientSearchTerm(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handlePatientSearch(); }}}
-                          />
-                          <Button type="button" onClick={handlePatientSearch} disabled={isSearchingPatient}>
-                              {isSearchingPatient ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                          </Button>
-                      </div>
-                      {patientSearchResults.length > 0 && (
-                          <Card className="mt-2 p-2 max-h-48 overflow-y-auto">
-                            <ul className="space-y-1">
-                              {patientSearchResults.map(p => (
-                                <li key={p.id} onClick={() => handleSelectPatient(p)}
-                                    className="p-2 rounded-md hover:bg-accent cursor-pointer text-sm">
-                                  <p className="font-semibold">{p.name}</p>
-                                  <p className="text-muted-foreground">SUS: {p.susCardNumber}</p>
-                                </li>
-                              ))}
-                            </ul>
-                          </Card>
-                      )}
-                    </>
-                  )}
-                  <FormDescription>Se o consumo for para um paciente específico, busque e selecione-o.</FormDescription>
-              </div>
-            )}
-          </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button type="button" variant="ghost" onClick={() => { setSelectedLocation(null); setStage('selectLocation'); }}>Voltar</Button>
-            <Button type="submit" disabled={isSubmitting}>{isSubmitting ? <Loader2 className="animate-spin" /> : 'Registrar Consumo'}</Button>
-          </CardFooter>
-        </form>
-      </Form>
-    </Card>
-  );
 
   return (
     <div className="container max-w-4xl mx-auto py-4">
       <PageHeader title="Registrar Consumo" icon={ShoppingCart} />
       
-      {isLoadingData ? (
-        <div className="flex justify-center p-8">
-          <Loader2 className="animate-spin h-8 w-8 text-primary" />
-        </div>
-      ) : (
-        stage === 'selectLocation' ? <LocationSelectionForm /> : <ConsumptionDetailsForm />
-      )}
+      {stage === 'selectLocation' ? (
+        <LocationSelectionForm 
+          locationForm={locationForm}
+          handleLocationSubmit={handleLocationSubmit}
+          isLoadingData={isLoadingData}
+          currentUserProfile={currentUserProfile}
+          hospitals={hospitals}
+          servedUnits={servedUnits}
+        />
+      ) : selectedLocation ? (
+        <ConsumptionDetailsForm 
+          consumptionForm={consumptionForm}
+          handleConsumptionSubmit={handleConsumptionSubmit}
+          isSubmitting={isSubmitting}
+          selectedLocation={selectedLocation}
+          setSelectedLocation={setSelectedLocation}
+          setStage={setStage}
+          items={items}
+          stockConfigs={stockConfigs}
+          patientSearchTerm={patientSearchTerm}
+          setPatientSearchTerm={setPatientSearchTerm}
+          patientSearchResults={patientSearchResults}
+          handlePatientSearch={handlePatientSearch}
+          isSearchingPatient={isSearchingPatient}
+          selectedPatient={selectedPatient}
+          handleSelectPatient={handleSelectPatient}
+          handleClearPatientSelection={handleClearPatientSelection}
+          isSelectedHospitalUBS={isSelectedHospitalUBS}
+        />
+      ) : null}
     </div>
   );
 }
