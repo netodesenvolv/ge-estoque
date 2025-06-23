@@ -8,15 +8,16 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { ShoppingCart, Loader2, X, Search } from 'lucide-react';
-import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockItemConfig as FirestoreStockConfig, User as AppUser, UserRole } from '@/types';
+import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, FirestoreStockConfig, User as AppUser } from '@/types';
 import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, runTransaction, type DocumentSnapshot, where, getDocs, limit } from 'firebase/firestore';
+import { collection, doc, query, orderBy, onSnapshot, runTransaction, type DocumentSnapshot, where, getDocs, limit } from 'firebase/firestore';
 
 // --- Constants ---
 const CENTRAL_WAREHOUSE_ID = "__CENTRAL_WAREHOUSE__";
@@ -45,12 +46,11 @@ const consumptionDetailsSchema = z.object({
 type LocationSelectionFormData = z.infer<typeof locationSelectionSchema>;
 type ConsumptionDetailsFormData = z.infer<typeof consumptionDetailsSchema>;
 
-// --- Helper Components ---
 
+// --- Helper Components (Moved Outside for Stability) ---
 interface LocationSelectionFormProps {
-  locationForm: any; // react-hook-form's `useForm` return type
+  locationForm: any;
   handleLocationSubmit: (data: LocationSelectionFormData) => void;
-  isLoadingData: boolean;
   currentUserProfile: UserProfile | null;
   hospitals: Hospital[];
   servedUnits: ServedUnit[];
@@ -59,7 +59,6 @@ interface LocationSelectionFormProps {
 const LocationSelectionForm = ({
   locationForm,
   handleLocationSubmit,
-  isLoadingData,
   currentUserProfile,
   hospitals,
   servedUnits,
@@ -77,22 +76,6 @@ const LocationSelectionForm = ({
   }, [watchedHospitalId, servedUnits]);
 
   const isButtonDisabled = !watchedHospitalId || (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !watchedHospitalId);
-
-
-  if (isLoadingData) {
-      return (
-          <Card>
-              <CardHeader>
-                  <CardTitle>1. Selecione o Local do Consumo</CardTitle>
-                  <CardDescription>Indique de onde o item foi consumido.</CardDescription>
-              </CardHeader>
-              <CardContent className="h-48 flex items-center justify-center">
-                  <Loader2 className="animate-spin h-8 w-8 text-primary" />
-                  <p className="ml-2 text-muted-foreground">Carregando locais...</p>
-              </CardContent>
-          </Card>
-      );
-  }
 
   return (
     <Card>
@@ -301,11 +284,10 @@ const ConsumptionDetailsForm = ({
       );
 };
 
-
 // --- Main Page Component ---
 export default function GeneralConsumptionPage() {
   const { toast } = useToast();
-  const { currentUserProfile, user } = useAuth();
+  const { currentUserProfile, loading: authLoading, user } = useAuth();
   
   // Master Data States
   const [items, setItems] = useState<Item[]>([]);
@@ -330,7 +312,6 @@ export default function GeneralConsumptionPage() {
   const [isSearchingPatient, setIsSearchingPatient] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
 
-
   const locationForm = useForm<LocationSelectionFormData>({
     resolver: zodResolver(locationSelectionSchema),
     defaultValues: { hospitalId: '', unitId: '' }
@@ -341,24 +322,23 @@ export default function GeneralConsumptionPage() {
   });
 
   useEffect(() => {
-    let loadedCount = 0;
     const sourcesToLoad = 4;
+    let loadedCount = 0;
     
     const checkAllLoaded = () => {
-        if(loadedCount >= sourcesToLoad){
-            setIsLoadingData(false);
-        }
+      loadedCount++;
+      if (loadedCount >= sourcesToLoad) {
+        setIsLoadingData(false);
+      }
     };
 
     const createListener = (collectionName: string, q: any, setter: React.Dispatch<React.SetStateAction<any[]>>) => {
       return onSnapshot(q, (snapshot) => {
         setter(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
-        loadedCount++;
         checkAllLoaded();
       }, (error) => {
-        toast({ title: `Erro ao carregar ${collectionName}`, description: `Verifique as permissões do Firestore. Detalhe: ${error.message}`, variant: "destructive" });
-        loadedCount++;
-        checkAllLoaded();
+        toast({ title: `Erro ao carregar ${collectionName}`, variant: "destructive" });
+        checkAllLoaded(); // Still count as "loaded" to unblock UI
       });
     };
 
@@ -375,8 +355,8 @@ export default function GeneralConsumptionPage() {
   useEffect(() => {
     if (!isLoadingData && currentUserProfile) {
       locationForm.reset({
-          hospitalId: currentUserProfile.associatedHospitalId,
-          unitId: currentUserProfile.associatedUnitId,
+        hospitalId: currentUserProfile.associatedHospitalId,
+        unitId: currentUserProfile.associatedUnitId,
       });
     }
   }, [currentUserProfile, isLoadingData, locationForm]);
@@ -386,7 +366,6 @@ export default function GeneralConsumptionPage() {
     return hospitals.find(h => h.id === selectedLocation.hospitalId)?.name.toLowerCase().includes('ubs') || false;
   }, [selectedLocation, hospitals]);
 
-
   const handleLocationSubmit = (data: LocationSelectionFormData) => {
     const hospital = data.hospitalId === CENTRAL_WAREHOUSE_ID ? { id: CENTRAL_WAREHOUSE_ID, name: 'Almoxarifado Central' } : hospitals.find(h => h.id === data.hospitalId);
     if (!hospital) return toast({ title: "Hospital inválido", variant: "destructive" });
@@ -395,16 +374,16 @@ export default function GeneralConsumptionPage() {
     let unitIdForTx: string | undefined | null = data.unitId;
 
     if (data.hospitalId !== CENTRAL_WAREHOUSE_ID) {
-        if (data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER) {
-            unitName = `Estoque Geral (${hospital.name})`;
-            unitIdForTx = null; // Use null for general stock
-        } else {
-            const unit = servedUnits.find(u => u.id === data.unitId);
-            if (!unit) return toast({ title: "Unidade inválida", variant: "destructive" });
-            unitName = unit.name;
-        }
+      if (data.unitId === GENERAL_STOCK_UNIT_ID_PLACEHOLDER) {
+        unitName = `Estoque Geral (${hospital.name})`;
+        unitIdForTx = null; // Use null for general stock
+      } else {
+        const unit = servedUnits.find(u => u.id === data.unitId);
+        if (!unit) return toast({ title: "Unidade inválida", variant: "destructive" });
+        unitName = unit.name;
+      }
     } else {
-        unitIdForTx = null;
+      unitIdForTx = null;
     }
 
     setSelectedLocation({ hospitalId: data.hospitalId, unitId: unitIdForTx, hospitalName: hospital.name, unitName });
@@ -413,7 +392,7 @@ export default function GeneralConsumptionPage() {
     setSelectedPatient(null);
     setPatientSearchTerm('');
   };
-
+  
   const handlePatientSearch = async () => {
     if (patientSearchTerm.trim().length < 3) {
       toast({ title: "Busca Inválida", description: "Por favor, digite pelo menos 3 caracteres para buscar." });
@@ -466,109 +445,108 @@ export default function GeneralConsumptionPage() {
     setPatientSearchTerm('');
   };
 
-
   const handleConsumptionSubmit = async (data: ConsumptionDetailsFormData) => {
     if (!currentUserProfile || !user || !selectedLocation) {
-        toast({ title: "Dados de usuário ou local insuficientes", variant: "destructive" });
-        return;
+      toast({ title: "Dados de usuário ou local insuficientes", variant: "destructive" });
+      return;
     }
     setIsSubmitting(true);
     const userWithId: AppUser = { ...currentUserProfile, id: user.uid };
 
     try {
-        await runTransaction(firestore, async (transaction) => {
-            const jobsToProcess: {
-                formInput: (typeof data.items)[0];
-                itemSnap: DocumentSnapshot<Item>;
-                unitConfigSnap?: DocumentSnapshot<FirestoreStockConfig>;
-                unitConfigDocId?: string;
-            }[] = [];
+      await runTransaction(firestore, async (transaction) => {
+        const jobsToProcess: {
+          formInput: (typeof data.items)[0];
+          itemSnap: DocumentSnapshot<Item>;
+          unitConfigSnap?: DocumentSnapshot<FirestoreStockConfig>;
+          unitConfigDocId?: string;
+        }[] = [];
 
-            // 1. Read Phase
-            for (const itemData of data.items) {
-                if (!itemData.itemId || itemData.quantityConsumed <= 0) continue;
+        // 1. Read Phase
+        for (const itemData of data.items) {
+          if (!itemData.itemId || itemData.quantityConsumed <= 0) continue;
 
-                const itemDocRef = doc(firestore, "items", itemData.itemId);
-                const itemSnap = await transaction.get(itemDocRef);
-                if (!itemSnap.exists()) throw new Error(`Item com ID ${itemData.itemId} não encontrado.`);
+          const itemDocRef = doc(firestore, "items", itemData.itemId);
+          const itemSnap = await transaction.get(itemDocRef);
+          if (!itemSnap.exists()) throw new Error(`Item com ID ${itemData.itemId} não encontrado.`);
 
-                let unitConfigSnap: DocumentSnapshot<FirestoreStockConfig> | undefined = undefined;
-                let unitConfigDocId: string | undefined = undefined;
+          let unitConfigSnap: DocumentSnapshot<FirestoreStockConfig> | undefined = undefined;
+          let unitConfigDocId: string | undefined = undefined;
 
-                if (selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID) {
-                    unitConfigDocId = selectedLocation.unitId
-                        ? `${itemData.itemId}_${selectedLocation.unitId}`
-                        : `${itemData.itemId}_${selectedLocation.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
-                    const unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
-                    unitConfigSnap = await transaction.get(unitConfigDocRef);
-                }
-                
-                jobsToProcess.push({ formInput: itemData, itemSnap, unitConfigSnap, unitConfigDocId });
+          if (selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID) {
+            unitConfigDocId = selectedLocation.unitId
+              ? `${itemData.itemId}_${selectedLocation.unitId}`
+              : `${itemData.itemId}_${selectedLocation.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
+            const unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
+            unitConfigSnap = await transaction.get(unitConfigDocRef);
+          }
+          
+          jobsToProcess.push({ formInput: itemData, itemSnap, unitConfigSnap, unitConfigDocId });
+        }
+        
+        // 2. Validation Phase
+        for (const job of jobsToProcess) {
+          const currentItemData = job.itemSnap.data()!;
+          const quantityToConsume = job.formInput.quantityConsumed;
+
+          if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
+            if ((currentItemData.currentQuantityCentral ?? 0) < quantityToConsume) {
+              throw new Error(`Estoque insuficiente no Almoxarifado Central para ${currentItemData.name}. Disponível: ${currentItemData.currentQuantityCentral ?? 0}, Necessário: ${quantityToConsume}.`);
             }
-            
-            // 2. Validation Phase
-            for (const job of jobsToProcess) {
-                const currentItemData = job.itemSnap.data()!;
-                const quantityToConsume = job.formInput.quantityConsumed;
-
-                if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
-                    if ((currentItemData.currentQuantityCentral ?? 0) < quantityToConsume) {
-                        throw new Error(`Estoque insuficiente no Almoxarifado Central para ${currentItemData.name}. Disponível: ${currentItemData.currentQuantityCentral ?? 0}, Necessário: ${quantityToConsume}.`);
-                    }
-                } else {
-                    if (!job.unitConfigSnap?.exists()) {
-                        throw new Error(`Configuração de estoque não encontrada para ${currentItemData.name} em ${selectedLocation.unitName}. O estoque pode não ter sido transferido.`);
-                    }
-                    const currentUnitQty = job.unitConfigSnap.data()?.currentQuantity ?? 0;
-                    if (currentUnitQty < quantityToConsume) {
-                        throw new Error(`Estoque insuficiente (${currentUnitQty}) em ${selectedLocation.unitName} para ${currentItemData.name}. Necessário: ${quantityToConsume}.`);
-                    }
-                }
+          } else {
+            if (!job.unitConfigSnap?.exists()) {
+              throw new Error(`Configuração de estoque não encontrada para ${currentItemData.name} em ${selectedLocation.unitName}. O estoque pode não ter sido transferido.`);
             }
-
-            // 3. Write Phase
-            for (const job of jobsToProcess) {
-                const currentItemData = job.itemSnap.data()!;
-                const quantityToConsume = job.formInput.quantityConsumed;
-
-                if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
-                    const newQuantity = (currentItemData.currentQuantityCentral ?? 0) - quantityToConsume;
-                    transaction.update(job.itemSnap.ref, { currentQuantityCentral: newQuantity });
-                } else {
-                    const unitConfigDocRef = doc(firestore, "stockConfigs", job.unitConfigDocId!);
-                    const currentUnitQty = job.unitConfigSnap!.data()!.currentQuantity ?? 0;
-                    const newQuantity = currentUnitQty - quantityToConsume;
-                    transaction.update(unitConfigDocRef, { currentQuantity: newQuantity });
-                }
-
-                const newMovementRef = doc(collection(firestore, "stockMovements"));
-                
-                const movementLog: Omit<StockMovement, 'id'> = {
-                    itemId: job.formInput.itemId,
-                    itemName: currentItemData.name,
-                    type: 'consumption',
-                    quantity: quantityToConsume,
-                    date: data.date,
-                    hospitalId: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalId : null,
-                    hospitalName: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalName : null,
-                    unitId: selectedLocation.unitId ?? null,
-                    unitName: selectedLocation.unitName,
-                    notes: job.formInput.notes ?? null,
-                    patientId: selectedPatient?.id ?? null,
-                    patientName: selectedPatient?.name ?? null,
-                    userId: userWithId.id || "unknown_user_id",
-                    userDisplayName: userWithId.name,
-                };
-                
-                transaction.set(newMovementRef, movementLog);
+            const currentUnitQty = job.unitConfigSnap.data()?.currentQuantity ?? 0;
+            if (currentUnitQty < quantityToConsume) {
+              throw new Error(`Estoque insuficiente (${currentUnitQty}) em ${selectedLocation.unitName} para ${currentItemData.name}. Necessário: ${quantityToConsume}.`);
             }
-        });
+          }
+        }
 
-        toast({ title: "Consumo Registrado com Sucesso!" });
-        setSelectedLocation(null);
-        setStage('selectLocation');
-        locationForm.reset({ hospitalId: '', unitId: ''});
-        consumptionForm.reset();
+        // 3. Write Phase
+        for (const job of jobsToProcess) {
+          const currentItemData = job.itemSnap.data()!;
+          const quantityToConsume = job.formInput.quantityConsumed;
+
+          if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
+            const newQuantity = (currentItemData.currentQuantityCentral ?? 0) - quantityToConsume;
+            transaction.update(job.itemSnap.ref, { currentQuantityCentral: newQuantity });
+          } else {
+            const unitConfigDocRef = doc(firestore, "stockConfigs", job.unitConfigDocId!);
+            const currentUnitQty = job.unitConfigSnap!.data()!.currentQuantity ?? 0;
+            const newQuantity = currentUnitQty - quantityToConsume;
+            transaction.update(unitConfigDocRef, { currentQuantity: newQuantity });
+          }
+
+          const newMovementRef = doc(collection(firestore, "stockMovements"));
+          
+          const movementLog: Omit<StockMovement, 'id'> = {
+            itemId: job.formInput.itemId,
+            itemName: currentItemData.name,
+            type: 'consumption',
+            quantity: quantityToConsume,
+            date: data.date,
+            hospitalId: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalId : null,
+            hospitalName: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalName : null,
+            unitId: selectedLocation.unitId ?? null,
+            unitName: selectedLocation.unitName,
+            notes: job.formInput.notes ?? null,
+            patientId: selectedPatient?.id ?? null,
+            patientName: selectedPatient?.name ?? null,
+            userId: userWithId.id || "unknown_user_id",
+            userDisplayName: userWithId.name,
+          };
+          
+          transaction.set(newMovementRef, movementLog);
+        }
+      });
+
+      toast({ title: "Consumo Registrado com Sucesso!" });
+      setSelectedLocation(null);
+      setStage('selectLocation');
+      locationForm.reset({ hospitalId: '', unitId: ''});
+      consumptionForm.reset();
 
     } catch (error: any) {
       console.error("Erro ao registrar consumo:", error);
@@ -578,16 +556,23 @@ export default function GeneralConsumptionPage() {
     }
   };
 
+  if (authLoading || isLoadingData) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="ml-2 text-lg text-muted-foreground">Carregando dados...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="container max-w-4xl mx-auto py-4">
       <PageHeader title="Registrar Consumo" icon={ShoppingCart} />
       
-      {stage === 'selectLocation' ? (
+      {stage === 'selectLocation' && currentUserProfile ? (
         <LocationSelectionForm 
           locationForm={locationForm}
           handleLocationSubmit={handleLocationSubmit}
-          isLoadingData={isLoadingData}
           currentUserProfile={currentUserProfile}
           hospitals={hospitals}
           servedUnits={servedUnits}
@@ -616,3 +601,5 @@ export default function GeneralConsumptionPage() {
     </div>
   );
 }
+
+    
