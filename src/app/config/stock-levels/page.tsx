@@ -97,31 +97,33 @@ export default function StockLevelsConfigPage() {
 
   useEffect(() => {
     if (!currentUserProfile || firestoreItems.length === 0 && allServedUnits.length === 0 && allHospitals.length === 0 && dbStockConfigs.length === 0) {
-      if (!isLoading && firestoreItems.length === 0) {
-        setIsLoading(false);
-        setStockConfigsForDisplay([]);
-      }
-      return;
+        if (!isLoading && firestoreItems.length === 0) {
+            setIsLoading(false);
+            setStockConfigsForDisplay([]);
+        }
+        return;
     }
-    
-    if (firestoreItems.length >= 0 && allServedUnits.length >= 0 && allHospitals.length >= 0 && dbStockConfigs.length >=0) {
-        setIsLoading(true); 
+
+    if (firestoreItems.length >= 0 && allServedUnits.length >= 0 && allHospitals.length >= 0 && dbStockConfigs.length >= 0) {
+        setIsLoading(true);
         let combinedConfigs: DisplayStockConfig[] = [];
 
         firestoreItems.forEach(item => {
+            // 1. Central Warehouse Configuration
             const centralDbConfigId = `${item.id}_central`;
             const centralDbConfig = dbStockConfigs.find(c => c.id === centralDbConfigId);
-            if (userCanSeeAll || currentUserProfile?.role === 'central_operator') { 
+            if (userCanSeeAll || currentUserProfile?.role === 'central_operator') {
                 combinedConfigs.push({
-                    id: centralDbConfigId, 
+                    id: centralDbConfigId,
                     itemId: item.id,
                     itemName: item.name,
                     unitName: 'Armazém Central',
                     strategicStockLevel: centralDbConfig?.strategicStockLevel || 0,
-                    minQuantity: centralDbConfig?.minQuantity ?? item.minQuantity, 
+                    minQuantity: centralDbConfig?.minQuantity ?? item.minQuantity,
                 });
             }
 
+            // 2. Specific Served Units Configuration
             allServedUnits.forEach(unit => {
                 if (!userCanSeeAll && unit.hospitalId !== currentUserProfile?.associatedHospitalId) {
                     return;
@@ -134,7 +136,7 @@ export default function StockLevelsConfigPage() {
                 const unitDbConfig = dbStockConfigs.find(c => c.id === unitDbConfigId);
                 const hospital = allHospitals.find(h => h.id === unit.hospitalId);
                 combinedConfigs.push({
-                    id: unitDbConfigId, 
+                    id: unitDbConfigId,
                     itemId: item.id,
                     itemName: item.name,
                     unitId: unit.id,
@@ -145,11 +147,40 @@ export default function StockLevelsConfigPage() {
                     minQuantity: unitDbConfig?.minQuantity || 0,
                 });
             });
+
+            // 3. UBS General Stock Configuration
+            allHospitals.forEach(hospital => {
+                if (hospital.name.toLowerCase().includes('ubs')) {
+                    // A user associated with a specific unit should not see "general stock" configs.
+                    if (currentUserProfile?.associatedUnitId) {
+                        return;
+                    }
+                    // An operator not associated with a specific unit should only see their associated hospital's configs.
+                    if (!userCanSeeAll && hospital.id !== currentUserProfile?.associatedHospitalId) {
+                        return;
+                    }
+
+                    const ubsGeneralConfigId = `${item.id}_${hospital.id}_UBSGENERAL`;
+                    const ubsGeneralDbConfig = dbStockConfigs.find(c => c.id === ubsGeneralConfigId);
+
+                    combinedConfigs.push({
+                        id: ubsGeneralConfigId,
+                        itemId: item.id,
+                        itemName: item.name,
+                        unitName: `Estoque Geral (${hospital.name})`,
+                        hospitalId: hospital.id,
+                        hospitalName: hospital.name,
+                        strategicStockLevel: ubsGeneralDbConfig?.strategicStockLevel || 0,
+                        minQuantity: ubsGeneralDbConfig?.minQuantity || 0,
+                    });
+                }
+            });
         });
-        setStockConfigsForDisplay(combinedConfigs.sort((a,b) => (a.hospitalName || '').localeCompare(b.hospitalName || '') || (a.unitName || '').localeCompare(b.unitName || '') || (a.itemName || '').localeCompare(b.itemName || '')));
-        setIsLoading(false); 
+
+        setStockConfigsForDisplay(combinedConfigs.sort((a, b) => (a.hospitalName || '').localeCompare(b.hospitalName || '') || (a.unitName || '').localeCompare(b.unitName || '') || (a.itemName || '').localeCompare(b.itemName || '')));
+        setIsLoading(false);
     } else if (firestoreItems.length === 0 && !isLoading) {
-        setStockConfigsForDisplay([]); 
+        setStockConfigsForDisplay([]);
         setIsLoading(false);
     }
   }, [firestoreItems, allServedUnits, allHospitals, dbStockConfigs, currentUserProfile, userCanSeeAll, isLoading]);
@@ -179,15 +210,17 @@ export default function StockLevelsConfigPage() {
     stockConfigsForDisplay.forEach(config => {
       const configDocRef = doc(firestore, "stockConfigs", config.id); 
       
-      const dataToSave: Omit<FirestoreStockConfig, 'currentQuantity' | 'id'> & { itemId: string; unitId?: string; hospitalId?:string; strategicStockLevel: number; minQuantity: number; } = {
+      const dataToSave: Partial<FirestoreStockConfig> & { itemId: string; strategicStockLevel: number; minQuantity: number; } = {
         itemId: config.itemId,
         strategicStockLevel: config.strategicStockLevel,
         minQuantity: config.minQuantity,
       };
 
-      if (config.unitId) {
-        dataToSave.unitId = config.unitId;
+      // This covers both specific units and general UBS stock, as both have a hospitalId.
+      // The central warehouse config has no hospitalId and this block will be skipped, which is correct.
+      if (config.hospitalId) {
         dataToSave.hospitalId = config.hospitalId;
+        dataToSave.unitId = config.unitId || null; // Save unitId if present, otherwise explicitly set to null
       }
       
       batch.set(configDocRef, dataToSave, { merge: true });
