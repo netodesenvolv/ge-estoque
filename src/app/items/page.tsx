@@ -7,7 +7,7 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Package, PlusCircle, Edit3, Trash2, Search, CalendarClock } from 'lucide-react';
+import { Package, PlusCircle, Edit3, Trash2, Search, CalendarClock, ShieldAlert, Loader2 } from 'lucide-react';
 import type { Item } from '@/types';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
@@ -16,7 +16,9 @@ import { format, parseISO, isBefore, differenceInDays, isValid } from 'date-fns'
 import { ptBR } from 'date-fns/locale';
 import { firestore } from '@/lib/firebase';
 import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
-import { useRouter } from 'next/navigation'; // Importar useRouter
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext'; // Adicionado
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'; // Adicionado
 
 const NEARING_EXPIRATION_DAYS = 30;
 
@@ -24,7 +26,10 @@ export default function ItemsPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const { toast } = useToast();
-  const router = useRouter(); // Inicializar useRouter
+  const router = useRouter();
+  const { currentUserProfile, loading: authLoading } = useAuth(); // Adicionado
+
+  const canManageItems = currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator';
 
   useEffect(() => {
     const itemsCollectionRef = collection(firestore, "items");
@@ -59,6 +64,10 @@ export default function ItemsPage() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!canManageItems) {
+      toast({ title: "Permissão Negada", variant: "destructive" });
+      return;
+    }
     const itemDocRef = doc(firestore, "items", id);
     try {
       await deleteDoc(itemDocRef);
@@ -98,6 +107,15 @@ export default function ItemsPage() {
     return { text: format(expDate, 'dd/MM/yyyy', { locale: ptBR }), variant: 'default' };
   };
 
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="ml-3 text-muted-foreground">Carregando...</p>
+      </div>
+    );
+  }
+
 
   return (
     <div>
@@ -106,16 +124,27 @@ export default function ItemsPage() {
         description="Gerencie seus itens de inventário."
         icon={Package}
         actions={
-          <Button asChild>
-            <Link href="/items/add">
-              <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Novo Item
-            </Link>
-          </Button>
+          canManageItems && (
+            <Button asChild>
+              <Link href="/items/add">
+                <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Novo Item
+              </Link>
+            </Button>
+          )
         }
       />
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle className="font-headline">Todos os Itens</CardTitle>
+           {!canManageItems && (
+            <Alert variant="default" className="mt-4 bg-blue-50 border-blue-200">
+                <ShieldAlert className="h-5 w-5 text-blue-600" />
+                <AlertTitle className="text-blue-700">Modo Somente Leitura</AlertTitle>
+                <AlertDescription className="text-blue-600">
+                Você pode visualizar os itens do catálogo. Apenas Administradores ou Operadores do Almoxarifado Central podem adicionar, editar ou excluir itens.
+                </AlertDescription>
+            </Alert>
+          )}
           <div className="relative mt-4">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
             <Input
@@ -140,7 +169,7 @@ export default function ItemsPage() {
                   <TableHead className="text-right">Qtde. Mín.</TableHead>
                   <TableHead className="text-right">Qtde. Atual</TableHead>
                   <TableHead>Fornecedor</TableHead>
-                  <TableHead className="text-center">Ações</TableHead>
+                  {canManageItems && <TableHead className="text-center">Ações</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -162,20 +191,22 @@ export default function ItemsPage() {
                         <TableCell className="text-right">{item.minQuantity}</TableCell>
                         <TableCell className="text-right">{item.currentQuantityCentral}</TableCell>
                         <TableCell>{item.supplier || 'N/A'}</TableCell>
-                        <TableCell className="text-center">
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(item.id)} className="hover:text-primary mr-2">
-                            <Edit3 className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)} className="hover:text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
+                        {canManageItems && (
+                          <TableCell className="text-center">
+                            <Button variant="ghost" size="icon" onClick={() => handleEdit(item.id)} className="hover:text-primary mr-2">
+                              <Edit3 className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)} className="hover:text-destructive">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        )}
                       </TableRow>
                     );
                   })
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center h-24">
+                    <TableCell colSpan={canManageItems ? 9 : 8} className="text-center h-24">
                       Nenhum item encontrado.
                     </TableCell>
                   </TableRow>

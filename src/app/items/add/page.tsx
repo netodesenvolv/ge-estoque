@@ -9,13 +9,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { PackagePlus, Upload, Download, Loader2 } from 'lucide-react';
+import { PackagePlus, Upload, Download, Loader2, ShieldAlert } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Papa from 'papaparse';
 import { firestore } from '@/lib/firebase';
 import { collection, writeBatch, doc } from 'firebase/firestore';
 import type { Item } from '@/types';
+import { useAuth } from '@/contexts/AuthContext';
 
 const BatchImportForm = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -292,6 +293,37 @@ const BatchImportForm = () => {
 };
 
 export default function AddItemPage() {
+  const { currentUserProfile, loading: authLoading } = useAuth();
+
+  if (authLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-10rem)]">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="text-lg text-muted-foreground">Verificando permissões...</p>
+      </div>
+    );
+  }
+
+  if (!currentUserProfile || (currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator')) {
+    return (
+      <div>
+        <PageHeader
+          title="Acesso Negado"
+          description="Você não tem permissão para acessar esta página."
+          icon={ShieldAlert}
+        />
+        <Card>
+          <CardHeader>
+            <CardTitle>Permissão Insuficiente</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>Apenas Administradores e Operadores do Almoxarifado Central podem adicionar itens ao catálogo.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div>
       <PageHeader
