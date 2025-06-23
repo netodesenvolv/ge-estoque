@@ -47,15 +47,12 @@ export default function PatientsPage() {
     
     if (term) {
       if (/^\d{15}$/.test(term)) {
+        // Query for exact SUS card number match.
         constraints.push(where("susCardNumber", "==", term));
-        // We can still order by name for SUS search, as it's a different query path.
-        constraints.push(orderBy("name", "asc"));
       } else {
-        // Case-insensitive prefix search on the new lowercase field.
-        const lowerCaseTerm = term.toLowerCase();
-        constraints.push(where("name_lowercase", ">=", lowerCaseTerm), where("name_lowercase", "<=", lowerCaseTerm + '\uf8ff'));
-        // The first orderBy clause must be on the same field as the inequality filter.
-        constraints.push(orderBy("name_lowercase", "asc"));
+        // Case-sensitive prefix search on name.
+        constraints.push(where("name", ">=", term), where("name", "<=", term + '\uf8ff'));
+        constraints.push(orderBy("name", "asc"));
       }
     } else {
       // Default query without any search term.
@@ -96,7 +93,7 @@ export default function PatientsPage() {
         setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
         setIsLastPage(documentSnapshots.docs.length < PATIENTS_PER_PAGE);
       } else {
-        if (direction === 'first') {
+        if (direction === 'first' && term) {
           toast({ title: "Nenhum resultado", description: "Nenhum paciente encontrado para a busca." });
         }
         setPatients([]);

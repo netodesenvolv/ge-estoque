@@ -123,7 +123,6 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
 
     const patientDataToSave: Partial<Omit<Patient, 'id'>> = {
       name: data.name,
-      name_lowercase: data.name.toLowerCase(),
       susCardNumber: data.susCardNumber,
     };
 

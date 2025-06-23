@@ -62,7 +62,6 @@ export type PatientSex = 'masculino' | 'feminino' | 'outro' | 'ignorado';
 export interface Patient {
   id: string;
   name: string; // Nome Completo
-  name_lowercase?: string; // For case-insensitive search
   birthDate?: string; // ISO date string, e.g., "YYYY-MM-DD"
   susCardNumber: string; // CNS
   address?: string; // Endereço
