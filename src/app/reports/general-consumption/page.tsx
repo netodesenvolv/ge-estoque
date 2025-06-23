@@ -7,17 +7,18 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { BarChart3, CalendarIcon, Filter, Printer, Download } from 'lucide-react';
+import { BarChart3, CalendarIcon, Filter, Printer, Download, Loader2 } from 'lucide-react';
 import type { Item, ServedUnit, Hospital, StockMovement } from '@/types';
-import { mockItems, mockServedUnits, mockHospitals, mockStockMovements } from '@/data/mockData';
 import { format, parseISO } from 'date-fns';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import { firestore } from '@/lib/firebase';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { useToast } from '@/hooks/use-toast';
 
 const reportFiltersSchema = z.object({
   startDate: z.date().optional(),
@@ -82,11 +83,15 @@ const downloadCSV = (csvString: string, filename: string) => {
 
 
 export default function GeneralConsumptionReportPage() {
-  const [items, setItems] = useState<Item[]>([]);
-  const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
-  const [hospitals, setHospitals] = useState<Hospital[]>([]);
+  const [dbItems, setDbItems] = useState<Item[]>([]);
+  const [dbServedUnits, setDbServedUnits] = useState<ServedUnit[]>([]);
+  const [dbHospitals, setDbHospitals] = useState<Hospital[]>([]);
+  const [dbMovements, setDbMovements] = useState<StockMovement[]>([]);
+
   const [reportData, setReportData] = useState<ReportData[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const { toast } = useToast();
 
   const form = useForm<ReportFiltersFormData>({
     resolver: zodResolver(reportFiltersSchema),
@@ -100,29 +105,57 @@ export default function GeneralConsumptionReportPage() {
   const selectedHospitalId = form.watch('hospitalId');
 
   useEffect(() => {
-    setItems(mockItems);
-    setServedUnits(mockServedUnits);
-    setHospitals(mockHospitals);
-  }, []);
+    setIsLoading(true);
+
+    const createListener = (collectionName: string, setter: React.Dispatch<React.SetStateAction<any[]>>, orderField: string = "name") => {
+        const q = query(collection(firestore, collectionName), orderBy(orderField, "asc"));
+        return onSnapshot(q, 
+            (snapshot) => {
+                setter(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+            },
+            (error) => {
+                console.error(`Erro ao buscar ${collectionName}:`, error);
+                toast({ title: `Erro ao carregar ${collectionName}`, variant: "destructive", description: error.message });
+            }
+        );
+    };
+
+    const unsubscribers = [
+        createListener("items", setDbItems),
+        createListener("hospitals", setDbHospitals),
+        createListener("servedUnits", setDbServedUnits),
+        createListener("stockMovements", setDbMovements, "date"),
+    ];
+
+    // This is a simple way to remove the loading spinner.
+    // It assumes all snapshots will fire at least once relatively quickly.
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+    }, 2500);
+
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+      clearTimeout(timer);
+    };
+  }, [toast]);
   
   useEffect(() => {
     form.setValue('unitId', 'all');
   }, [selectedHospitalId, form]);
 
   const availableUnits = selectedHospitalId && selectedHospitalId !== 'all'
-    ? servedUnits.filter(unit => unit.hospitalId === selectedHospitalId)
-    : servedUnits;
+    ? dbServedUnits.filter(unit => unit.hospitalId === selectedHospitalId)
+    : dbServedUnits;
 
   const onSubmit = (filters: ReportFiltersFormData) => {
     setIsGenerating(true);
-    console.log("Gerando relatório de consumo geral com filtros:", filters);
 
-    const filteredMovements = mockStockMovements.filter(m => {
+    const filteredMovements = dbMovements.filter(m => {
       if (m.type !== 'consumption') return false;
       if (filters.startDate && parseISO(m.date) < filters.startDate) return false;
       if (filters.endDate) {
         const endDate = new Date(filters.endDate);
-        endDate.setHours(23, 59, 59, 999); // Include whole day
+        endDate.setHours(23, 59, 59, 999);
         if (parseISO(m.date) > endDate) return false;
       }
       if (filters.itemId && filters.itemId !== 'all' && m.itemId !== filters.itemId) return false;
@@ -134,7 +167,7 @@ export default function GeneralConsumptionReportPage() {
     const groupedData: { [key: string]: ReportData } = {};
 
     filteredMovements.forEach(m => {
-      const itemDetail = items.find(i => i.id === m.itemId);
+      const itemDetail = dbItems.find(i => i.id === m.itemId);
       const key = `${m.itemId}-${m.unitId || 'central'}-${m.hospitalId || 'none'}`;
       if (!groupedData[key]) {
         groupedData[key] = {
@@ -196,7 +229,7 @@ export default function GeneralConsumptionReportPage() {
                     <Popover>
                       <PopoverTrigger asChild>
                         <FormControl>
-                          <Button variant="outline" className="font-normal justify-start">
+                          <Button variant="outline" className="font-normal justify-start" disabled={isLoading}>
                             {field.value ? format(field.value, "dd/MM/yyyy") : <span>Selecione uma data</span>}
                             <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                           </Button>
@@ -219,7 +252,7 @@ export default function GeneralConsumptionReportPage() {
                     <Popover>
                       <PopoverTrigger asChild>
                         <FormControl>
-                          <Button variant="outline" className="font-normal justify-start">
+                          <Button variant="outline" className="font-normal justify-start" disabled={isLoading}>
                             {field.value ? format(field.value, "dd/MM/yyyy") : <span>Selecione uma data</span>}
                             <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                           </Button>
@@ -239,11 +272,11 @@ export default function GeneralConsumptionReportPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Item</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select onValueChange={field.onChange} defaultValue={field.value} disabled={isLoading}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todos os Itens" /></SelectTrigger></FormControl>
                       <SelectContent>
                         <SelectItem value="all">Todos os Itens</SelectItem>
-                        {items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} ({item.code})</SelectItem>)}
+                        {dbItems.map(item => <SelectItem key={item.id} value={item.id}>{item.name} ({item.code})</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -255,11 +288,11 @@ export default function GeneralConsumptionReportPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Hospital</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select onValueChange={field.onChange} defaultValue={field.value} disabled={isLoading}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todos os Hospitais" /></SelectTrigger></FormControl>
                       <SelectContent>
                         <SelectItem value="all">Todos os Hospitais</SelectItem>
-                        {hospitals.map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
+                        {dbHospitals.map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -271,7 +304,7 @@ export default function GeneralConsumptionReportPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Unidade Servida</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || 'all'} disabled={!selectedHospitalId || selectedHospitalId === 'all' && availableUnits.length === mockServedUnits.length && availableUnits.length === 0}>
+                    <Select onValueChange={field.onChange} value={field.value || 'all'} disabled={isLoading || !selectedHospitalId || selectedHospitalId === 'all' && availableUnits.length === dbServedUnits.length && availableUnits.length === 0}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todas as Unidades" /></SelectTrigger></FormControl>
                       <SelectContent>
                         <SelectItem value="all">Todas as Unidades</SelectItem>
@@ -283,8 +316,8 @@ export default function GeneralConsumptionReportPage() {
               />
             </CardContent>
             <CardFooter>
-              <Button type="submit" disabled={isGenerating}>
-                {isGenerating ? "Gerando..." : "Gerar Relatório"}
+              <Button type="submit" disabled={isGenerating || isLoading}>
+                {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/> Carregando...</> : isGenerating ? "Gerando..." : "Gerar Relatório"}
               </Button>
             </CardFooter>
           </form>
@@ -335,6 +368,3 @@ export default function GeneralConsumptionReportPage() {
     </div>
   );
 }
-
-
-    
