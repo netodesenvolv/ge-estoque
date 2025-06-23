@@ -173,6 +173,7 @@ const BatchImportPatientForm = () => {
 
                 const patientPayload: Partial<Omit<Patient, 'id'>> = {
                   name: name,
+                  name_lowercase: name.toLowerCase(),
                   susCardNumber: susCardNumber,
                 };
                 

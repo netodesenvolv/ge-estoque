@@ -43,23 +43,30 @@ export default function PatientsPage() {
 
   const buildQuery = (direction: 'first' | 'next' | 'prev', term: string): Query => {
     const patientsCollectionRef = collection(firestore, "patients");
-    const constraints: any[] = [orderBy("name", "asc")];
+    const constraints: any[] = [];
     
     if (term) {
       if (/^\d{15}$/.test(term)) {
-        constraints.unshift(where("susCardNumber", "==", term));
+        constraints.push(where("susCardNumber", "==", term));
+        // We can still order by name for SUS search, as it's a different query path.
+        constraints.push(orderBy("name", "asc"));
       } else {
-        // Case-sensitive prefix search
-        constraints.unshift(where("name", ">=", term), where("name", "<=", term + '\uf8ff'));
+        // Case-insensitive prefix search on the new lowercase field.
+        const lowerCaseTerm = term.toLowerCase();
+        constraints.push(where("name_lowercase", ">=", lowerCaseTerm), where("name_lowercase", "<=", lowerCaseTerm + '\uf8ff'));
+        // The first orderBy clause must be on the same field as the inequality filter.
+        constraints.push(orderBy("name_lowercase", "asc"));
       }
+    } else {
+      // Default query without any search term.
+      constraints.push(orderBy("name", "asc"));
     }
     
     if (direction === 'next' && lastVisible) {
       constraints.push(startAfter(lastVisible));
     } else if (direction === 'prev' && firstVisible) {
-      // For 'prev', we reverse the order, get the last items, and then reverse them back on the client
-      // This is a common Firestore pagination pattern for previous pages
       constraints.push(endBefore(firstVisible), limitToLast(PATIENTS_PER_PAGE));
+      // Reversing order for 'prev' is handled by Firestore's limitToLast
       return query(patientsCollectionRef, ...constraints);
     }
     
@@ -73,10 +80,15 @@ export default function PatientsPage() {
     
     try {
       const documentSnapshots = await getDocs(q);
-      const patientsData = documentSnapshots.docs.map(doc => ({
+      let patientsData = documentSnapshots.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
       } as Patient));
+      
+      // The 'prev' query with limitToLast returns docs in reverse order. We need to flip them back.
+      if (direction === 'prev') {
+        patientsData = patientsData.reverse();
+      }
       
       if (patientsData.length > 0) {
         setPatients(patientsData);
@@ -86,23 +98,30 @@ export default function PatientsPage() {
       } else {
         if (direction === 'first') {
           toast({ title: "Nenhum resultado", description: "Nenhum paciente encontrado para a busca." });
-        } else {
-           // Do nothing, just stay on the current page
         }
         setPatients([]);
         setIsLastPage(true);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erro ao buscar pacientes: ", error);
-      toast({
-        title: "Erro ao Carregar Pacientes",
-        description: "Não foi possível carregar os pacientes. Verifique o console.",
-        variant: "destructive",
-      });
+       if (error.code === 'failed-precondition') {
+          toast({
+            title: "Índice do Banco de Dados Necessário",
+            description: "A busca pode não funcionar corretamente sem um índice no banco de dados. Verifique o console para um link de criação.",
+            variant: "destructive",
+            duration: 10000,
+          });
+      } else {
+        toast({
+          title: "Erro ao Carregar Pacientes",
+          description: "Não foi possível carregar os pacientes. Verifique o console.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [lastVisible, firstVisible, toast]);
+  }, [toast]);
 
   // Initial fetch
   useEffect(() => {
