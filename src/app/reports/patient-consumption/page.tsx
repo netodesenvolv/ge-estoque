@@ -178,15 +178,19 @@ export default function PatientConsumptionReportPage() {
     setIsGenerating(true);
     
     try {
+      // The orderBy clause was removed from the query to prevent the index error.
+      // Sorting is now handled on the client after fetching the data.
       let movementsQuery = query(
         collection(firestore, "stockMovements"),
-        where("patientId", "==", selectedPatient.id),
-        orderBy("date", "desc")
+        where("patientId", "==", selectedPatient.id)
       );
       
       const docsSnap = await getDocs(movementsQuery);
       let movements = docsSnap.docs.map(doc => doc.data() as StockMovement);
 
+      // Client-side sorting by date, descending
+      movements.sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime());
+      
       // Client-side date filtering
       if (filters.startDate) {
         movements = movements.filter(m => parseISO(m.date) >= filters.startDate!);
@@ -351,5 +355,3 @@ export default function PatientConsumptionReportPage() {
     </div>
   );
 }
-
-    
