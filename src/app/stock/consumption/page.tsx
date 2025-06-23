@@ -462,39 +462,50 @@ export default function GeneralConsumptionPage() {
     try {
         const patientsRef = collection(firestore, "patients");
         const ubsId = isSelectedHospitalUBS ? selectedLocation?.hospitalId : null;
+        const results: { [id: string]: Patient } = {};
 
-        // Base query parts for name
-        const nameQueryParts: any[] = [
-            where("name", ">=", patientSearchTerm),
-            where("name", "<=", patientSearchTerm + '\uf8ff'),
-            limit(10)
-        ];
-        if (ubsId) {
-            nameQueryParts.unshift(where("registeredUBSId", "==", ubsId));
-        }
-        const nameQuery = query(patientsRef, ...nameQueryParts);
-
-        const queriesToRun = [getDocs(nameQuery)];
-
-        // Base query parts for SUS number
-        if (/^\d+$/.test(patientSearchTerm)) {
-            const susQueryParts: any[] = [where("susCardNumber", "==", patientSearchTerm)];
+        // Query for SUS card number first - this is efficient
+        if (/^\d{15}$/.test(patientSearchTerm)) {
+            const susQueryParts: any[] = [where("susCardNumber", "==", patientSearchTerm), limit(10)];
             if (ubsId) {
                 susQueryParts.unshift(where("registeredUBSId", "==", ubsId));
             }
-            queriesToRun.push(getDocs(query(patientsRef, ...susQueryParts)));
-        }
-
-        const snapshots = await Promise.all(queriesToRun);
-        const results: { [id: string]: Patient } = {};
-        snapshots.forEach(snapshot => {
-            snapshot.docs.forEach(doc => {
+            const susQuery = query(patientsRef, ...susQueryParts);
+            const susSnap = await getDocs(susQuery);
+            susSnap.docs.forEach(doc => {
                 results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
             });
+        }
+        
+        // Query for name. This logic avoids the composite index error.
+        let nameQuery;
+        if (ubsId) {
+            // This is the inefficient query to avoid the index error.
+            // It fetches ALL patients for the UBS.
+            nameQuery = query(patientsRef, where("registeredUBSId", "==", ubsId));
+        } else {
+            // This query is fine as it doesn't need a composite index.
+            nameQuery = query(patientsRef, where("name", ">=", patientSearchTerm), where("name", "<=", patientSearchTerm + '\uf8ff'), limit(10));
+        }
+        const nameSnap = await getDocs(nameQuery);
+        let nameDocs = nameSnap.docs;
+
+        // If we fetched all patients for a UBS, we must filter them on the client.
+        if (ubsId) {
+            nameDocs = nameDocs.filter(doc => 
+                doc.data().name.toLowerCase().includes(patientSearchTerm.toLowerCase())
+            );
+        }
+
+        nameDocs.forEach(doc => {
+            if (!results[doc.id]) { // Avoid overwriting a perfect SUS match
+                results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+            }
         });
       
-        const uniqueResults = Object.values(results);
+        const uniqueResults = Object.values(results).slice(0, 10);
         setPatientSearchResults(uniqueResults);
+
         if (uniqueResults.length === 0) {
             toast({ title: "Nenhum Paciente Encontrado" });
         }
