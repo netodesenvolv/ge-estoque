@@ -460,37 +460,53 @@ export default function GeneralConsumptionPage() {
     setPatientSearchResults([]);
 
     try {
-      const patientsRef = collection(firestore, "patients");
-      const queries = [];
+        const patientsRef = collection(firestore, "patients");
+        const ubsId = isSelectedHospitalUBS ? selectedLocation?.hospitalId : null;
 
-      if (/^\d+$/.test(patientSearchTerm)) {
-        queries.push(getDocs(query(patientsRef, where("susCardNumber", "==", patientSearchTerm))));
-      }
-      
-      const nameQuery = query(patientsRef, where("name", ">=", patientSearchTerm.toUpperCase()), where("name", "<=", patientSearchTerm.toUpperCase() + '\uf8ff'), limit(10));
-      queries.push(getDocs(nameQuery));
+        // Base query parts for name
+        const nameQueryParts: any[] = [
+            where("name", ">=", patientSearchTerm),
+            where("name", "<=", patientSearchTerm + '\uf8ff'),
+            limit(10)
+        ];
+        if (ubsId) {
+            nameQueryParts.unshift(where("registeredUBSId", "==", ubsId));
+        }
+        const nameQuery = query(patientsRef, ...nameQueryParts);
 
-      const snapshots = await Promise.all(queries);
-      const results: { [id: string]: Patient } = {};
-      snapshots.forEach(snapshot => {
-        snapshot.docs.forEach(doc => {
-          results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+        const queriesToRun = [getDocs(nameQuery)];
+
+        // Base query parts for SUS number
+        if (/^\d+$/.test(patientSearchTerm)) {
+            const susQueryParts: any[] = [where("susCardNumber", "==", patientSearchTerm)];
+            if (ubsId) {
+                susQueryParts.unshift(where("registeredUBSId", "==", ubsId));
+            }
+            queriesToRun.push(getDocs(query(patientsRef, ...susQueryParts)));
+        }
+
+        const snapshots = await Promise.all(queriesToRun);
+        const results: { [id: string]: Patient } = {};
+        snapshots.forEach(snapshot => {
+            snapshot.docs.forEach(doc => {
+                results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+            });
         });
-      });
       
-      const uniqueResults = Object.values(results);
-      setPatientSearchResults(uniqueResults);
-      if (uniqueResults.length === 0) {
-        toast({ title: "Nenhum Paciente Encontrado" });
-      }
+        const uniqueResults = Object.values(results);
+        setPatientSearchResults(uniqueResults);
+        if (uniqueResults.length === 0) {
+            toast({ title: "Nenhum Paciente Encontrado" });
+        }
 
     } catch (error) {
-      console.error("Erro ao buscar pacientes: ", error);
+      console.error("Erro na Busca por Pacientes", error);
       toast({ title: "Erro na Busca por Pacientes", variant: "destructive" });
     } finally {
       setIsSearchingPatient(false);
     }
   };
+
 
   const handleSelectPatient = (patient: Patient) => {
     setSelectedPatient(patient);
