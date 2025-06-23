@@ -75,7 +75,7 @@ const LocationSelectionForm = ({
     return servedUnits.filter(u => u.hospitalId === watchedHospitalId)
   }, [watchedHospitalId, servedUnits]);
 
-  const isButtonDisabled = !watchedHospitalId || (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !watchedHospitalId);
+  const isButtonDisabled = !watchedHospitalId || (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !watchedUnitId);
 
   return (
     <Card>
@@ -94,7 +94,7 @@ const LocationSelectionForm = ({
                     field.onChange(value);
                     locationForm.setValue('unitId', undefined, { shouldValidate: true });
                   }}
-                  value={field.value}
+                  value={field.value || ''}
                   disabled={!!currentUserProfile?.associatedHospitalId}
                 >
                   <FormControl><SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger></FormControl>
@@ -162,6 +162,7 @@ interface ConsumptionDetailsFormProps {
   handleSelectPatient: (patient: Patient) => void;
   handleClearPatientSelection: () => void;
   isSelectedHospitalUBS: boolean;
+  currentUserProfile: UserProfile | null;
 }
 
 const ConsumptionDetailsForm = ({
@@ -181,7 +182,8 @@ const ConsumptionDetailsForm = ({
     selectedPatient,
     handleSelectPatient,
     handleClearPatientSelection,
-    isSelectedHospitalUBS
+    isSelectedHospitalUBS,
+    currentUserProfile,
   }: ConsumptionDetailsFormProps) => {
 
     const { fields, append, remove } = useFieldArray({ control: consumptionForm.control, name: "items" });
@@ -199,6 +201,9 @@ const ConsumptionDetailsForm = ({
           
         return stockConfigs.find(sc => sc.id === configId)?.currentQuantity ?? 0;
     };
+
+    const canGoBack = currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator' ||
+                      (currentUserProfile?.role === 'hospital_operator' && !currentUserProfile.associatedUnitId);
 
     return (
         <Card>
@@ -275,7 +280,11 @@ const ConsumptionDetailsForm = ({
                 )}
               </CardContent>
               <CardFooter className="flex justify-between">
-                <Button type="button" variant="ghost" onClick={() => { setSelectedLocation(null); setStage('selectLocation'); }}>Voltar</Button>
+                 {canGoBack ? (
+                    <Button type="button" variant="ghost" onClick={() => { setSelectedLocation(null); setStage('selectLocation'); }}>Voltar</Button>
+                  ) : (
+                    <div></div> // Placeholder to keep spacing
+                  )}
                 <Button type="submit" disabled={isSubmitting}>{isSubmitting ? <Loader2 className="animate-spin" /> : 'Registrar Consumo'}</Button>
               </CardFooter>
             </form>
@@ -351,15 +360,56 @@ export default function GeneralConsumptionPage() {
 
     return () => unsubscribers.forEach(unsub => unsub());
   }, [toast]);
-
+  
   useEffect(() => {
-    if (!isLoadingData && currentUserProfile) {
-      locationForm.reset({
-        hospitalId: currentUserProfile.associatedHospitalId,
-        unitId: currentUserProfile.associatedUnitId,
-      });
+    if (stage !== 'selectLocation' || isLoadingData || !currentUserProfile) {
+      return; 
     }
-  }, [currentUserProfile, isLoadingData, locationForm]);
+  
+    const { role, associatedHospitalId, associatedUnitId } = currentUserProfile;
+    const isOperator = role === 'hospital_operator' || role === 'ubs_operator';
+  
+    if (isOperator && associatedHospitalId) {
+      const hospital = hospitals.find(h => h.id === associatedHospitalId);
+      if (!hospital) {
+          return;
+      }
+  
+      // Case 1: Operator is tied to a specific unit. Skip selection form.
+      if (associatedUnitId) {
+        const unit = servedUnits.find(u => u.id === associatedUnitId);
+        if (!unit) return; 
+  
+        setSelectedLocation({
+          hospitalId: associatedHospitalId,
+          unitId: associatedUnitId,
+          hospitalName: hospital.name,
+          unitName: unit.name,
+        });
+        setStage('fillForm');
+        consumptionForm.reset({ items: [], date: new Date().toISOString().split('T')[0] });
+  
+      // Case 2: UBS Operator without a specific unit. Consume from general stock. Skip selection form.
+      } else if (role === 'ubs_operator') {
+        setSelectedLocation({
+          hospitalId: associatedHospitalId,
+          unitId: null, // Represents general stock for the transaction
+          hospitalName: hospital.name,
+          unitName: `Estoque Geral (${hospital.name})`,
+        });
+        setStage('fillForm');
+        consumptionForm.reset({ items: [], date: new Date().toISOString().split('T')[0] });
+  
+      // Case 3: Hospital Operator without a specific unit. Pre-fill hospital and let them choose the unit.
+      } else if (role === 'hospital_operator') {
+        locationForm.reset({
+          hospitalId: associatedHospitalId,
+          unitId: undefined,
+        });
+      }
+    }
+  }, [stage, isLoadingData, currentUserProfile, hospitals, servedUnits, locationForm, consumptionForm]);
+
 
   const isSelectedHospitalUBS = useMemo(() => {
     if (!selectedLocation?.hospitalId) return false;
@@ -543,7 +593,6 @@ export default function GeneralConsumptionPage() {
       });
 
       toast({ title: "Consumo Registrado com Sucesso!" });
-      setSelectedLocation(null);
       setStage('selectLocation');
       locationForm.reset({ hospitalId: '', unitId: ''});
       consumptionForm.reset();
@@ -596,10 +645,9 @@ export default function GeneralConsumptionPage() {
           handleSelectPatient={handleSelectPatient}
           handleClearPatientSelection={handleClearPatientSelection}
           isSelectedHospitalUBS={isSelectedHospitalUBS}
+          currentUserProfile={currentUserProfile}
         />
       ) : null}
     </div>
   );
 }
-
-    
