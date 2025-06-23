@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useForm } from 'react-hook-form';
@@ -152,7 +153,7 @@ export async function processMovementRowTransaction(
                 itemId: movementData.itemId,
                 hospitalId: movementData.hospitalId!, // Should be valid at this point
                 currentQuantity: newTargetQuantity,
-                unitId: movementData.unitId ?? undefined, // Ensure it's explicitly null if not present
+                unitId: movementData.unitId ?? null,
             };
 
             if (unitConfigSnap && unitConfigSnap.exists()) {
@@ -1066,5 +1067,3 @@ export default function StockMovementsPage() {
     </div>
   );
 }
-
-
