@@ -64,6 +64,7 @@ const LocationSelectionForm = ({
   servedUnits,
 }: LocationSelectionFormProps) => {
   const watchedHospitalId = locationForm.watch('hospitalId');
+  const watchedUnitId = locationForm.watch('unitId');
 
   const isSelectedHospitalUBS = useMemo(() => {
     if (!watchedHospitalId) return false;
@@ -362,51 +363,58 @@ export default function GeneralConsumptionPage() {
   }, [toast]);
   
   useEffect(() => {
-    if (stage !== 'selectLocation' || isLoadingData || !currentUserProfile) {
+    if (isLoadingData || !currentUserProfile) {
       return; 
     }
   
     const { role, associatedHospitalId, associatedUnitId } = currentUserProfile;
     const isOperator = role === 'hospital_operator' || role === 'ubs_operator';
   
+    // Logic for operators with specific associations to bypass selection
     if (isOperator && associatedHospitalId) {
       const hospital = hospitals.find(h => h.id === associatedHospitalId);
-      if (!hospital) {
-          return;
-      }
+      if (!hospital) return; 
   
-      // Case 1: Operator is tied to a specific unit. Skip selection form.
+      let locationToSet = null;
+      // Case 1: Operator is tied to a specific unit.
       if (associatedUnitId) {
         const unit = servedUnits.find(u => u.id === associatedUnitId);
-        if (!unit) return; 
-  
-        setSelectedLocation({
-          hospitalId: associatedHospitalId,
-          unitId: associatedUnitId,
-          hospitalName: hospital.name,
-          unitName: unit.name,
-        });
-        setStage('fillForm');
-        consumptionForm.reset({ items: [], date: new Date().toISOString().split('T')[0] });
-  
-      // Case 2: UBS Operator without a specific unit. Consume from general stock. Skip selection form.
+        if (unit) {
+          locationToSet = {
+            hospitalId: associatedHospitalId,
+            unitId: associatedUnitId,
+            hospitalName: hospital.name,
+            unitName: unit.name,
+          };
+        }
+      // Case 2: UBS Operator without a specific unit consumes from general stock.
       } else if (role === 'ubs_operator') {
-        setSelectedLocation({
+        locationToSet = {
           hospitalId: associatedHospitalId,
-          unitId: null, // Represents general stock for the transaction
+          unitId: null,
           hospitalName: hospital.name,
           unitName: `Estoque Geral (${hospital.name})`,
-        });
+        };
+      }
+  
+      if (locationToSet) {
+        setSelectedLocation(locationToSet);
         setStage('fillForm');
         consumptionForm.reset({ items: [], date: new Date().toISOString().split('T')[0] });
-  
-      // Case 3: Hospital Operator without a specific unit. Pre-fill hospital and let them choose the unit.
-      } else if (role === 'hospital_operator') {
-        locationForm.reset({
-          hospitalId: associatedHospitalId,
-          unitId: undefined,
-        });
+        return; // Bypassed, so exit
       }
+    }
+
+    // Logic for pre-filling but not bypassing
+    if (stage === 'selectLocation') {
+       if (currentUserProfile?.role === 'hospital_operator' && currentUserProfile?.associatedHospitalId) {
+          locationForm.reset({
+            hospitalId: currentUserProfile.associatedHospitalId,
+            unitId: undefined,
+          });
+       } else {
+         locationForm.reset({ hospitalId: '', unitId: '' });
+       }
     }
   }, [stage, isLoadingData, currentUserProfile, hospitals, servedUnits, locationForm, consumptionForm]);
 
@@ -579,7 +587,7 @@ export default function GeneralConsumptionPage() {
             date: data.date,
             hospitalId: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalId : null,
             hospitalName: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalName : null,
-            unitId: selectedLocation.unitId ?? null,
+            unitId: selectedLocation.unitId,
             unitName: selectedLocation.unitName,
             notes: job.formInput.notes ?? null,
             patientId: selectedPatient?.id ?? null,
@@ -593,9 +601,14 @@ export default function GeneralConsumptionPage() {
       });
 
       toast({ title: "Consumo Registrado com Sucesso!" });
-      setStage('selectLocation');
-      locationForm.reset({ hospitalId: '', unitId: ''});
-      consumptionForm.reset();
+      // Reset logic: if operator with specific role, stay on the form, otherwise go back to selection.
+      if (currentUserProfile.role === 'admin' || (currentUserProfile.role === 'hospital_operator' && !currentUserProfile.associatedUnitId)) {
+        setStage('selectLocation');
+        locationForm.reset({ hospitalId: '', unitId: ''});
+      }
+      consumptionForm.reset({ items: [{ itemId: '', quantityConsumed: 1, notes: '' }], date: new Date().toISOString().split('T')[0] });
+      setSelectedPatient(null);
+      setPatientSearchTerm('');
 
     } catch (error: any) {
       console.error("Erro ao registrar consumo:", error);
@@ -647,7 +660,12 @@ export default function GeneralConsumptionPage() {
           isSelectedHospitalUBS={isSelectedHospitalUBS}
           currentUserProfile={currentUserProfile}
         />
-      ) : null}
+      ) : (
+         <div className="flex h-screen w-full items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="ml-2 text-lg text-muted-foreground">Aguardando dados de localização...</p>
+        </div>
+      )}
     </div>
   );
 }
