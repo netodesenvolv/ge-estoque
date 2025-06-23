@@ -10,14 +10,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
-import { ShoppingCart, User, Loader2, X } from 'lucide-react';
+import { ShoppingCart, User, Loader2, X, Search } from 'lucide-react';
 import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockItemConfig as FirestoreStockConfig, User as AppUser } from '@/types';
 import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, runTransaction, type DocumentSnapshot } from 'firebase/firestore';
-
+import { collection, query, orderBy, onSnapshot, doc, runTransaction, type DocumentSnapshot, where, getDocs, limit } from 'firebase/firestore';
 
 // --- Constants ---
 const CENTRAL_WAREHOUSE_ID = "__CENTRAL_WAREHOUSE__";
@@ -43,7 +42,6 @@ const consumptionItemSchema = z.object({
 const consumptionDetailsSchema = z.object({
   items: z.array(consumptionItemSchema).min(1, "Adicione pelo menos um item."),
   date: z.string().refine((d) => !isNaN(Date.parse(d)), { message: "Data inválida." }),
-  patientId: z.string().optional(),
 });
 
 type LocationSelectionFormData = z.infer<typeof locationSelectionSchema>;
@@ -56,7 +54,6 @@ export default function GeneralConsumptionPage() {
   
   // Master Data States
   const [items, setItems] = useState<Item[]>([]);
-  const [patients, setPatients] = useState<Patient[]>([]);
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
   const [stockConfigs, setStockConfigs] = useState<FirestoreStockConfig[]>([]);
@@ -72,6 +69,13 @@ export default function GeneralConsumptionPage() {
     unitName: string;
   } | null>(null);
 
+  // Patient Search State
+  const [patientSearchTerm, setPatientSearchTerm] = useState('');
+  const [patientSearchResults, setPatientSearchResults] = useState<Patient[]>([]);
+  const [isSearchingPatient, setIsSearchingPatient] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+
+
   const locationForm = useForm<LocationSelectionFormData>({
     resolver: zodResolver(locationSelectionSchema),
     defaultValues: { hospitalId: '', unitId: '' }
@@ -83,30 +87,29 @@ export default function GeneralConsumptionPage() {
   const { fields, append, remove } = useFieldArray({ control: consumptionForm.control, name: "items" });
 
   useEffect(() => {
-    let loadedSources = {
-      items: false, patients: false, hospitals: false, servedUnits: false, stockConfigs: false
-    };
+    let loadedCount = 0;
+    const sourcesToLoad = ["items", "hospitals", "servedUnits", "stockConfigs"];
+    
     const checkAllLoaded = () => {
-      if (Object.values(loadedSources).every(Boolean)) {
-        setIsLoadingData(false);
-      }
+        if(loadedCount >= sourcesToLoad.length){
+            setIsLoadingData(false);
+        }
     };
 
-    const createListener = (collectionName: string, q: any, setter: React.Dispatch<React.SetStateAction<any[]>>, sourceKey: keyof typeof loadedSources) => {
+    const createListener = (collectionName: string, q: any, setter: React.Dispatch<React.SetStateAction<any[]>>, sourceKey: string) => {
       return onSnapshot(q, (snapshot) => {
         setter(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
-        loadedSources[sourceKey] = true;
+        loadedCount++;
         checkAllLoaded();
       }, (error) => {
         toast({ title: `Erro ao carregar ${collectionName}`, description: `Verifique as permissões do Firestore. Detalhe: ${error.message}`, variant: "destructive" });
-        loadedSources[sourceKey] = true;
+        loadedCount++;
         checkAllLoaded();
       });
     };
 
     const unsubscribers = [
       createListener("items", query(collection(firestore, "items"), orderBy("name")), setItems, "items"),
-      createListener("patients", query(collection(firestore, "patients"), orderBy("name")), setPatients, "patients"),
       createListener("hospitals", query(collection(firestore, "hospitals"), orderBy("name")), setHospitals, "hospitals"),
       createListener("servedUnits", query(collection(firestore, "servedUnits"), orderBy("name")), setServedUnits, "servedUnits"),
       createListener("stockConfigs", query(collection(firestore, "stockConfigs")), setStockConfigs, "stockConfigs"),
@@ -136,11 +139,6 @@ export default function GeneralConsumptionPage() {
       return hospitals.find(h => h.id === watchedHospitalId)?.name.toLowerCase().includes('ubs') || false;
   }, [watchedHospitalId, hospitals]);
 
-  const filteredPatientsForSelectedUBS = useMemo(() => {
-    if (!selectedLocation || !selectedLocation.hospitalId || selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID || !isSelectedHospitalUBS) return [];
-    return patients.filter(p => p.registeredUBSId === selectedLocation.hospitalId);
-  }, [selectedLocation, patients, isSelectedHospitalUBS]);
-
   const handleLocationSubmit = (data: LocationSelectionFormData) => {
     const hospital = data.hospitalId === CENTRAL_WAREHOUSE_ID ? { id: CENTRAL_WAREHOUSE_ID, name: 'Almoxarifado Central' } : hospitals.find(h => h.id === data.hospitalId);
     if (!hospital) return toast({ title: "Hospital inválido", variant: "destructive" });
@@ -164,7 +162,62 @@ export default function GeneralConsumptionPage() {
     setSelectedLocation({ hospitalId: data.hospitalId, unitId: unitIdForTx, hospitalName: hospital.name, unitName });
     setStage('fillForm');
     consumptionForm.reset({ items: [{ itemId: '', quantityConsumed: 1, notes: '' }], date: new Date().toISOString().split('T')[0] });
+    setSelectedPatient(null);
+    setPatientSearchTerm('');
   };
+
+  const handlePatientSearch = async () => {
+    if (patientSearchTerm.trim().length < 3) {
+      toast({ title: "Busca Inválida", description: "Por favor, digite pelo menos 3 caracteres para buscar." });
+      return;
+    }
+    setIsSearchingPatient(true);
+    setPatientSearchResults([]);
+
+    try {
+      const patientsRef = collection(firestore, "patients");
+      const queries = [];
+
+      if (/^\d+$/.test(patientSearchTerm)) {
+        queries.push(getDocs(query(patientsRef, where("susCardNumber", "==", patientSearchTerm))));
+      }
+      
+      const nameQuery = query(patientsRef, where("name", ">=", patientSearchTerm.toUpperCase()), where("name", "<=", patientSearchTerm.toUpperCase() + '\uf8ff'), limit(10));
+      queries.push(getDocs(nameQuery));
+
+      const snapshots = await Promise.all(queries);
+      const results: { [id: string]: Patient } = {};
+      snapshots.forEach(snapshot => {
+        snapshot.docs.forEach(doc => {
+          results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+        });
+      });
+      
+      const uniqueResults = Object.values(results);
+      setPatientSearchResults(uniqueResults);
+      if (uniqueResults.length === 0) {
+        toast({ title: "Nenhum Paciente Encontrado" });
+      }
+
+    } catch (error) {
+      console.error("Erro ao buscar pacientes: ", error);
+      toast({ title: "Erro na Busca por Pacientes", variant: "destructive" });
+    } finally {
+      setIsSearchingPatient(false);
+    }
+  };
+
+  const handleSelectPatient = (patient: Patient) => {
+    setSelectedPatient(patient);
+    setPatientSearchTerm(patient.name);
+    setPatientSearchResults([]);
+  };
+
+  const handleClearPatientSelection = () => {
+    setSelectedPatient(null);
+    setPatientSearchTerm('');
+  };
+
 
   const handleConsumptionSubmit = async (data: ConsumptionDetailsFormData) => {
     if (!currentUserProfile || !user || !selectedLocation) {
@@ -183,6 +236,7 @@ export default function GeneralConsumptionPage() {
                 unitConfigDocId?: string;
             }[] = [];
 
+            // 1. Read Phase
             for (const itemData of data.items) {
                 if (!itemData.itemId || itemData.quantityConsumed <= 0) continue;
 
@@ -203,7 +257,8 @@ export default function GeneralConsumptionPage() {
                 
                 jobsToProcess.push({ formInput: itemData, itemSnap, unitConfigSnap, unitConfigDocId });
             }
-
+            
+            // 2. Validation Phase
             for (const job of jobsToProcess) {
                 const currentItemData = job.itemSnap.data()!;
                 const quantityToConsume = job.formInput.quantityConsumed;
@@ -223,6 +278,7 @@ export default function GeneralConsumptionPage() {
                 }
             }
 
+            // 3. Write Phase
             for (const job of jobsToProcess) {
                 const currentItemData = job.itemSnap.data()!;
                 const quantityToConsume = job.formInput.quantityConsumed;
@@ -237,10 +293,9 @@ export default function GeneralConsumptionPage() {
                     transaction.update(unitConfigDocRef, { currentQuantity: newQuantity });
                 }
 
-                const patientDetails = data.patientId && data.patientId !== NO_PATIENT_ID ? patients.find(p => p.id === data.patientId) : null;
                 const newMovementRef = doc(collection(firestore, "stockMovements"));
                 
-                const movementLog: Omit<StockMovement, 'id'> = {
+                const movementLog: Partial<Omit<StockMovement, 'id'>> = {
                     itemId: job.formInput.itemId,
                     itemName: currentItemData.name,
                     type: 'consumption',
@@ -250,19 +305,13 @@ export default function GeneralConsumptionPage() {
                     hospitalName: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalName : null,
                     unitId: selectedLocation.unitId,
                     unitName: selectedLocation.unitName,
-                    patientId: patientDetails?.id,
-                    patientName: patientDetails?.name,
+                    patientId: selectedPatient?.id,
+                    patientName: selectedPatient?.name,
                     notes: job.formInput.notes || null,
                     userId: userWithId.id || "unknown_user_id",
                     userDisplayName: userWithId.name,
                 };
                 
-                Object.keys(movementLog).forEach(keyStr => {
-                    const key = keyStr as keyof typeof movementLog;
-                    if (movementLog[key] === undefined) {
-                        delete movementLog[key];
-                    }
-                });
                 transaction.set(newMovementRef, movementLog);
             }
         });
@@ -296,9 +345,7 @@ export default function GeneralConsumptionPage() {
   };
 
   const LocationSelectionForm = () => {
-    const watchedHospitalId = locationForm.watch('hospitalId');
-    const watchedUnitId = locationForm.watch('unitId');
-    const isButtonDisabled = !watchedHospitalId || (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !watchedUnitId);
+    const isButtonDisabled = !watchedHospitalId || (watchedHospitalId !== CENTRAL_WAREHOUSE_ID && !locationForm.getValues('unitId'));
 
     return (
       <Card>
@@ -371,39 +418,68 @@ export default function GeneralConsumptionPage() {
           <CardContent className="space-y-6">
             <div>
               {fields.map((field, index) => (
-                <div key={field.id} className="grid grid-cols-[1fr_auto_auto] items-start gap-2 mb-2 p-2 border rounded-md">
+                <div key={field.id} className="grid grid-cols-[1fr_auto_auto_auto] items-end gap-2 mb-2 p-2 border rounded-md">
                   <FormField name={`items.${index}.itemId`} control={consumptionForm.control} render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="sr-only">Item</FormLabel>
+                        <FormLabel>Item</FormLabel>
                         <Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Selecione o item" /></SelectTrigger></FormControl><SelectContent>{items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} (Disp: {getDisplayStockForItemAtSelectedLocation(item.id)})</SelectItem>)}</SelectContent></Select>
                         <FormMessage />
                       </FormItem>
                   )} />
-                  <FormField name={`items.${index}.quantityConsumed`} control={consumptionForm.control} render={({ field }) => 
-                    <FormItem><FormLabel className="sr-only">Quantidade</FormLabel><FormControl><Input type="number" placeholder="Qtd" {...field} className="w-24" /></FormControl><FormMessage /></FormItem>} />
-                  <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} className="mt-0"><X className="h-4 w-4" /></Button>
+                   <FormField name={`items.${index}.quantityConsumed`} control={consumptionForm.control} render={({ field }) => (
+                    <FormItem><FormLabel>Qtd</FormLabel><FormControl><Input type="number" placeholder="Qtd" {...field} className="w-24" /></FormControl><FormMessage /></FormItem>
+                  )} />
+                   <FormField name={`items.${index}.notes`} control={consumptionForm.control} render={({ field }) => (
+                     <FormItem className="w-full"><FormLabel>Obs.</FormLabel><FormControl><Input placeholder="Lote, etc." {...field} /></FormControl><FormMessage /></FormItem>
+                   )} />
+                  <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)}><X className="h-4 w-4" /></Button>
                 </div>))}
               <Button type="button" variant="outline" size="sm" onClick={() => append({ itemId: '', quantityConsumed: 1, notes: '' })} className="mt-2">Adicionar Item</Button>
             </div>
             <FormField name="date" control={consumptionForm.control} render={({ field }) => <FormItem><FormLabel>Data</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>} />
+            
             {selectedLocation?.hospitalId !== CENTRAL_WAREHOUSE_ID && isSelectedHospitalUBS && (
-              <FormField name="patientId" control={consumptionForm.control} render={({ field }) => (
-                <FormItem><FormLabel>Paciente (Opcional)</FormLabel><Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger></FormControl><SelectContent><SelectItem value={NO_PATIENT_ID}>Nenhum (consumo geral da unidade)</SelectItem>{filteredPatientsForSelectedUBS.map(p => <SelectItem key={p.id} value={p.id}>{p.name} - {p.susCardNumber}</SelectItem>)}</SelectContent></Select></FormItem>
-              )} />
+                <div className="space-y-2">
+                  <FormLabel>Paciente (Opcional)</FormLabel>
+                  {selectedPatient ? (
+                      <div className="flex items-center justify-between p-2 border rounded-md bg-muted">
+                        <div>
+                          <p className="font-semibold">{selectedPatient.name}</p>
+                          <p className="text-sm text-muted-foreground">SUS: {selectedPatient.susCardNumber}</p>
+                        </div>
+                        <Button variant="ghost" size="icon" onClick={handleClearPatientSelection}><X className="h-4 w-4" /></Button>
+                      </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                          <Input
+                            placeholder="Buscar por nome ou nº do Cartão SUS"
+                            value={patientSearchTerm}
+                            onChange={(e) => setPatientSearchTerm(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handlePatientSearch(); }}}
+                          />
+                          <Button type="button" onClick={handlePatientSearch} disabled={isSearchingPatient}>
+                              {isSearchingPatient ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                          </Button>
+                      </div>
+                      {patientSearchResults.length > 0 && (
+                          <Card className="mt-2 p-2 max-h-48 overflow-y-auto">
+                            <ul className="space-y-1">
+                              {patientSearchResults.map(p => (
+                                <li key={p.id} onClick={() => handleSelectPatient(p)}
+                                    className="p-2 rounded-md hover:bg-accent cursor-pointer text-sm">
+                                  <p className="font-semibold">{p.name}</p>
+                                  <p className="text-muted-foreground">SUS: {p.susCardNumber}</p>
+                                </li>
+                              ))}
+                            </ul>
+                          </Card>
+                      )}
+                    </>
+                  )}
+                  <FormDescription>Se o consumo for para um paciente específico, busque e selecione-o.</FormDescription>
+              </div>
             )}
-            <FormField
-                control={consumptionForm.control}
-                name="items.0.notes" 
-                render={({ field }) => (
-                <FormItem>
-                    <FormLabel>Observações Gerais (Opcional)</FormLabel>
-                    <FormControl>
-                    <Textarea placeholder="Observações sobre o consumo (lote, motivo, etc.)" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                </FormItem>
-                )}
-            />
           </CardContent>
           <CardFooter className="flex justify-between">
             <Button type="button" variant="ghost" onClick={() => { setSelectedLocation(null); setStage('selectLocation'); }}>Voltar</Button>
@@ -415,7 +491,7 @@ export default function GeneralConsumptionPage() {
   );
 
   return (
-    <div className="container max-w-2xl mx-auto py-4">
+    <div className="container max-w-4xl mx-auto py-4">
       <PageHeader title="Registrar Consumo" icon={ShoppingCart} />
       
       {isLoadingData ? (
