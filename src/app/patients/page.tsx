@@ -8,13 +8,13 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, PlusCircle, Edit3, Trash2, Search, Phone, Home, MapPin } from 'lucide-react';
+import { Users, PlusCircle, Edit3, Trash2, Search, Phone, Home, MapPin, X, Loader2 } from 'lucide-react';
 import type { Patient, PatientSex } from '@/types';
 import { Input } from '@/components/ui/input';
 import { format, parseISO, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { firestore } from '@/lib/firebase';
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc, getDocs, limit, startAfter, endBefore, limitToLast } from 'firebase/firestore';
+import { collection, query, orderBy, doc, deleteDoc, getDocs, limit, startAfter, endBefore, limitToLast, where, type Query, type DocumentSnapshot } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 
@@ -30,114 +30,114 @@ const PATIENTS_PER_PAGE = 15;
 export default function PatientsPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [lastVisible, setLastVisible] = useState<any>(null);
-  const [firstVisible, setFirstVisible] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [activeSearchTerm, setActiveSearchTerm] = useState('');
+  
+  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
+  const [firstVisible, setFirstVisible] = useState<DocumentSnapshot | null>(null);
   const [page, setPage] = useState(1);
-
+  const [isLastPage, setIsLastPage] = useState(false);
+  
+  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
 
-  const fetchPatients = useCallback(async (nextPage = true) => {
-    setIsLoading(true);
+  const buildQuery = (direction: 'first' | 'next' | 'prev', term: string): Query => {
     const patientsCollectionRef = collection(firestore, "patients");
-    let q;
-
-    if (nextPage) {
-        q = query(patientsCollectionRef, orderBy("name", "asc"), startAfter(lastVisible), limit(PATIENTS_PER_PAGE));
-    } else {
-        q = query(patientsCollectionRef, orderBy("name", "asc"), endBefore(firstVisible), limitToLast(PATIENTS_PER_PAGE));
+    const constraints: any[] = [orderBy("name", "asc")];
+    
+    if (term) {
+      if (/^\d{15}$/.test(term)) {
+        constraints.unshift(where("susCardNumber", "==", term));
+      } else {
+        // Case-sensitive prefix search
+        constraints.unshift(where("name", ">=", term), where("name", "<=", term + '\uf8ff'));
+      }
     }
     
-    if(page === 1 && !lastVisible) {
-        q = query(patientsCollectionRef, orderBy("name", "asc"), limit(PATIENTS_PER_PAGE));
+    if (direction === 'next' && lastVisible) {
+      constraints.push(startAfter(lastVisible));
+    } else if (direction === 'prev' && firstVisible) {
+      // For 'prev', we reverse the order, get the last items, and then reverse them back on the client
+      // This is a common Firestore pagination pattern for previous pages
+      constraints.push(endBefore(firstVisible), limitToLast(PATIENTS_PER_PAGE));
+      return query(patientsCollectionRef, ...constraints);
     }
+    
+    constraints.push(limit(PATIENTS_PER_PAGE));
+    return query(patientsCollectionRef, ...constraints);
+  };
 
-    try {
-        const documentSnapshots = await getDocs(q);
-        const patientsData = documentSnapshots.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-        } as Patient));
-
-        if(patientsData.length > 0) {
-            setPatients(patientsData);
-            setFirstVisible(documentSnapshots.docs[0]);
-            setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
-        } else {
-            // Se não houver mais dados, voltamos para a página anterior
-            if(nextPage && page > 1) { // Apenas decrementar se nextPage for true e não estiver na primeira página
-                setPage(page -1);
-            } else if (!nextPage && page ===1 && patientsData.length === 0) {
-                // Se está na primeira página e não há resultados, não faz nada ou poderia limpar a lista
-            }
-        }
-    } catch (error) {
-        console.error("Erro ao buscar pacientes: ", error);
-        toast({
-            title: "Erro ao Carregar Pacientes",
-            description: "Não foi possível carregar os pacientes do banco de dados.",
-            variant: "destructive",
-        });
-    } finally {
-        setIsLoading(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastVisible, firstVisible, page, toast]); // Removido 'page' da dependência explícita para evitar loop com setPage
-
-  useEffect(() => {
-    // Fetch inicial
+  const fetchPatients = useCallback(async (direction: 'first' | 'next' | 'prev', term: string) => {
     setIsLoading(true);
-    const patientsCollectionRef = collection(firestore, "patients");
-    const q = query(patientsCollectionRef, orderBy("name", "asc"), limit(PATIENTS_PER_PAGE));
-    const unsubscribe = onSnapshot(q, (documentSnapshots) => {
-        const patientsData = documentSnapshots.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-        } as Patient));
+    const q = buildQuery(direction, term);
+    
+    try {
+      const documentSnapshots = await getDocs(q);
+      const patientsData = documentSnapshots.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      } as Patient));
+      
+      if (patientsData.length > 0) {
         setPatients(patientsData);
-        if (documentSnapshots.docs.length > 0) {
-            setFirstVisible(documentSnapshots.docs[0]);
-            setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
+        setFirstVisible(documentSnapshots.docs[0]);
+        setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
+        setIsLastPage(documentSnapshots.docs.length < PATIENTS_PER_PAGE);
+      } else {
+        if (direction === 'first') {
+          toast({ title: "Nenhum resultado", description: "Nenhum paciente encontrado para a busca." });
         } else {
-            setFirstVisible(null);
-            setLastVisible(null);
+           // Do nothing, just stay on the current page
         }
-        setIsLoading(false);
-    }, (error) => {
-        console.error("Erro ao buscar pacientes (onSnapshot): ", error);
-        toast({
-            title: "Erro ao Carregar Pacientes",
-            description: "Não foi possível carregar os pacientes do banco de dados.",
-            variant: "destructive",
-        });
-        setIsLoading(false);
-    });
-     return () => unsubscribe();
+        setPatients([]);
+        setIsLastPage(true);
+      }
+    } catch (error) {
+      console.error("Erro ao buscar pacientes: ", error);
+      toast({
+        title: "Erro ao Carregar Pacientes",
+        description: "Não foi possível carregar os pacientes. Verifique o console.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [lastVisible, firstVisible, toast]);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchPatients('first', '');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast]); // Dependência apenas no toast para o listener inicial
-
-
-  const fetchNextPage = () => {
-    if (!lastVisible) return; // Não buscar se não houver último visível (fim da lista)
-    setPage(prev => prev + 1);
-    fetchPatients(true);
+  }, []);
+  
+  const handleSearch = () => {
+    setPage(1);
+    setFirstVisible(null);
+    setLastVisible(null);
+    setActiveSearchTerm(searchTerm);
+    fetchPatients('first', searchTerm);
+  };
+  
+  const handleClearSearch = () => {
+    setSearchTerm('');
+    setActiveSearchTerm('');
+    setPage(1);
+    setFirstVisible(null);
+    setLastVisible(null);
+    fetchPatients('first', '');
   };
 
-  const fetchPrevPage = () => {
-    if (page <= 1 || !firstVisible) return; // Não buscar se estiver na primeira página ou sem primeiro visível
-    setPage(prev => prev - 1);
-    fetchPatients(false);
+  const handleNextPage = () => {
+    if (isLastPage) return;
+    setPage(p => p + 1);
+    fetchPatients('next', activeSearchTerm);
   };
 
-
-  const filteredPatients = patients.filter(patient =>
-    patient.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (patient.susCardNumber && patient.susCardNumber.includes(searchTerm)) ||
-    (patient.address && patient.address.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (patient.phone && patient.phone.includes(searchTerm)) ||
-    (patient.registeredUBSName && patient.registeredUBSName.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const handlePrevPage = () => {
+    if (page <= 1) return;
+    setPage(p => p - 1);
+    fetchPatients('prev', activeSearchTerm);
+  };
 
   const handleEdit = (id: string) => {
     router.push(`/patients/${id}/edit`);
@@ -151,25 +151,8 @@ export default function PatientsPage() {
         title: "Paciente Excluído",
         description: "Paciente foi removido do banco de dados.",
       });
-      // Re-fetch a primeira página após a exclusão para atualizar a lista
-      setPage(1);
-      setLastVisible(null); 
-      setFirstVisible(null);
-      // A chamada inicial do useEffect (onSnapshot) deve pegar a atualização.
-      // Se for necessário um refetch mais direto:
-      // const patientsCollectionRef = collection(firestore, "patients");
-      // const q = query(patientsCollectionRef, orderBy("name", "asc"), limit(PATIENTS_PER_PAGE));
-      // const documentSnapshots = await getDocs(q);
-      // const patientsData = documentSnapshots.docs.map(doc => ({ id: doc.id, ...doc.data() } as Patient));
-      // setPatients(patientsData);
-      // if (documentSnapshots.docs.length > 0) {
-      //     setFirstVisible(documentSnapshots.docs[0]);
-      //     setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
-      // } else {
-      //     setFirstVisible(null);
-      //     setLastVisible(null);
-      // }
-
+      // Re-fetch the first page of the current view after deletion
+      handleClearSearch();
     } catch (error) {
       console.error("Erro ao excluir paciente: ", error);
       toast({
@@ -183,20 +166,10 @@ export default function PatientsPage() {
   const formatBirthDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
-      // Tentar parsear AAAA-MM-DD. Se falhar, pode ser DD/MM/AAAA do CSV
-      let date = parseISO(dateString); // parseISO espera AAAA-MM-DD
-      if (!isValid(date) && dateString.includes('/')) {
-        const parts = dateString.split('/');
-        if (parts.length === 3) {
-          date = parseISO(`${parts[2]}-${parts[1]}-${parts[0]}`);
-        }
-      }
-      if (isValid(date)) {
-        return format(date, 'dd/MM/yyyy', { locale: ptBR });
-      }
-      return 'Data Inválida';
+      const date = parseISO(dateString);
+      return isValid(date) ? format(date, 'dd/MM/yyyy', { locale: ptBR }) : 'Inválida';
     } catch (error) {
-      return 'Data Inválida';
+      return 'Inválida';
     }
   };
 
@@ -221,15 +194,28 @@ export default function PatientsPage() {
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle className="font-headline">Todos os Pacientes</CardTitle>
-          <div className="relative mt-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Buscar por nome, Cartão SUS, endereço, telefone ou UBS..."
-              className="pl-10 w-full md:w-2/3"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+          <div className="flex flex-col md:flex-row gap-2 mt-4">
+            <div className="relative flex-grow">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <Input
+                  type="search"
+                  placeholder="Buscar por nome ou Cartão SUS..."
+                  className="pl-10 w-full"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                />
+            </div>
+            <div className="flex gap-2">
+                <Button onClick={handleSearch} disabled={isLoading}>
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Search className="mr-2 h-4 w-4"/>}
+                    Buscar
+                </Button>
+                <Button onClick={handleClearSearch} variant="outline" disabled={isLoading}>
+                    <X className="mr-2 h-4 w-4"/>
+                    Limpar
+                </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -248,14 +234,17 @@ export default function PatientsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading && patients.length === 0 ? ( // Mostra carregando apenas se a lista estiver vazia
+                {isLoading ? (
                     <TableRow>
                         <TableCell colSpan={8} className="text-center h-24">
-                            Carregando pacientes...
+                           <div className="flex justify-center items-center">
+                             <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                             <p className="ml-2">Buscando pacientes...</p>
+                           </div>
                         </TableCell>
                     </TableRow>
-                ) : filteredPatients.length > 0 ? (
-                  filteredPatients.map((patient) => (
+                ) : patients.length > 0 ? (
+                  patients.map((patient) => (
                     <TableRow key={patient.id}>
                       <TableCell className="font-medium">{patient.name}</TableCell>
                       <TableCell>{formatBirthDate(patient.birthDate)}</TableCell>
@@ -288,13 +277,13 @@ export default function PatientsPage() {
               </TableBody>
             </Table>
           </div>
-          {filteredPatients.length > 0 && ( // Mostrar paginação apenas se houver itens filtrados
+          {patients.length > 0 && (
             <div className="flex justify-between items-center mt-4">
-              <Button onClick={fetchPrevPage} disabled={page <= 1 || isLoading}>
+              <Button onClick={handlePrevPage} disabled={page <= 1 || isLoading}>
                 Anterior
               </Button>
               <span>Página {page}</span>
-              <Button onClick={fetchNextPage} disabled={isLoading || patients.length < PATIENTS_PER_PAGE || !lastVisible}>
+              <Button onClick={handleNextPage} disabled={isLoading || isLastPage}>
                 Próxima
               </Button>
             </div>
