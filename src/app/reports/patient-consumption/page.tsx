@@ -7,19 +7,20 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { UserCheck, CalendarIcon, Filter, Printer, Download } from 'lucide-react';
+import { UserCheck, CalendarIcon, Filter, Printer, Download, Search, X, Loader2 } from 'lucide-react';
 import type { Patient, StockMovement, Item } from '@/types';
-import { mockPatients, mockStockMovements, mockItems } from '@/data/mockData';
 import { format, parseISO } from 'date-fns';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import { firestore } from '@/lib/firebase';
+import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
+import { useToast } from '@/hooks/use-toast';
 
 const reportFiltersSchema = z.object({
-  patientId: z.string().min(1, "Selecione um paciente."),
   startDate: z.date().optional(),
   endDate: z.date().optional(),
 }).refine(data => !data.startDate || !data.endDate || data.endDate >= data.startDate, {
@@ -35,9 +36,7 @@ interface PatientConsumptionReportData extends StockMovement {
 }
 
 const escapeCsvValue = (value: any): string => {
-  if (value === null || value === undefined) {
-    return '';
-  }
+  if (value === null || value === undefined) return '';
   const stringValue = String(value);
   if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
     return `"${stringValue.replace(/"/g, '""')}"`;
@@ -57,9 +56,7 @@ const convertToCSV = (data: PatientConsumptionReportData[]): string => {
   const headerRow = headers.map(h => h.label).join(',');
   const dataRows = data.map(row =>
     headers.map(header => {
-      if (header.key === 'date') {
-        return escapeCsvValue(format(parseISO(row.date), 'yyyy-MM-dd'));
-      }
+      if (header.key === 'date') return escapeCsvValue(format(parseISO(row.date), 'yyyy-MM-dd'));
       return escapeCsvValue(row[header.key as keyof PatientConsumptionReportData]);
     }).join(',')
   );
@@ -81,10 +78,19 @@ const downloadCSV = (csvString: string, filename: string) => {
 };
 
 export default function PatientConsumptionReportPage() {
-  const [patients, setPatients] = useState<Patient[]>([]);
+  const { toast } = useToast();
+  
+  // Master data state
   const [items, setItems] = useState<Item[]>([]);
+  
+  // Search and selection state
+  const [patientSearchTerm, setPatientSearchTerm] = useState('');
+  const [patientSearchResults, setPatientSearchResults] = useState<Patient[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  
+  // Report state
   const [reportData, setReportData] = useState<PatientConsumptionReportData[]>([]);
-  const [selectedPatientName, setSelectedPatientName] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
 
   const form = useForm<ReportFiltersFormData>({
@@ -92,53 +98,137 @@ export default function PatientConsumptionReportPage() {
   });
 
   useEffect(() => {
-    setPatients(mockPatients);
-    setItems(mockItems);
-  }, []);
+    // Fetch items once on mount for enriching the report data
+    const itemsQuery = query(collection(firestore, "items"), orderBy("name"));
+    getDocs(itemsQuery)
+      .then(snapshot => setItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item))))
+      .catch(error => {
+        console.error("Erro ao buscar itens: ", error);
+        toast({ title: "Erro ao Carregar Itens", variant: "destructive" });
+      });
+  }, [toast]);
 
-  const onSubmit = (filters: ReportFiltersFormData) => {
-    setIsGenerating(true);
-    console.log("Gerando relatório de consumo por paciente com filtros:", filters);
-    const patient = patients.find(p => p.id === filters.patientId);
-    setSelectedPatientName(patient?.name || 'Desconhecido');
+  const handlePatientSearch = async () => {
+    if (patientSearchTerm.trim().length < 3) {
+      toast({ title: "Busca Inválida", description: "Por favor, digite pelo menos 3 caracteres para buscar." });
+      return;
+    }
+    setIsSearching(true);
+    setPatientSearchResults([]);
 
-    const filteredMovements = mockStockMovements.filter(m => {
-      if (m.type !== 'consumption' || m.patientId !== filters.patientId) return false;
-      if (filters.startDate && parseISO(m.date) < filters.startDate) return false;
-      if (filters.endDate) {
-        const endDate = new Date(filters.endDate);
-        endDate.setHours(23, 59, 59, 999); 
-        if (parseISO(m.date) > endDate) return false;
+    try {
+      const patientsRef = collection(firestore, "patients");
+      const queries = [];
+
+      // Query for exact SUS card number match (if it's a number)
+      if (/^\d+$/.test(patientSearchTerm)) {
+        queries.push(getDocs(query(patientsRef, where("susCardNumber", "==", patientSearchTerm))));
       }
-      return true;
-    }).map(m => {
-      const itemDetail = items.find(i => i.id === m.itemId);
-      return {
-        ...m,
-        itemName: itemDetail?.name || 'Item Desconhecido',
-        itemCode: itemDetail?.code || 'N/A',
-      };
-    }).sort((a,b) => parseISO(b.date).getTime() - parseISO(a.date).getTime());
-    
-    setReportData(filteredMovements);
-    setIsGenerating(false);
+
+      // Query for name starts-with
+      const nameQuery = query(
+        patientsRef,
+        where("name", ">=", patientSearchTerm.toUpperCase()),
+        where("name", "<=", patientSearchTerm.toUpperCase() + '\uf8ff'),
+        limit(10)
+      );
+      queries.push(getDocs(nameQuery));
+
+      const snapshots = await Promise.all(queries);
+      const results: { [id: string]: Patient } = {};
+      
+      snapshots.forEach(snapshot => {
+        snapshot.docs.forEach(doc => {
+          results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+        });
+      });
+      
+      const uniqueResults = Object.values(results);
+      setPatientSearchResults(uniqueResults);
+      if (uniqueResults.length === 0) {
+        toast({ title: "Nenhum Paciente Encontrado", description: "Verifique os termos de busca e tente novamente." });
+      }
+
+    } catch (error) {
+      console.error("Erro ao buscar pacientes: ", error);
+      toast({ title: "Erro na Busca", description: "Não foi possível realizar a busca por pacientes.", variant: "destructive" });
+    } finally {
+      setIsSearching(false);
+    }
   };
   
-  const handlePrint = () => {
-    window.print();
+  const handleSelectPatient = (patient: Patient) => {
+    setSelectedPatient(patient);
+    setPatientSearchTerm(patient.name); // Display name in input
+    setPatientSearchResults([]); // Hide search results
+    setReportData([]); // Clear previous report
+  };
+  
+  const handleClearSelection = () => {
+    setSelectedPatient(null);
+    setPatientSearchTerm('');
+    setReportData([]);
   };
 
+  const onSubmit = async (filters: ReportFiltersFormData) => {
+    if (!selectedPatient) {
+      toast({ title: "Paciente não selecionado", description: "Por favor, busque e selecione um paciente primeiro." });
+      return;
+    }
+    setIsGenerating(true);
+    
+    try {
+      let movementsQuery = query(
+        collection(firestore, "stockMovements"),
+        where("patientId", "==", selectedPatient.id),
+        orderBy("date", "desc")
+      );
+      
+      const docsSnap = await getDocs(movementsQuery);
+      let movements = docsSnap.docs.map(doc => doc.data() as StockMovement);
+
+      // Client-side date filtering
+      if (filters.startDate) {
+        movements = movements.filter(m => parseISO(m.date) >= filters.startDate!);
+      }
+      if (filters.endDate) {
+        const endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        movements = movements.filter(m => parseISO(m.date) <= endDate);
+      }
+      
+      const enrichedData = movements.map(m => {
+        const itemDetail = items.find(i => i.id === m.itemId);
+        return {
+          ...m,
+          itemName: itemDetail?.name || 'Item Desconhecido',
+          itemCode: itemDetail?.code || 'N/A',
+        };
+      });
+
+      setReportData(enrichedData);
+      
+    } catch (error) {
+       console.error("Erro ao gerar relatório: ", error);
+       toast({ title: "Erro ao Gerar Relatório", variant: "destructive" });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handlePrint = () => window.print();
+
   const handleExportCSV = () => {
-    if (reportData.length === 0) return;
+    if (reportData.length === 0 || !selectedPatient) return;
     const csvString = convertToCSV(reportData);
-    downloadCSV(csvString, `relatorio_consumo_${selectedPatientName.replace(/\s+/g, '_').toLowerCase()}.csv`);
+    downloadCSV(csvString, `relatorio_consumo_${selectedPatient.name.replace(/\s+/g, '_').toLowerCase()}.csv`);
   };
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Relatório de Consumo por Paciente"
-        description="Detalhe o consumo de itens para um paciente específico."
+        description="Busque por um paciente para detalhar seu consumo de itens."
         icon={UserCheck}
         actions={
           <div className="flex gap-2">
@@ -154,89 +244,75 @@ export default function PatientConsumptionReportPage() {
       <Card className="shadow-lg no-print">
         <CardHeader>
           <CardTitle className="font-headline flex items-center gap-2"><Filter className="h-5 w-5 text-primary"/> Filtros do Relatório</CardTitle>
-          <CardDescription>Selecione o paciente e o período para gerar o relatório.</CardDescription>
+          <CardDescription>Primeiro, busque e selecione um paciente. Depois, defina o período e gere o relatório.</CardDescription>
         </CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
-            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <FormField
-                control={form.control}
-                name="patientId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Paciente</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl><SelectTrigger><SelectValue placeholder="Selecione um paciente" /></SelectTrigger></FormControl>
-                      <SelectContent>
-                        {patients.map(p => <SelectItem key={p.id} value={p.id}>{p.name} (SUS: {p.susCardNumber})</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <FormLabel>Buscar Paciente</FormLabel>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Digite o nome ou nº do Cartão SUS"
+                    value={patientSearchTerm}
+                    onChange={(e) => setPatientSearchTerm(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handlePatientSearch()}
+                    disabled={!!selectedPatient}
+                  />
+                  {!selectedPatient ? (
+                    <Button type="button" onClick={handlePatientSearch} disabled={isSearching}>
+                      {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                      <span className="ml-2 hidden sm:inline">Buscar</span>
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={handleClearSelection}>
+                      <X className="h-4 w-4" /><span className="ml-2 hidden sm:inline">Limpar</span>
+                    </Button>
+                  )}
+                </div>
+                {patientSearchResults.length > 0 && (
+                  <Card className="mt-2 p-2 max-h-48 overflow-y-auto">
+                    <ul className="space-y-1">
+                      {patientSearchResults.map(p => (
+                        <li key={p.id} onClick={() => handleSelectPatient(p)}
+                            className="p-2 rounded-md hover:bg-accent cursor-pointer text-sm">
+                          <p className="font-semibold">{p.name}</p>
+                          <p className="text-muted-foreground">SUS: {p.susCardNumber}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </Card>
                 )}
-              />
-              <FormField
-                control={form.control}
-                name="startDate"
-                render={({ field }) => (
-                  <FormItem className="flex flex-col">
-                    <FormLabel>Data Inicial</FormLabel>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <FormControl>
-                          <Button variant="outline" className="font-normal justify-start">
-                            {field.value ? format(field.value, "dd/MM/yyyy") : <span>Selecione uma data</span>}
-                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                          </Button>
-                        </FormControl>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
-                      </PopoverContent>
-                    </Popover>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="endDate"
-                render={({ field }) => (
-                  <FormItem className="flex flex-col">
-                    <FormLabel>Data Final</FormLabel>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <FormControl>
-                          <Button variant="outline" className="font-normal justify-start">
-                            {field.value ? format(field.value, "dd/MM/yyyy") : <span>Selecione uma data</span>}
-                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                          </Button>
-                        </FormControl>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus disabled={(date) => form.getValues("startDate") ? date < form.getValues("startDate")! : false }/>
-                      </PopoverContent>
-                    </Popover>
-                     <FormMessage />
-                  </FormItem>
-                )}
-              />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <FormField control={form.control} name="startDate" render={({ field }) => (
+                  <FormItem className="flex flex-col"><FormLabel>Data Inicial</FormLabel><Popover><PopoverTrigger asChild><FormControl>
+                    <Button variant="outline" className="font-normal justify-start">{field.value ? format(field.value, "dd/MM/yyyy") : <span>Selecione</span>}<CalendarIcon className="ml-auto h-4 w-4 opacity-50" /></Button>
+                  </FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus /></PopoverContent></Popover><FormMessage /></FormItem>
+                )}/>
+                <FormField control={form.control} name="endDate" render={({ field }) => (
+                  <FormItem className="flex flex-col"><FormLabel>Data Final</FormLabel><Popover><PopoverTrigger asChild><FormControl>
+                    <Button variant="outline" className="font-normal justify-start">{field.value ? format(field.value, "dd/MM/yyyy") : <span>Selecione</span>}<CalendarIcon className="ml-auto h-4 w-4 opacity-50" /></Button>
+                  </FormControl></PopoverTrigger><PopoverContent className="w-auto p-0" align="start"><Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus disabled={(date) => form.getValues("startDate") ? date < form.getValues("startDate")! : false }/></PopoverContent></Popover><FormMessage /></FormItem>
+                )}/>
+              </div>
             </CardContent>
             <CardFooter>
-              <Button type="submit" disabled={isGenerating}>
-                {isGenerating ? "Gerando..." : "Gerar Relatório"}
+              <Button type="submit" disabled={!selectedPatient || isGenerating}>
+                {isGenerating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Gerar Relatório
               </Button>
             </CardFooter>
           </form>
         </Form>
       </Card>
 
-      {reportData.length > 0 && (
+      {reportData.length > 0 && selectedPatient && (
         <Card className="shadow-lg mt-6 printable-content">
           <CardHeader>
-            <CardTitle className="font-headline">Consumo de Itens para: {selectedPatientName}</CardTitle>
+            <CardTitle className="font-headline">Consumo de Itens para: {selectedPatient.name}</CardTitle>
             <CardDescription>
-              Período: {form.getValues("startDate") ? format(form.getValues("startDate")!, 'dd/MM/yy') : 'N/A'} a {form.getValues("endDate") ? format(form.getValues("endDate")!, 'dd/MM/yy') : 'N/A'}
+              Período: {form.getValues("startDate") ? format(form.getValues("startDate")!, 'dd/MM/yy') : 'N/A'} a {form.getValues("endDate") ? format(form.getValues("endDate")!, 'dd/MM/yy') : 'Hoje'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -251,8 +327,8 @@ export default function PatientConsumptionReportPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {reportData.map((data) => (
-                  <TableRow key={data.id}>
+                {reportData.map((data, index) => (
+                  <TableRow key={data.id || index}>
                     <TableCell>{format(parseISO(data.date), 'dd/MM/yyyy')}</TableCell>
                     <TableCell className="font-medium">{data.itemName}</TableCell>
                     <TableCell>{data.itemCode}</TableCell>
@@ -265,7 +341,7 @@ export default function PatientConsumptionReportPage() {
           </CardContent>
         </Card>
       )}
-      {!isGenerating && form.formState.isSubmitted && reportData.length === 0 && (
+      {form.formState.isSubmitted && reportData.length === 0 && selectedPatient && !isGenerating && (
          <Card className="mt-6 shadow-lg">
           <CardContent className="pt-6">
             <p className="text-center text-muted-foreground">Nenhum dado de consumo encontrado para este paciente nos filtros selecionados.</p>
@@ -275,6 +351,5 @@ export default function PatientConsumptionReportPage() {
     </div>
   );
 }
-
 
     
