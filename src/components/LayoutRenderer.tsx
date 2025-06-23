@@ -63,13 +63,7 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
   const isAuthRoute = pathname === '/login' || pathname === '/signup';
 
   if (!isMounted) {
-    return (
-      <div className="flex h-screen items-center justify-center"> {/* Removed bg-background as per previous step */}
-        {/* Replaced Loader2 with simple text for diagnosing hydration */}
-        <span className="mr-2 text-primary">[Carregando Ícone...]</span>
-        <p className="text-lg text-muted-foreground">Inicializando...</p>
-      </div>
-    );
+    return null;
   }
 
   if (isAuthRoute) {
@@ -78,7 +72,7 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
 
   if (authLoading) {
      return (
-      <div className="flex h-screen items-center justify-center"> {/* Removed bg-background */}
+      <div className="flex h-screen items-center justify-center">
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Carregando aplicação...</p>
       </div>
@@ -87,7 +81,7 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
 
   if (!user && !isAuthRoute) {
     return (
-      <div className="flex h-screen items-center justify-center"> {/* Removed bg-background */}
+      <div className="flex h-screen items-center justify-center">
         <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
         <p className="text-lg text-muted-foreground">Verificando autenticação...</p>
       </div>
@@ -100,7 +94,7 @@ export function LayoutRenderer({ children }: { children: ReactNode }) {
 
   // Fallback for unexpected states
   return (
-    <div className="flex h-screen items-center justify-center"> {/* Removed bg-background */}
+    <div className="flex h-screen items-center justify-center">
        <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
        <p className="text-lg text-muted-foreground">Redirecionando...</p>
     </div>
