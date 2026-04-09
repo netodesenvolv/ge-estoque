@@ -8,6 +8,7 @@ export interface Item {
   currentQuantityCentral: number;
   supplier?: string;
   expirationDate?: string; // ISO date string, e.g., "YYYY-MM-DD"
+  name_lowercase?: string; // For case-insensitive search
 }
 
 export interface Hospital {
@@ -70,6 +71,7 @@ export interface Patient {
   healthAgentName?: string; // Nome do Agente de Saúde
   registeredUBSId?: string; // ID da UBS de Cadastro
   registeredUBSName?: string; // Nome da UBS de Cadastro (para conveniência de exibição)
+  name_lowercase?: string; // For case-insensitive search
 }
 
 export interface ConsumptionDataPoint {
@@ -106,6 +108,7 @@ export interface UserProfile {
   associatedHospitalName?: string; // For display
   associatedUnitId?: string;     // Optional: For hospital_operator tied to a specific unit
   associatedUnitName?: string;   // For display
+  name_lowercase?: string; // For case-insensitive search
 }
 
 // Represents the user object used throughout the app, including the id (uid from Auth)

@@ -109,7 +109,8 @@ export default function PatientConsumptionReportPage() {
   }, [toast]);
 
   const handlePatientSearch = async () => {
-    if (patientSearchTerm.trim().length < 3) {
+    const term = patientSearchTerm.trim();
+    if (term.length < 3) {
       toast({ title: "Busca Inválida", description: "Por favor, digite pelo menos 3 caracteres para buscar." });
       return;
     }
@@ -118,33 +119,64 @@ export default function PatientConsumptionReportPage() {
 
     try {
       const patientsRef = collection(firestore, "patients");
-      const queries = [];
+      const results: { [id: string]: Patient } = {};
 
-      // Query for exact SUS card number match (if it's a number)
-      if (/^\d+$/.test(patientSearchTerm)) {
-        queries.push(getDocs(query(patientsRef, where("susCardNumber", "==", patientSearchTerm))));
+      if (/^\d+$/.test(term)) {
+        const susQuery = query(patientsRef, where("susCardNumber", "==", term), limit(10));
+        const susSnap = await getDocs(susQuery);
+        susSnap.docs.forEach(doc => {
+            results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+        });
       }
 
-      // Query for name starts-with
-      const nameQuery = query(
-        patientsRef,
-        where("name", ">=", patientSearchTerm.toUpperCase()),
-        where("name", "<=", patientSearchTerm.toUpperCase() + '\uf8ff'),
-        limit(10)
-      );
-      queries.push(getDocs(nameQuery));
+      const termLower = term.toLowerCase();
+      const termExact = term;
+      const termUpper = term.toUpperCase();
+      const termTitleCase = term.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 
-      const snapshots = await Promise.all(queries);
-      const results: { [id: string]: Patient } = {};
+      const queriesToRun = [];
+
+      queriesToRun.push(
+          getDocs(query(patientsRef, 
+          where("name_lowercase", ">=", termLower), 
+          where("name_lowercase", "<=", termLower + '\uf8ff'), limit(10)))
+      );
+
+      queriesToRun.push(
+          getDocs(query(patientsRef, 
+          where("name", ">=", termExact), 
+          where("name", "<=", termExact + '\uf8ff'), limit(10)))
+      );
+
+      if (termExact !== termUpper) {
+          queriesToRun.push(
+              getDocs(query(patientsRef, 
+              where("name", ">=", termUpper), 
+              where("name", "<=", termUpper + '\uf8ff'), limit(10)))
+          );
+      }
+
+      if (termExact !== termTitleCase && termUpper !== termTitleCase) {
+          queriesToRun.push(
+              getDocs(query(patientsRef, 
+              where("name", ">=", termTitleCase), 
+              where("name", "<=", termTitleCase + '\uf8ff'), limit(10)))
+          );
+      }
+
+      const queryResults = await Promise.all(queriesToRun);
       
-      snapshots.forEach(snapshot => {
-        snapshot.docs.forEach(doc => {
-          results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
-        });
+      queryResults.forEach(snap => {
+          snap.docs.forEach(doc => {
+               if (!results[doc.id]) {
+                   results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+               }
+          });
       });
-      
+
       const uniqueResults = Object.values(results);
       setPatientSearchResults(uniqueResults);
+      
       if (uniqueResults.length === 0) {
         toast({ title: "Nenhum Paciente Encontrado", description: "Verifique os termos de busca e tente novamente." });
       }

@@ -139,6 +139,7 @@ const BatchImportForm = () => {
 
             const newItem: Omit<Item, 'id'> = {
               name,
+              name_lowercase: name.toLowerCase(),
               code,
               category,
               unitOfMeasure,

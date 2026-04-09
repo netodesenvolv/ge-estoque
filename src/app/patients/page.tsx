@@ -8,15 +8,17 @@ import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, PlusCircle, Edit3, Trash2, Search, Phone, Home, MapPin, X, Loader2 } from 'lucide-react';
+import { Users, PlusCircle, Edit3, Trash2, Search, Phone, Home, MapPin, X, Loader2, RefreshCw, AlertCircle } from 'lucide-react';
 import type { Patient, PatientSex } from '@/types';
 import { Input } from '@/components/ui/input';
 import { format, parseISO, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { firestore } from '@/lib/firebase';
-import { collection, query, orderBy, doc, deleteDoc, getDocs, limit, startAfter, endBefore, limitToLast, where, type Query, type DocumentSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, doc, deleteDoc, getDocs, limit, startAfter, endBefore, limitToLast, where, type Query, type DocumentSnapshot, writeBatch } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
+import { useAuth } from '@/contexts/AuthContext';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 const patientSexDisplay: Record<PatientSex, string> = {
   masculino: 'M',
@@ -38,8 +40,13 @@ export default function PatientsPage() {
   const [isLastPage, setIsLastPage] = useState(false);
   
   const [isLoading, setIsLoading] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationProgress, setMigrationProgress] = useState<{ processed: number; updated: number } | null>(null);
+  
   const router = useRouter();
   const { toast } = useToast();
+  const { currentUserProfile } = useAuth();
+  const isAdmin = currentUserProfile?.role === 'admin';
 
   const buildQuery = (direction: 'first' | 'next' | 'prev', term: string): Query => {
     const patientsCollectionRef = collection(firestore, "patients");
@@ -49,10 +56,6 @@ export default function PatientsPage() {
       if (/^\d{15}$/.test(term)) {
         // Query for exact SUS card number match.
         constraints.push(where("susCardNumber", "==", term));
-      } else {
-        // Case-sensitive prefix search on name.
-        constraints.push(where("name", ">=", term), where("name", "<=", term + '\uf8ff'));
-        constraints.push(orderBy("name", "asc"));
       }
     } else {
       // Default query without any search term.
@@ -73,31 +76,59 @@ export default function PatientsPage() {
 
   const fetchPatients = useCallback(async (direction: 'first' | 'next' | 'prev', term: string) => {
     setIsLoading(true);
-    const q = buildQuery(direction, term);
     
     try {
-      const documentSnapshots = await getDocs(q);
-      let patientsData = documentSnapshots.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      } as Patient));
-      
-      // The 'prev' query with limitToLast returns docs in reverse order. We need to flip them back.
-      if (direction === 'prev') {
-        patientsData = patientsData.reverse();
-      }
-      
-      if (patientsData.length > 0) {
-        setPatients(patientsData);
-        setFirstVisible(documentSnapshots.docs[0]);
-        setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
-        setIsLastPage(documentSnapshots.docs.length < PATIENTS_PER_PAGE);
-      } else {
-        if (direction === 'first' && term) {
-          toast({ title: "Nenhum resultado", description: "Nenhum paciente encontrado para a busca." });
+      if (term && !/^\d{15}$/.test(term)) {
+        // Fallback Search Mode (bypasses regular pagination)
+        const termLower = term.toLowerCase();
+        const termUpper = term.toUpperCase();
+        const termTitle = term.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+
+        const q1 = query(collection(firestore, "patients"), where("name_lowercase", ">=", termLower), where("name_lowercase", "<=", termLower + '\uf8ff'), orderBy("name_lowercase", "asc"), limit(PATIENTS_PER_PAGE));
+        const q2 = query(collection(firestore, "patients"), where("name", ">=", termUpper), where("name", "<=", termUpper + '\uf8ff'), orderBy("name", "asc"), limit(PATIENTS_PER_PAGE));
+        const q3 = query(collection(firestore, "patients"), where("name", ">=", termTitle), where("name", "<=", termTitle + '\uf8ff'), orderBy("name", "asc"), limit(PATIENTS_PER_PAGE));
+
+        const [snap1, snap2, snap3] = await Promise.all([getDocs(q1), getDocs(q2), getDocs(q3)]);
+        
+        const allDocs = new Map();
+        snap1.docs.forEach(doc => allDocs.set(doc.id, { id: doc.id, ...doc.data() }));
+        snap2.docs.forEach(doc => allDocs.set(doc.id, { id: doc.id, ...doc.data() }));
+        snap3.docs.forEach(doc => allDocs.set(doc.id, { id: doc.id, ...doc.data() }));
+        
+        const patientsData = Array.from(allDocs.values()) as Patient[];
+        patientsData.sort((a, b) => a.name.localeCompare(b.name));
+        
+        const finalResults = patientsData.slice(0, PATIENTS_PER_PAGE * 2); // Show up to 30 items for fallback
+        
+        setPatients(finalResults);
+        setFirstVisible(null);
+        setLastVisible(null);
+        setIsLastPage(true); // Don't allow Next for multi-query fallback
+
+        if (finalResults.length === 0) {
+          toast({ title: "Nenhum resultado", description: "Paciente não encontrado." });
         }
-        setPatients([]);
-        setIsLastPage(true);
+      } else {
+        const q = buildQuery(direction, term);
+        const documentSnapshots = await getDocs(q);
+        let patientsData = documentSnapshots.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+        } as Patient));
+        
+        if (direction === 'prev') {
+          patientsData = patientsData.reverse();
+        }
+        
+        if (patientsData.length > 0) {
+          setPatients(patientsData);
+          setFirstVisible(documentSnapshots.docs[0]);
+          setLastVisible(documentSnapshots.docs[documentSnapshots.docs.length - 1]);
+          setIsLastPage(documentSnapshots.docs.length < PATIENTS_PER_PAGE);
+        } else {
+          setPatients([]);
+          setIsLastPage(true);
+        }
       }
     } catch (error: any) {
       console.error("Erro ao buscar pacientes: ", error);
@@ -119,6 +150,68 @@ export default function PatientsPage() {
       setIsLoading(false);
     }
   }, [toast]);
+
+  const handleMigrateSearchData = async () => {
+    if (!isAdmin) return;
+    setIsMigrating(true);
+    setMigrationProgress({ processed: 0, updated: 0 });
+    
+    try {
+      let isDone = false;
+      let lastVisibleDoc: DocumentSnapshot | null = null;
+      let totalProcessed = 0;
+      let totalUpdated = 0;
+
+      while (!isDone) {
+        const constraints: any[] = [orderBy("__name__", "asc"), limit(500)];
+        if (lastVisibleDoc) {
+           constraints.push(startAfter(lastVisibleDoc));
+        }
+        
+        const q = query(collection(firestore, "patients"), ...constraints);
+        const snap = await getDocs(q);
+        
+        if (snap.empty) {
+          isDone = true;
+          break;
+        }
+
+        const batch = writeBatch(firestore);
+        let currentBatchUpdates = 0;
+
+        snap.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (!data.name_lowercase && data.name) {
+            batch.update(docSnap.ref, { name_lowercase: data.name.toLowerCase() });
+            currentBatchUpdates++;
+          }
+          totalProcessed++;
+        });
+
+        if (currentBatchUpdates > 0) {
+          await batch.commit();
+          totalUpdated += currentBatchUpdates;
+        }
+
+        lastVisibleDoc = snap.docs[snap.docs.length - 1];
+        setMigrationProgress({ processed: totalProcessed, updated: totalUpdated });
+
+        // Dá um pequeno respiro para o navegador não travar e atualizar a UI
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      toast({ title: "Busca Sincronizada", description: `Processados: ${totalProcessed}. Atualizados: ${totalUpdated}.` });
+      handleClearSearch();
+    } catch (error) {
+       console.error("Erro na migração: ", error);
+       toast({ title: "Erro na Sincronização", variant: "destructive" });
+    } finally {
+      setIsMigrating(false);
+      setMigrationProgress(null);
+    }
+  };
+
+  const showMigrationWarning = isAdmin && patients.length > 0 && !patients.some(p => p.name_lowercase) && activeSearchTerm === '';
 
   // Initial fetch
   useEffect(() => {
@@ -207,6 +300,28 @@ export default function PatientsPage() {
           </Button>
         }
       />
+
+      {showMigrationWarning && (
+        <Alert className="mb-6 border-orange-200 bg-orange-50 text-orange-800">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Busca Flexível Disponível</AlertTitle>
+          <AlertDescription className="flex flex-col md:flex-row md:items-center justify-between gap-4 mt-2">
+            <div>Alguns pacientes antigos precisam ser sincronizados para aparecerem na pesquisa por texto. Dependendo do tamanho da base, isso pode levar alguns minutos. Recomendado executar em horários de menor acesso.</div>
+            <div className="flex flex-col gap-2 items-end shrink-0">
+                <Button size="sm" onClick={handleMigrateSearchData} disabled={isMigrating} variant="outline" className="border-orange-300 text-orange-800 hover:bg-orange-100">
+                  {isMigrating ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RefreshCw className="mr-2 h-4 w-4"/>}
+                  {isMigrating ? 'Sincronizando...' : 'Sincronizar Pacientes'}
+                </Button>
+                {isMigrating && migrationProgress && (
+                    <span className="text-xs font-semibold">
+                      Processados: {migrationProgress.processed} / Atualizados: {migrationProgress.updated}
+                    </span>
+                )}
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle className="font-headline">Todos os Pacientes</CardTitle>

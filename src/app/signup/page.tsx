@@ -69,6 +69,7 @@ export default function SignupPage() {
       // Default role for self-signup is 'user'
       const userProfile: UserProfile = {
         name: data.name, // Use name from form
+        name_lowercase: data.name.toLowerCase(),
         email: firebaseUser.email!, 
         role: 'user', // Default role
         status: 'active', // Default status

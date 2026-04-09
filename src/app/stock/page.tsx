@@ -1,18 +1,18 @@
 
 'use client';
 
-import React, { useState, useEffect } from 'react'; // Adicionado React aqui
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import PageHeader from '@/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Warehouse, Search, Printer, Package as PackageIcon, Loader2 } from 'lucide-react';
-import type { Item, ServedUnit, Hospital, StockItemConfig as GlobalStockItemConfig, UserProfile } from '@/types';
+import { Warehouse, Search, Printer, Package as PackageIcon, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import type { Item, ServedUnit, Hospital, StockItemConfig as GlobalStockItemConfig } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { firestore } from '@/lib/firebase';
-import { collection, onSnapshot, query, orderBy, getDocs } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, limit, startAfter, endBefore, limitToLast, where, type Query, type DocumentSnapshot } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -28,7 +28,7 @@ interface FirestoreStockConfig {
 
 interface DisplayStockItem extends GlobalStockItemConfig {
   itemCode?: string;
-  status?: 'Optimal' | 'Low' | 'Alert' | 'NotConfigured'; // Adicionado NotConfigured
+  status?: 'Optimal' | 'Low' | 'Alert' | 'NotConfigured';
 }
 
 const UBS_GENERAL_STOCK_SUFFIX = "UBSGENERAL";
@@ -73,201 +73,215 @@ const getUnitDetails = (
 
 export default function StockPage() {
   const { currentUserProfile } = useAuth();
-  const [firestoreItems, setFirestoreItems] = useState<Item[]>([]);
+  const { toast } = useToast();
+  
   const [allServedUnitsData, setAllServedUnitsData] = useState<ServedUnit[]>([]);
   const [allHospitalsData, setAllHospitalsData] = useState<Hospital[]>([]);
-  const [firestoreStockConfigs, setFirestoreStockConfigs] = useState<FirestoreStockConfig[]>([]);
   
-  const [baseStockData, setBaseStockData] = useState<DisplayStockItem[]>([]); // Dados combinados ANTES dos filtros de UI
+  const [displayData, setDisplayData] = useState<DisplayStockItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { toast } = useToast();
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   
   const [searchTerm, setSearchTerm] = useState('');
   const [hospitalFilter, setHospitalFilter] = useState('all');
   const [unitFilter, setUnitFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<'all' | DisplayStockItem['status']>('all'); 
-  const [currentPage, setCurrentPage] = useState(1);
-
-  const [dataLoadStatus, setDataLoadStatus] = useState<{ [key: string]: boolean }>({
-    items: false, stockConfigs: false, servedUnits: false, hospitals: false,
-  });
+  
+  // Pagination State
+  const [page, setPage] = useState(1);
+  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
+  const [firstVisible, setFirstVisible] = useState<DocumentSnapshot | null>(null);
+  const [isLastPage, setIsLastPage] = useState(false);
 
   const userCanSeeAll = currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator';
   const userIsOperator = currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator';
 
+  // Load basic reference data (Hospitals and Units) - fixed size collections
   useEffect(() => {
-    if (!currentUserProfile) return;
-
-    const sourcesToLoad = ["items", "stockConfigs", "servedUnits", "hospitals"];
-    setDataLoadStatus(sourcesToLoad.reduce((acc, curr) => ({ ...acc, [curr]: false }), {}));
-    setIsLoading(true); 
-
-    const unsubscribers: (() => void)[] = [];
-    const createListener = (collectionName: string, setter: React.Dispatch<React.SetStateAction<any[]>>, queryToRun: any) => {
-      const unsubscribe = onSnapshot(queryToRun, (snapshot) => {
-        setter(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
-        setDataLoadStatus(prev => ({ ...prev, [collectionName]: true }));
-      }, (error) => {
-        console.error(`Erro ao buscar ${collectionName}: `, error);
-        toast({ title: `Erro ao Carregar ${collectionName}`, variant: "destructive" });
-        setDataLoadStatus(prev => ({ ...prev, [collectionName]: true })); 
-      });
-      unsubscribers.push(unsubscribe);
+    const loadReferences = async () => {
+      try {
+        const hospitalsSnap = await getDocs(query(collection(firestore, "hospitals"), orderBy("name", "asc")));
+        const unitsSnap = await getDocs(query(collection(firestore, "servedUnits"), orderBy("name", "asc")));
+        
+        setAllHospitalsData(hospitalsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Hospital)));
+        setAllServedUnitsData(unitsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServedUnit)));
+        setIsInitialLoading(false);
+      } catch (error) {
+        console.error("Erro ao carregar referências: ", error);
+        toast({ title: "Erro ao Carregar Referências", variant: "destructive" });
+      }
     };
+    loadReferences();
+  }, [toast]);
 
-    createListener("items", setFirestoreItems, query(collection(firestore, "items"), orderBy("name", "asc")));
-    createListener("stockConfigs", setFirestoreStockConfigs, query(collection(firestore, "stockConfigs")));
-    createListener("servedUnits", setAllServedUnitsData, query(collection(firestore, "servedUnits"), orderBy("name", "asc")));
-    createListener("hospitals", setAllHospitalsData, query(collection(firestore, "hospitals"), orderBy("name", "asc")));
-    
-    return () => unsubscribers.forEach(unsub => unsub());
-  }, [toast, currentUserProfile]); 
-
+  // Set initial filters based on user profile
   useEffect(() => {
-    const allLoaded = Object.values(dataLoadStatus).every(status => status === true);
-    if (allLoaded) {
-      setIsLoading(false);
-    }
-  }, [dataLoadStatus]);
+    if (!currentUserProfile || isInitialLoading) return;
 
-  useEffect(() => {
-    if (isLoading || !currentUserProfile) return;
-
-    let combinedData: DisplayStockItem[] = [];
-
-    // Processar Estoque Central
-    firestoreItems.forEach(item => {
-      if (userCanSeeAll || currentUserProfile.role === 'central_operator') {
-        const centralConfigId = `${item.id}_central`;
-        const centralItemConfig = firestoreStockConfigs.find(sc => sc.id === centralConfigId);
-        
-        const currentQuantityValue = item.currentQuantityCentral ?? 0;
-        const strategicLvlValue = centralItemConfig?.strategicStockLevel ?? 0;
-        const minQtyConfig = centralItemConfig?.minQuantity;
-        const minQtyValue = minQtyConfig ?? item.minQuantity ?? 0;
-
-        let status: DisplayStockItem['status'] = centralItemConfig ? 'Optimal' : 'NotConfigured';
-        if (centralItemConfig) {
-           if (minQtyValue > 0 && currentQuantityValue < minQtyValue) status = 'Low';
-           else if (strategicLvlValue > 0 && currentQuantityValue < strategicLvlValue) status = 'Alert';
-        }
-        
-        combinedData.push({
-          id: `central-${item.id}`, itemId: item.id, itemName: item.name, itemCode: item.code,
-          unitName: 'Armazém Central', strategicStockLevel: strategicLvlValue,
-          minQuantity: minQtyValue, currentQuantity: currentQuantityValue, status: status,
-        });
-      }
-    });
-
-    // Processar Estoque das Unidades/Configurações
-    firestoreStockConfigs.forEach(config => {
-      const itemDetail = firestoreItems.find(i => i.id === config.itemId);
-      if (!itemDetail) return;
-      if (config.id === `${config.itemId}_central`) return; // Já processado acima
-
-      const unitDetails = getUnitDetails(config.id, config.unitId, config.hospitalId, allServedUnitsData, allHospitalsData);
-
-      // Filtrar pelo escopo do usuário
-      if (userIsOperator) {
-        if (config.hospitalId !== currentUserProfile.associatedHospitalId) return;
-        if (currentUserProfile.associatedUnitId && config.unitId !== currentUserProfile.associatedUnitId) return;
-      }
-      
-      const currentUnitQuantityValue = config.currentQuantity ?? 0;
-      const unitMinQtyValue = config.minQuantity ?? 0;
-      const unitStrategicLvlValue = config.strategicStockLevel ?? 0;
-
-      let status: DisplayStockItem['status'] = 'Optimal';
-      if (unitMinQtyValue > 0 && currentUnitQuantityValue < unitMinQtyValue) status = 'Low';
-      else if (unitStrategicLvlValue > 0 && currentUnitQuantityValue < unitStrategicLvlValue) status = 'Alert';
-      
-      combinedData.push({
-        id: config.id || `${config.itemId}_${config.unitId || 'config'}`,
-        itemId: config.itemId, itemName: itemDetail.name, itemCode: itemDetail.code,
-        unitId: config.unitId, unitName: unitDetails.unitName,
-        hospitalId: config.hospitalId || unitDetails.hospitalId, hospitalName: unitDetails.hospitalName,
-        strategicStockLevel: unitStrategicLvlValue, minQuantity: unitMinQtyValue,
-        currentQuantity: currentUnitQuantityValue, status: status,
-      });
-    });
-    
-    setBaseStockData(combinedData.sort((a, b) => 
-        (a.hospitalName || '').localeCompare(b.hospitalName || '') || 
-        (a.unitName || '').localeCompare(b.unitName || '') || 
-        (a.itemName || '').localeCompare(b.itemName || '')
-    ));
-
-  }, [firestoreItems, firestoreStockConfigs, allServedUnitsData, allHospitalsData, isLoading, currentUserProfile, userCanSeeAll, userIsOperator]);
-
-  // Ajustar filtros de UI com base no perfil do usuário
-  useEffect(() => {
-    if (userIsOperator && currentUserProfile?.associatedHospitalId) {
+    if (userIsOperator && currentUserProfile.associatedHospitalId) {
       setHospitalFilter(currentUserProfile.associatedHospitalId);
       if (currentUserProfile.associatedUnitId) {
         setUnitFilter(currentUserProfile.associatedUnitId);
-      } else {
-        setUnitFilter('all'); // Permite ver todas as unidades do hospital associado (ou estoque geral da UBS)
       }
-    } else if (userCanSeeAll) {
-      // Para admin/central, manter o padrão ou o que foi selecionado
     }
-  }, [currentUserProfile, userIsOperator, userCanSeeAll]);
+  }, [currentUserProfile, userIsOperator, isInitialLoading]);
 
+  const fetchStock = useCallback(async (direction: 'first' | 'next' | 'prev') => {
+    if (isInitialLoading || !currentUserProfile) return;
+    setIsLoading(true);
 
-  const availableUnitsForFilter = React.useMemo(() => {
-    if (hospitalFilter === 'all' || hospitalFilter === 'central') return allServedUnitsData;
+    try {
+      let combinedResults: DisplayStockItem[] = [];
+      const itemsMap = new Map<string, Item>();
+      
+      // Determine what to query based on filters
+      // If filtering by unit or a specific hospital, query stockConfigs first.
+      // If showing everything or central, query items first.
+      
+      const isCentralOnly = hospitalFilter === 'central';
+      const isSpecificHospital = hospitalFilter !== 'all' && hospitalFilter !== 'central';
+      
+      if (isCentralOnly || (hospitalFilter === 'all' && userCanSeeAll)) {
+        // Query Items
+        const itemsRef = collection(firestore, "items");
+        const constraints: any[] = [];
+        if (searchTerm) {
+          const lowerTerm = searchTerm.toLowerCase();
+          constraints.push(where("name_lowercase", ">=", lowerTerm), where("name_lowercase", "<=", lowerTerm + '\uf8ff'));
+          constraints.push(orderBy("name_lowercase", "asc"));
+        } else {
+          constraints.push(orderBy("name", "asc"));
+        }
+    
+        if (direction === 'next' && lastVisible) {
+          constraints.push(startAfter(lastVisible));
+        } else if (direction === 'prev' && firstVisible) {
+          constraints.push(endBefore(firstVisible), limitToLast(ITEMS_PER_PAGE));
+        }
+        
+        constraints.push(limit(ITEMS_PER_PAGE));
+        const itemsSnap = await getDocs(query(itemsRef, ...constraints));
+        
+        let itemsBatch = itemsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item));
+        if (direction === 'prev') itemsBatch = itemsBatch.reverse();
+        
+        setFirstVisible(itemsSnap.docs[0]);
+        setLastVisible(itemsSnap.docs[itemsSnap.docs.length - 1]);
+        setIsLastPage(itemsSnap.docs.length < ITEMS_PER_PAGE);
+
+        // Process these items for Central Stock
+        itemsBatch.forEach(item => {
+          itemsMap.set(item.id, item);
+          
+          const currentQty = item.currentQuantityCentral ?? 0;
+          const minQty = item.minQuantity ?? 0;
+          
+          // Note: In "All" view, we also want to see if there's a specific config for central to get strategic level
+          // but for simplicity/performance in "excessive reading" fix, we'll use item defaults here
+          // unless it's strictly central view
+          
+          let status: DisplayStockItem['status'] = 'Optimal';
+          if (minQty > 0 && currentQty < minQty) status = 'Low';
+          
+          combinedResults.push({
+            id: `central-${item.id}`, itemId: item.id, itemName: item.name, itemCode: item.code,
+            unitName: 'Armazém Central', currentQuantity: currentQty, minQuantity: minQty, status: status,
+            strategicStockLevel: 0
+          });
+        });
+
+        // If in "All" view, we might want to fetch configs for these items? 
+        // No, stay simple to reduce reads. "All" view shows central only or requires specific unit search.
+      } else if (isSpecificHospital) {
+        // Query StockConfigs for this hospital/unit
+        const configsRef = collection(firestore, "stockConfigs");
+        const constraints: any[] = [where("hospitalId", "==", hospitalFilter)];
+        if (unitFilter !== 'all') {
+          constraints.push(where("unitId", "==", unitFilter));
+        }
+        
+        // Firestore doesn't support inequality on one field and equality on another easily without index
+        // so we'll fetch configs and then fetch items. Configs don't have item name, so we can't easily search by name here server-side.
+        // For simplicity, we'll fetch configs and then map.
+        
+        if (direction === 'next' && lastVisible) {
+          constraints.push(startAfter(lastVisible));
+        } else if (direction === 'prev' && firstVisible) {
+          constraints.push(endBefore(firstVisible), limitToLast(ITEMS_PER_PAGE));
+        }
+        
+        constraints.push(limit(ITEMS_PER_PAGE));
+        const configSnap = await getDocs(query(configsRef, ...constraints));
+        
+        let configsBatch = configSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig));
+        if (direction === 'prev') configsBatch = configsBatch.reverse();
+
+        setFirstVisible(configSnap.docs[0]);
+        setLastVisible(configSnap.docs[configSnap.docs.length - 1]);
+        setIsLastPage(configSnap.docs.length < ITEMS_PER_PAGE);
+
+        // Fetch corresponding items
+        const itemIds = Array.from(new Set(configsBatch.map(c => c.itemId)));
+        if (itemIds.length > 0) {
+          // Firestore 'in' limit is 30, we're doing 20 per page, so it's OK
+          const itemsSnap = await getDocs(query(collection(firestore, "items"), where("__name__", "in", itemIds)));
+          itemsSnap.docs.forEach(doc => itemsMap.set(doc.id, { id: doc.id, ...doc.data() } as Item));
+        }
+
+        configsBatch.forEach(config => {
+          const item = itemsMap.get(config.itemId);
+          if (!item) return;
+          if (searchTerm && !item.name.toLowerCase().includes(searchTerm.toLowerCase())) return;
+
+          const unitDetails = getUnitDetails(config.id, config.unitId, config.hospitalId, allServedUnitsData, allHospitalsData);
+          
+          const currentQty = config.currentQuantity ?? 0;
+          const minQty = config.minQuantity ?? 0;
+          const stratLvl = config.strategicStockLevel ?? 0;
+
+          let status: DisplayStockItem['status'] = 'Optimal';
+          if (minQty > 0 && currentQty < minQty) status = 'Low';
+          else if (stratLvl > 0 && currentQty < stratLvl) status = 'Alert';
+
+          combinedResults.push({
+            id: config.id || `${config.itemId}_${config.unitId}`, itemId: config.itemId,
+            itemName: item.name, itemCode: item.code, unitId: config.unitId, unitName: unitDetails.unitName,
+            hospitalId: config.hospitalId, hospitalName: unitDetails.hospitalName,
+            currentQuantity: currentQty, minQuantity: minQty, strategicStockLevel: stratLvl, status: status
+          });
+        });
+      }
+
+      // Apply UI status filter (couldn't be done in Firestore easily for all cases)
+      if (statusFilter !== 'all') {
+        combinedResults = combinedResults.filter(r => r.status === statusFilter);
+      }
+
+      setDisplayData(combinedResults);
+    } catch (error) {
+      console.error("Erro ao buscar estoque: ", error);
+      toast({ title: "Erro ao Carregar Estoque", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [hospitalFilter, unitFilter, searchTerm, statusFilter, allHospitalsData, allServedUnitsData, currentUserProfile, isInitialLoading, userCanSeeAll, firstVisible, lastVisible, toast]);
+
+  useEffect(() => {
+    if (!isInitialLoading) {
+        setPage(1);
+        setFirstVisible(null);
+        setLastVisible(null);
+        fetchStock('first');
+    }
+  }, [hospitalFilter, unitFilter, searchTerm, statusFilter, isInitialLoading]);
+
+  const handleNextPage = () => { if (!isLastPage) { setPage(p => p + 1); fetchStock('next'); } };
+  const handlePrevPage = () => { if (page > 1) { setPage(p => p - 1); fetchStock('prev'); } };
+
+  const availableUnitsForFilter = useMemo(() => {
+    if (hospitalFilter === 'all' || hospitalFilter === 'central') return [];
     return allServedUnitsData.filter(u => u.hospitalId === hospitalFilter);
   }, [hospitalFilter, allServedUnitsData]);
-
-  // Reset unitFilter if selected hospital changes and current unitFilter is no longer valid
-  useEffect(() => {
-    if (hospitalFilter !== 'all' && hospitalFilter !== 'central') {
-      if (unitFilter !== 'all' && !availableUnitsForFilter.find(u => u.id === unitFilter)) {
-        setUnitFilter('all');
-      }
-    } else if (hospitalFilter === 'central' && unitFilter !== 'all') {
-       setUnitFilter('all'); 
-    }
-  }, [hospitalFilter, unitFilter, availableUnitsForFilter]);
-
-  // Aplicar filtros de UI aos dados base já escopados
-  const filteredStockData = React.useMemo(() => {
-    return baseStockData.filter(item => {
-      const nameMatch = item.itemName?.toLowerCase().includes(searchTerm.toLowerCase()) || item.itemCode?.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      let hospitalUiMatch = true;
-      if (userCanSeeAll) { // Só aplicar filtro de UI de hospital se for admin/central
-        hospitalUiMatch = hospitalFilter === 'all' || 
-                          (hospitalFilter === 'central' && item.unitName === 'Armazém Central') ||
-                          item.hospitalId === hospitalFilter;
-      }
-
-      let unitUiMatch = true;
-      if (userCanSeeAll && hospitalFilter !== 'central') { // Só aplicar filtro de UI de unidade se for admin/central e não for filtro de armazém
-         unitUiMatch = unitFilter === 'all' || item.unitId === unitFilter || (item.unitName?.startsWith('Estoque Geral') && hospitalFilter === item.hospitalId);
-      } else if (userIsOperator && currentUserProfile?.associatedHospitalId && !currentUserProfile.associatedUnitId) {
-        // Se operador geral de hospital/UBS, unitFilter 'all' significa todas as suas unidades
-        unitUiMatch = unitFilter === 'all' || item.unitId === unitFilter;
-      }
-      
-      const statusUiMatch = statusFilter === 'all' || item.status === statusFilter;
-      
-      return nameMatch && hospitalUiMatch && unitUiMatch && statusUiMatch;
-    });
-  }, [baseStockData, searchTerm, hospitalFilter, unitFilter, statusFilter, userCanSeeAll, userIsOperator, currentUserProfile]);
-  
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, hospitalFilter, unitFilter, statusFilter]);
-
-  const indexOfLastItem = currentPage * ITEMS_PER_PAGE;
-  const indexOfFirstItem = indexOfLastItem - ITEMS_PER_PAGE;
-  const currentItemsToDisplay = filteredStockData.slice(indexOfFirstItem, indexOfLastItem);
-  const totalPages = Math.ceil(filteredStockData.length / ITEMS_PER_PAGE);
-
-  const handleNextPage = () => setCurrentPage(prev => Math.min(prev + 1, totalPages));
-  const handlePrevPage = () => setCurrentPage(prev => Math.max(prev - 1, 1));
 
   const getStatusBadgeVariant = (status?: DisplayStockItem['status']) => {
     if (status === 'Alert' || status === 'Low') return 'destructive'; 
@@ -286,15 +300,24 @@ export default function StockPage() {
 
   const handlePrint = () => window.print();
 
+  if (isInitialLoading) {
+    return (
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="ml-3 text-muted-foreground">Carregando referências...</p>
+        </div>
+    );
+  }
+
   return (
     <div>
       <PageHeader 
         title="Estoque Atual" 
-        description="Visualize os níveis de estoque atuais em todos os locais." 
+        description="Visualize os níveis de estoque atuais. Carregado sob demanda para otimização." 
         icon={Warehouse}
         actions={
           <Button onClick={handlePrint} variant="outline" className="no-print">
-            <Printer className="mr-2 h-4 w-4" /> Imprimir Tabela
+            <Printer className="mr-2 h-4 w-4" /> Imprimir
           </Button>
         }
         className="no-print"
@@ -308,16 +331,16 @@ export default function StockPage() {
             <div className="relative lg:col-span-2">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
               <Input
-                type="search" placeholder="Buscar por nome ou código do item..."
+                type="search" placeholder="Buscar por NOME do item (inicia com)..."
                 className="pl-10 w-full" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
              <Select value={hospitalFilter} onValueChange={setHospitalFilter} disabled={isLoading || userIsOperator}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Filtrar por Hospital" />
+                <SelectValue placeholder="Hospital/Armazém" />
               </SelectTrigger>
               <SelectContent>
-                {userCanSeeAll && <SelectItem value="all">Todos os Hospitais/Armazém</SelectItem>}
+                {userCanSeeAll && <SelectItem value="all">Ver Tudo</SelectItem>}
                 {userCanSeeAll && <SelectItem value="central">Apenas Armazém Central</SelectItem>}
                 {allHospitalsData
                   .filter(h => userCanSeeAll || h.id === currentUserProfile?.associatedHospitalId)
@@ -325,36 +348,22 @@ export default function StockPage() {
               </SelectContent>
             </Select>
             <Select value={unitFilter} onValueChange={setUnitFilter} 
-                    disabled={isLoading || hospitalFilter === 'central' || (userIsOperator && !!currentUserProfile?.associatedUnitId) || (hospitalFilter === 'all' && !userCanSeeAll)}>
+                    disabled={isLoading || hospitalFilter === 'central' || hospitalFilter === 'all' || (userIsOperator && !!currentUserProfile?.associatedUnitId)}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Filtrar por Unidade" />
+                <SelectValue placeholder="Unidade" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todas as Unidades (do Hospital)</SelectItem>
-                {availableUnitsForFilter
-                  .filter(u => !(userIsOperator && currentUserProfile?.associatedUnitId) || u.id === currentUserProfile.associatedUnitId)
-                  .map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as DisplayStockItem['status'] | 'all')} disabled={isLoading}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Filtrar por Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os Status</SelectItem>
-                <SelectItem value="Optimal">Ótimo</SelectItem>
-                <SelectItem value="Low">Baixo</SelectItem>
-                <SelectItem value="Alert">Alerta</SelectItem>
-                <SelectItem value="NotConfigured">Não Configurado</SelectItem>
+                <SelectItem value="all">Todas as Unidades</SelectItem>
+                {availableUnitsForFilter.map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading && baseStockData.length === 0 ? (
+          {isLoading ? (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <p className="ml-3 text-muted-foreground">Carregando dados de estoque...</p>
+              <p className="ml-3 text-muted-foreground">Buscando dados no Firestore...</p>
             </div>
           ) : (
           <div className="overflow-x-auto">
@@ -372,14 +381,14 @@ export default function StockPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {currentItemsToDisplay.length > 0 ? (
-                  currentItemsToDisplay.map((item) => (
+                {displayData.length > 0 ? (
+                  displayData.map((item) => (
                     <TableRow key={item.id} className={item.status === 'Alert' || item.status === 'Low' ? 'bg-red-500/5' : ''}>
                       <TableCell className="font-medium">{item.itemName}</TableCell>
                       <TableCell>{item.itemCode || 'N/A'}</TableCell>
                       <TableCell>{item.hospitalName || (item.unitName === 'Armazém Central' ? '-' : 'N/D')}</TableCell>
                       <TableCell>{item.unitName}</TableCell>
-                      <TableCell className="text-right">{typeof item.currentQuantity === 'number' ? item.currentQuantity : 'N/D'}</TableCell>
+                      <TableCell className="text-right">{item.currentQuantity}</TableCell>
                       <TableCell className="text-right">{item.minQuantity}</TableCell>
                       <TableCell className="text-right">{item.strategicStockLevel}</TableCell>
                       <TableCell className="text-center">
@@ -390,7 +399,7 @@ export default function StockPage() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={8} className="text-center h-24">
-                      Nenhum dado de estoque encontrado para os filtros atuais.
+                      Nenhum dado encontrado para os filtros e página atuais.
                     </TableCell>
                   </TableRow>
                 )}
@@ -398,16 +407,14 @@ export default function StockPage() {
             </Table>
           </div>
           )}
-          {!isLoading && filteredStockData.length > ITEMS_PER_PAGE && (
+          {!isLoading && (
             <div className="flex justify-between items-center mt-4 pt-4 border-t no-print">
-              <Button onClick={handlePrevPage} disabled={currentPage === 1 || isLoading}>
-                Anterior
+              <Button onClick={handlePrevPage} disabled={page === 1 || isLoading} variant="outline" size="sm">
+                <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
               </Button>
-              <span className="text-sm text-muted-foreground">
-                Página {currentPage} de {totalPages} (Total: {filteredStockData.length} itens)
-              </span>
-              <Button onClick={handleNextPage} disabled={currentPage === totalPages || isLoading}>
-                Próxima
+              <span className="text-sm font-medium">Página {page}</span>
+              <Button onClick={handleNextPage} disabled={isLastPage || isLoading} variant="outline" size="sm">
+                Próxima <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
             </div>
           )}

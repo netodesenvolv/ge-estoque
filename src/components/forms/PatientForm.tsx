@@ -14,7 +14,7 @@ import type { Patient, Hospital, PatientSex } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
-import { collection, addDoc, doc, setDoc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, addDoc, doc, setDoc, onSnapshot, query, orderBy, deleteField } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
@@ -123,6 +123,7 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
 
     const patientDataToSave: Partial<Omit<Patient, 'id'>> = {
       name: data.name,
+      name_lowercase: data.name.toLowerCase(),
       susCardNumber: data.susCardNumber,
     };
 
@@ -131,26 +132,17 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
     if (data.phone) patientDataToSave.phone = data.phone;
     if (data.sex) patientDataToSave.sex = data.sex;
     if (data.healthAgentName) patientDataToSave.healthAgentName = data.healthAgentName;
-    if (data.registeredUBSId && data.registeredUBSId !== LOADING_UBS_VALUE) {
+    if (data.registeredUBSId && data.registeredUBSId !== LOADING_UBS_VALUE && data.registeredUBSId !== "none") {
         patientDataToSave.registeredUBSId = data.registeredUBSId;
         if (selectedUBS) {
             patientDataToSave.registeredUBSName = selectedUBS.name;
         }
-    } else {
-      // Se registeredUBSId for undefined, LOADING_UBS_VALUE ou não encontrado,
-      // garantir que os campos relacionados à UBS sejam removidos ou definidos como null.
-      // Firestore não aceita 'undefined', mas aceita 'null' ou omissão do campo.
-      // Para consistência, podemos omitir ou definir como null.
-      // A omissão é mais limpa se o campo não é obrigatório.
-      // No entanto, se queremos explicitamente 'limpar' o campo no update, null seria melhor.
-      // A lógica atual de não incluir se `data.registeredUBSId` for falsy já cobre isso para omissão.
-      // Se for um update e queremos remover o valor, o `setDoc` com `merge:true` não remove campos que não estão no objeto.
-      // Seria necessário passar explicitamente `registeredUBSId: null, registeredUBSName: null`.
-      // Para este caso, a omissão (não incluir no objeto) é suficiente se o campo for novo ou se `merge:true`
-      // não for usado de forma que sobrescreva todo o documento.
-      // Com merge:true, campos não presentes no objeto de atualização são deixados como estão no Firestore.
-      // Se queremos *remover* um campo, precisamos passar `{fieldName: firebase.firestore.FieldValue.delete()}`.
-      // Isso está fora do escopo atual.
+    } else if (patientId) {
+      // In edit mode, if the user explicitly clears the UBS (or sets to 'none'), we must delete the fields from Firestore
+      // @ts-ignore
+      patientDataToSave.registeredUBSId = deleteField();
+      // @ts-ignore
+      patientDataToSave.registeredUBSName = deleteField();
     }
 
 
@@ -297,7 +289,8 @@ export default function PatientForm({ initialData, patientId, onSubmitSuccess }:
                       </SelectTrigger></FormControl>
                       <SelectContent>
                         {isLoadingUbs && <SelectItem value={LOADING_UBS_VALUE} disabled>Carregando...</SelectItem>}
-                        {!isLoadingUbs && ubsList.length === 0 && <SelectItem value="__NO_UBS__" disabled>Nenhuma UBS encontrada</SelectItem>}
+                        {!isLoadingUbs && <SelectItem value="none">Nenhuma (Apenas Hospital)</SelectItem>}
+                        {!isLoadingUbs && ubsList.length === 0 && <SelectItem value="__NO_UBS__" disabled>Nenhuma UBS de cadastro encontrada</SelectItem>}
                         {!isLoadingUbs && ubsList.map(ubs => (
                           <SelectItem key={ubs.id} value={ubs.id}>{ubs.name}</SelectItem>
                         ))}

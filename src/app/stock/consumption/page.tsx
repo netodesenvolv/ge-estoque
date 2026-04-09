@@ -18,7 +18,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { firestore } from '@/lib/firebase';
-import { collection, doc, query, orderBy, onSnapshot, runTransaction, type DocumentSnapshot, where, getDocs, limit } from 'firebase/firestore';
+import { collection, doc, query, orderBy, onSnapshot, runTransaction, type DocumentSnapshot, where, getDocs, limit, documentId } from 'firebase/firestore';
 
 // --- Constants ---
 const CENTRAL_WAREHOUSE_ID = "__CENTRAL_WAREHOUSE__";
@@ -26,6 +26,9 @@ const GENERAL_STOCK_UNIT_ID_PLACEHOLDER = "__GENERAL_STOCK_UNIT__";
 const UBS_GENERAL_STOCK_SUFFIX = "UBSGENERAL";
 const NO_UNITS_FOR_HOSPITAL_PLACEHOLDER = "__NO_UNITS_FOR_HOSPITAL__";
 const LOADING_PLACEHOLDER = "__LOADING__";
+
+// --- Global Cache ---
+let cachedMasterItems: Item[] | null = null;
 
 // --- Zod Schemas ---
 const locationSelectionSchema = z.object({
@@ -146,6 +149,12 @@ const LocationSelectionForm = ({
   );
 };
 
+interface DropdownItem {
+  id: string;
+  name: string;
+  quantity: number | string;
+}
+
 interface ConsumptionDetailsFormProps {
   consumptionForm: any;
   handleConsumptionSubmit: (data: ConsumptionDetailsFormData) => void;
@@ -153,8 +162,7 @@ interface ConsumptionDetailsFormProps {
   selectedLocation: { hospitalId: string; unitId?: string | null; hospitalName: string; unitName: string };
   setSelectedLocation: (location: any) => void;
   setStage: (stage: 'selectLocation' | 'fillForm') => void;
-  items: Item[];
-  stockConfigs: FirestoreStockConfig[];
+  availableItemsForDropdown: DropdownItem[];
   patientSearchTerm: string;
   setPatientSearchTerm: (term: string) => void;
   patientSearchResults: Patient[];
@@ -173,8 +181,7 @@ const ConsumptionDetailsForm = ({
     selectedLocation,
     setSelectedLocation,
     setStage,
-    items,
-    stockConfigs,
+    availableItemsForDropdown,
     patientSearchTerm,
     setPatientSearchTerm,
     patientSearchResults,
@@ -187,20 +194,6 @@ const ConsumptionDetailsForm = ({
   }: ConsumptionDetailsFormProps) => {
 
     const { fields, append, remove } = useFieldArray({ control: consumptionForm.control, name: "items" });
-    
-    const getDisplayStockForItemAtSelectedLocation = (itemId: string): number | string => {
-        if (!selectedLocation || !itemId) return 'N/A';
-        
-        if (selectedLocation.hospitalId === CENTRAL_WAREHOUSE_ID) {
-            return items.find(i => i.id === itemId)?.currentQuantityCentral ?? 0;
-        }
-        
-        const configId = selectedLocation.unitId
-          ? `${itemId}_${selectedLocation.unitId}`
-          : `${itemId}_${selectedLocation.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
-          
-        return stockConfigs.find(sc => sc.id === configId)?.currentQuantity ?? 0;
-    };
 
     const canGoBack = currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator' ||
                       (currentUserProfile?.role === 'hospital_operator' && !currentUserProfile.associatedUnitId);
@@ -220,7 +213,7 @@ const ConsumptionDetailsForm = ({
                       <FormField name={`items.${index}.itemId`} control={consumptionForm.control} render={({ field }) => (
                           <FormItem>
                             <FormLabel>Item</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Selecione o item" /></SelectTrigger></FormControl><SelectContent>{items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} (Disp: {getDisplayStockForItemAtSelectedLocation(item.id)})</SelectItem>)}</SelectContent></Select>
+                            <Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue placeholder="Selecione o item" /></SelectTrigger></FormControl><SelectContent>{availableItemsForDropdown.map(item => <SelectItem key={item.id} value={item.id}>{item.name} (Disp: {item.quantity})</SelectItem>)}</SelectContent></Select>
                             <FormMessage />
                           </FormItem>
                       )} />
@@ -299,15 +292,15 @@ export default function GeneralConsumptionPage() {
   const { currentUserProfile, loading: authLoading, user } = useAuth();
   
   // Master Data States
-  const [items, setItems] = useState<Item[]>([]);
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
-  const [stockConfigs, setStockConfigs] = useState<FirestoreStockConfig[]>([]);
 
   // UI/Flow Control States
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [isLoadingLocationData, setIsLoadingLocationData] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [stage, setStage] = useState<'selectLocation' | 'fillForm'>('selectLocation');
+  const [availableDropdownItems, setAvailableDropdownItems] = useState<DropdownItem[]>([]);
   const [selectedLocation, setSelectedLocation] = useState<{
     hospitalId: string;
     unitId?: string | null;
@@ -331,7 +324,7 @@ export default function GeneralConsumptionPage() {
   });
 
   useEffect(() => {
-    const sourcesToLoad = 4;
+    const sourcesToLoad = 2; // Reduced global loads
     let loadedCount = 0;
     
     const checkAllLoaded = () => {
@@ -342,25 +335,71 @@ export default function GeneralConsumptionPage() {
     };
 
     const createListener = (collectionName: string, q: any, setter: React.Dispatch<React.SetStateAction<any[]>>) => {
-      return onSnapshot(q, (snapshot) => {
-        setter(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
+      return onSnapshot(q, (snapshot: any) => {
+        setter(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() } as any)));
         checkAllLoaded();
-      }, (error) => {
+      }, (error: any) => {
         toast({ title: `Erro ao carregar ${collectionName}`, variant: "destructive" });
         checkAllLoaded(); // Still count as "loaded" to unblock UI
       });
     };
 
     const unsubscribers = [
-      createListener("items", query(collection(firestore, "items"), orderBy("name")), setItems),
       createListener("hospitals", query(collection(firestore, "hospitals"), orderBy("name")), setHospitals),
       createListener("servedUnits", query(collection(firestore, "servedUnits"), orderBy("name")), setServedUnits),
-      createListener("stockConfigs", query(collection(firestore, "stockConfigs")), setStockConfigs),
     ];
 
     return () => unsubscribers.forEach(unsub => unsub());
   }, [toast]);
   
+  const loadLocationItems = async (hospitalId: string, unitIdForTx: string | null | undefined) => {
+      // Utilize cache to avoid fetching 2500 items multiple times
+      if (!cachedMasterItems) {
+          const qItems = query(collection(firestore, "items"));
+          const snapItems = await getDocs(qItems);
+          cachedMasterItems = snapItems.docs.map(d => ({id: d.id, ...d.data()} as Item));
+      }
+      const masterItems = cachedMasterItems;
+
+      if (hospitalId === CENTRAL_WAREHOUSE_ID) {
+         setAvailableDropdownItems(masterItems.map(item => ({
+             id: item.id,
+             name: item.name,
+             quantity: item.currentQuantityCentral ?? 0
+         })));
+      } else {
+         const q = query(collection(firestore, "stockConfigs"), where("hospitalId", "==", hospitalId));
+         const snap = await getDocs(q);
+         const fetchedConfigs = snap.docs.map(d => ({id: d.id, ...d.data()} as FirestoreStockConfig));
+         
+         const relevantConfigsMap = new Map<string, FirestoreStockConfig>();
+         fetchedConfigs.forEach(c => {
+             if (c.id) relevantConfigsMap.set(c.id, c);
+         });
+         
+         const dropdownList: DropdownItem[] = [];
+         
+         masterItems.forEach(item => {
+             const expectedConfigId = unitIdForTx
+               ? `${item.id}_${unitIdForTx}`
+               : `${item.id}_${hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
+               
+             const config = relevantConfigsMap.get(expectedConfigId);
+             
+             if (config) {
+                 dropdownList.push({
+                     id: item.id, // Explicitly use master item ID
+                     name: item.name, // Explicitly use master item name
+                     quantity: config.currentQuantity ?? 0
+                 });
+             }
+         });
+         
+         dropdownList.sort((a,b) => a.name.localeCompare(b.name));
+         setAvailableDropdownItems(dropdownList);
+      }
+  };
+
   useEffect(() => {
     if (isLoadingData || authLoading || !currentUserProfile) {
       return;
@@ -397,9 +436,16 @@ export default function GeneralConsumptionPage() {
       }
   
       if (locationToSet && stage === 'selectLocation') {
-        setSelectedLocation(locationToSet);
-        setStage('fillForm');
-        consumptionForm.reset({ items: [{ itemId: '', quantityConsumed: 1, notes: '' }], date: new Date().toISOString().split('T')[0] });
+        setIsLoadingLocationData(true);
+        loadLocationItems(locationToSet.hospitalId, locationToSet.unitId).then(() => {
+            setSelectedLocation(locationToSet);
+            setStage('fillForm');
+            consumptionForm.reset({ items: [{ itemId: '', quantityConsumed: 1, notes: '' }], date: new Date().toISOString().split('T')[0] });
+            setIsLoadingLocationData(false);
+        }).catch(() => {
+            setIsLoadingLocationData(false);
+            toast({ title: "Erro ao carregar dados do local.", variant: "destructive" });
+        });
         return;
       }
     }
@@ -414,10 +460,11 @@ export default function GeneralConsumptionPage() {
          locationForm.reset({ hospitalId: '', unitId: '' });
        }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, isLoadingData, authLoading, currentUserProfile, hospitals, servedUnits, locationForm, consumptionForm]);
 
 
-  const handleLocationSubmit = (data: LocationSelectionFormData) => {
+  const handleLocationSubmit = async (data: LocationSelectionFormData) => {
     const hospital = data.hospitalId === CENTRAL_WAREHOUSE_ID ? { id: CENTRAL_WAREHOUSE_ID, name: 'Almoxarifado Central' } : hospitals.find(h => h.id === data.hospitalId);
     if (!hospital) return toast({ title: "Hospital inválido", variant: "destructive" });
 
@@ -437,15 +484,24 @@ export default function GeneralConsumptionPage() {
       unitIdForTx = null;
     }
 
-    setSelectedLocation({ hospitalId: data.hospitalId, unitId: unitIdForTx, hospitalName: hospital.name, unitName });
-    setStage('fillForm');
-    consumptionForm.reset({ items: [{ itemId: '', quantityConsumed: 1, notes: '' }], date: new Date().toISOString().split('T')[0] });
-    setSelectedPatient(null);
-    setPatientSearchTerm('');
+    setIsLoadingLocationData(true);
+    try {
+      await loadLocationItems(hospital.id, unitIdForTx);
+      setSelectedLocation({ hospitalId: data.hospitalId, unitId: unitIdForTx, hospitalName: hospital.name, unitName });
+      setStage('fillForm');
+      consumptionForm.reset({ items: [{ itemId: '', quantityConsumed: 1, notes: '' }], date: new Date().toISOString().split('T')[0] });
+      setSelectedPatient(null);
+      setPatientSearchTerm('');
+    } catch (error) {
+      toast({ title: "Erro ao carregar os itens desta unidade.", variant: "destructive" });
+    } finally {
+      setIsLoadingLocationData(false);
+    }
   };
   
   const handlePatientSearch = async () => {
-    if (patientSearchTerm.trim().length < 3) {
+    const term = patientSearchTerm.trim();
+    if (term.length < 3) {
       toast({ title: "Busca Inválida", description: "Por favor, digite pelo menos 3 caracteres para buscar." });
       return;
     }
@@ -455,7 +511,6 @@ export default function GeneralConsumptionPage() {
     try {
         const patientsRef = collection(firestore, "patients");
         const results: { [id: string]: Patient } = {};
-        const term = patientSearchTerm;
 
         // Query by exact SUS card number if it matches the format
         if (/^\d{15}$/.test(term)) {
@@ -466,19 +521,51 @@ export default function GeneralConsumptionPage() {
             });
         }
 
-        // Always query by name prefix as well
-        const nameQuery = query(
-            patientsRef,
-            where("name", ">=", term),
-            where("name", "<=", term + '\uf8ff'),
-            limit(10)
+        const termLower = term.toLowerCase();
+        const termExact = term;
+        const termUpper = term.toUpperCase();
+        const termCapitalized = term.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+
+        const queriesToRun = [];
+
+        // 1. Optimized lowercase search
+        queriesToRun.push(
+            getDocs(query(patientsRef, 
+            where("name_lowercase", ">=", termLower), 
+            where("name_lowercase", "<=", termLower + '\uf8ff'), limit(10)))
         );
-        const nameSnap = await getDocs(nameQuery);
-        nameSnap.docs.forEach(doc => {
-            // Avoid duplicates if a patient was found by SUS number already
-            if (!results[doc.id]) {
-                results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
-            }
+
+        // 2. Fallbacks for legacy records
+        queriesToRun.push(
+            getDocs(query(patientsRef, 
+            where("name", ">=", termExact), 
+            where("name", "<=", termExact + '\uf8ff'), limit(10)))
+        );
+
+        if (termExact !== termUpper) {
+            queriesToRun.push(
+                getDocs(query(patientsRef, 
+                where("name", ">=", termUpper), 
+                where("name", "<=", termUpper + '\uf8ff'), limit(10)))
+            );
+        }
+
+        if (termExact !== termCapitalized && termUpper !== termCapitalized) {
+            queriesToRun.push(
+                getDocs(query(patientsRef, 
+                where("name", ">=", termCapitalized), 
+                where("name", "<=", termCapitalized + '\uf8ff'), limit(10)))
+            );
+        }
+
+        const queryResults = await Promise.all(queriesToRun);
+        
+        queryResults.forEach(snap => {
+            snap.docs.forEach(doc => {
+                 if (!results[doc.id]) {
+                     results[doc.id] = { id: doc.id, ...doc.data() } as Patient;
+                 }
+            });
         });
 
         const uniqueResults = Object.values(results);
@@ -528,7 +615,7 @@ export default function GeneralConsumptionPage() {
         for (const itemData of data.items) {
           if (!itemData.itemId || itemData.quantityConsumed <= 0) continue;
 
-          const itemDocRef = doc(firestore, "items", itemData.itemId);
+          const itemDocRef = doc(firestore, "items", itemData.itemId) as import('firebase/firestore').DocumentReference<Item>;
           const itemSnap = await transaction.get(itemDocRef);
           if (!itemSnap.exists()) throw new Error(`Item com ID ${itemData.itemId} não encontrado.`);
 
@@ -539,7 +626,7 @@ export default function GeneralConsumptionPage() {
             unitConfigDocId = selectedLocation.unitId
               ? `${itemData.itemId}_${selectedLocation.unitId}`
               : `${itemData.itemId}_${selectedLocation.hospitalId}_${UBS_GENERAL_STOCK_SUFFIX}`;
-            const unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId);
+            const unitConfigDocRef = doc(firestore, "stockConfigs", unitConfigDocId) as import('firebase/firestore').DocumentReference<FirestoreStockConfig>;
             unitConfigSnap = await transaction.get(unitConfigDocRef);
           }
           
@@ -591,7 +678,7 @@ export default function GeneralConsumptionPage() {
             date: data.date,
             hospitalId: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalId : null,
             hospitalName: selectedLocation.hospitalId !== CENTRAL_WAREHOUSE_ID ? selectedLocation.hospitalName : null,
-            unitId: selectedLocation.unitId,
+            unitId: selectedLocation.unitId ?? undefined,
             unitName: selectedLocation.unitName,
             notes: job.formInput.notes ?? null,
             patientId: selectedPatient?.id ?? null,
@@ -599,6 +686,10 @@ export default function GeneralConsumptionPage() {
             userId: userWithId.id || "unknown_user_id",
             userDisplayName: userWithId.name,
           };
+          
+          Object.keys(movementLog).forEach(
+              key => movementLog[key as keyof typeof movementLog] === undefined && delete movementLog[key as keyof typeof movementLog]
+          );
           
           transaction.set(newMovementRef, movementLog);
         }
@@ -644,25 +735,31 @@ export default function GeneralConsumptionPage() {
           servedUnits={servedUnits}
         />
       ) : selectedLocation ? (
-        <ConsumptionDetailsForm 
-          consumptionForm={consumptionForm}
-          handleConsumptionSubmit={handleConsumptionSubmit}
-          isSubmitting={isSubmitting}
-          selectedLocation={selectedLocation}
-          setSelectedLocation={setSelectedLocation}
-          setStage={setStage}
-          items={items}
-          stockConfigs={stockConfigs}
-          patientSearchTerm={patientSearchTerm}
-          setPatientSearchTerm={setPatientSearchTerm}
-          patientSearchResults={patientSearchResults}
-          handlePatientSearch={handlePatientSearch}
-          isSearchingPatient={isSearchingPatient}
-          selectedPatient={selectedPatient}
-          handleSelectPatient={handleSelectPatient}
-          handleClearPatientSelection={handleClearPatientSelection}
-          currentUserProfile={currentUserProfile}
-        />
+        isLoadingLocationData ? (
+           <div className="flex w-full items-center justify-center p-8">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="ml-2 text-lg text-muted-foreground">Buscando itens da unidade...</p>
+          </div>
+        ) : (
+          <ConsumptionDetailsForm 
+            consumptionForm={consumptionForm}
+            handleConsumptionSubmit={handleConsumptionSubmit}
+            isSubmitting={isSubmitting}
+            selectedLocation={selectedLocation}
+            setSelectedLocation={setSelectedLocation}
+            setStage={setStage}
+            availableItemsForDropdown={availableDropdownItems}
+            patientSearchTerm={patientSearchTerm}
+            setPatientSearchTerm={setPatientSearchTerm}
+            patientSearchResults={patientSearchResults}
+            handlePatientSearch={handlePatientSearch}
+            isSearchingPatient={isSearchingPatient}
+            selectedPatient={selectedPatient}
+            handleSelectPatient={handleSelectPatient}
+            handleClearPatientSelection={handleClearPatientSelection}
+            currentUserProfile={currentUserProfile}
+          />
+        )
       ) : (
          <div className="flex h-screen w-full items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />

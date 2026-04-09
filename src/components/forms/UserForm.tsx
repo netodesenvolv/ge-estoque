@@ -159,6 +159,7 @@ export default function UserForm({}: UserFormProps) {
 
     const userProfileData: UserProfile = {
       name: data.name,
+      name_lowercase: data.name.toLowerCase(),
       email: data.email,
       role: data.role as UserRole,
       status: data.status ? 'active' : 'inactive',

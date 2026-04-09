@@ -71,6 +71,7 @@ export default function ItemForm({ initialData, itemId, onSubmitSuccess }: ItemF
   const onSubmit = async (data: ItemFormData) => {
     const itemDataToSave = {
       ...data,
+      name_lowercase: data.name.toLowerCase(),
       expirationDate: data.expirationDate || null,
     };
 

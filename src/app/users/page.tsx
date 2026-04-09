@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
@@ -9,76 +9,159 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Users as UsersIcon, PlusCircle, Edit3, Trash2, Search, Loader2, ShieldAlert } from 'lucide-react';
+import { Users as UsersIcon, PlusCircle, Edit3, Trash2, Search, Loader2, ShieldAlert, X, ChevronLeft, ChevronRight, RefreshCw, AlertCircle } from 'lucide-react';
 import type { User } from '@/types'; 
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { firestore } from '@/lib/firebase';
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
-import type { FirestoreError } from 'firebase/firestore';
+import { collection, query, orderBy, doc, deleteDoc, getDocs, limit, startAfter, endBefore, limitToLast, where, type Query, type DocumentSnapshot, writeBatch } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext'; 
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+
+const USERS_PER_PAGE = 15;
 
 export default function UsersPage() {
   const [userProfiles, setUserProfiles] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeSearchTerm, setActiveSearchTerm] = useState('');
   const [permissionDeniedError, setPermissionDeniedError] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
+  
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
+  const [firstVisible, setFirstVisible] = useState<DocumentSnapshot | null>(null);
+  const [isLastPage, setIsLastPage] = useState(false);
+
   const { toast } = useToast();
   const router = useRouter();
   const { currentUserProfile } = useAuth(); 
 
-  useEffect(() => {
-    if (!currentUserProfile) {
-      setIsLoading(false);
-      return; 
-    }
+  const isAdmin = currentUserProfile?.role === 'admin';
 
-    if (currentUserProfile.role !== 'admin') {
-      setIsLoading(false);
-      setPermissionDeniedError(true); // Explicitly set permission denied for non-admins
-      toast({
-        title: "Acesso Restrito",
-        description: "A visualização da lista de usuários é permitida apenas para administradores.",
-        variant: "default", 
-      });
-      return;
+  const buildQuery = (direction: 'first' | 'next' | 'prev', term: string): Query => {
+    const usersCollectionRef = collection(firestore, "user_profiles");
+    const constraints: any[] = [];
+    
+    if (term) {
+      const lowerTerm = term.toLowerCase();
+      constraints.push(where("name_lowercase", ">=", lowerTerm), where("name_lowercase", "<=", lowerTerm + '\uf8ff'));
+      constraints.push(orderBy("name_lowercase", "asc"));
+    } else {
+      constraints.push(orderBy("name", "asc"));
     }
+    
+    if (direction === 'next' && lastVisible) {
+      constraints.push(startAfter(lastVisible));
+    } else if (direction === 'prev' && firstVisible) {
+      constraints.push(endBefore(firstVisible), limitToLast(USERS_PER_PAGE));
+      return query(usersCollectionRef, ...constraints);
+    }
+    
+    constraints.push(limit(USERS_PER_PAGE));
+    return query(usersCollectionRef, ...constraints);
+  };
+
+  const fetchUsers = useCallback(async (direction: 'first' | 'next' | 'prev', term: string) => {
+    if (!currentUserProfile || currentUserProfile.role !== 'admin') return;
 
     setIsLoading(true);
-    setPermissionDeniedError(false); 
-    const usersCollectionRef = collection(firestore, "user_profiles");
-    const q = query(usersCollectionRef, orderBy("name", "asc"));
-
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const profilesData = querySnapshot.docs.map(docSnap => ({
-        id: docSnap.id, 
-        ...docSnap.data(),
-      } as User)); 
-      setUserProfiles(profilesData);
+    const q = buildQuery(direction, term);
+    
+    try {
+      const snap = await getDocs(q);
+      let profilesData = snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as User));
+      
+      if (direction === 'prev') profilesData = profilesData.reverse();
+      
+      if (profilesData.length > 0) {
+        setUserProfiles(profilesData);
+        setFirstVisible(snap.docs[0]);
+        setLastVisible(snap.docs[snap.docs.length - 1]);
+        setIsLastPage(snap.docs.length < USERS_PER_PAGE);
+      } else {
+        if (direction === 'first' && term) {
+          toast({ title: "Nenhum resultado", description: "Experimente sincronizar os dados se o usuário for antigo." });
+        }
+        setUserProfiles([]);
+        setIsLastPage(true);
+      }
+      setPermissionDeniedError(false);
+    } catch (error: any) {
+      console.error("Erro ao buscar usuários: ", error);
+      if (error.code === 'permission-denied') setPermissionDeniedError(true);
+      toast({ title: "Erro ao Carregar Usuários", variant: "destructive" });
+    } finally {
       setIsLoading(false);
-    }, (error: FirestoreError) => {
-      console.error("Firestore onSnapshot error in UsersPage. Code:", error.code, "Message:", error.message, "Stack:", error.stack);
-      toast({
-        title: "Erro ao Carregar Usuários",
-        description: `Não foi possível carregar os perfis: ${error.message}`,
-        variant: "destructive",
+    }
+  }, [currentUserProfile, toast]);
+
+  const handleMigrateSearchData = async () => {
+    if (!isAdmin) return;
+    setIsMigrating(true);
+    try {
+      const q = query(collection(firestore, "user_profiles"));
+      const snap = await getDocs(q);
+      const batch = writeBatch(firestore);
+      let count = 0;
+      
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        if (!data.name_lowercase && data.name) {
+          batch.update(docSnap.ref, { name_lowercase: data.name.toLowerCase() });
+          count++;
+        }
       });
-      if (error.code === 'permission-denied') {
+      
+      if (count > 0) {
+        await batch.commit();
+        toast({ title: "Usuários Sincronizados", description: `${count} perfis atualizados.` });
+      } else {
+        toast({ title: "Tudo em ordem" });
+      }
+      handleClearSearch();
+    } catch (error) {
+      console.error("Erro na migração: ", error);
+      toast({ title: "Erro na Sincronização", variant: "destructive" });
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  const showMigrationWarning = isAdmin && userProfiles.length > 0 && !userProfiles.some(u => u.name_lowercase) && activeSearchTerm === '';
+
+  useEffect(() => {
+    if (currentUserProfile) {
+      if (currentUserProfile.role === 'admin') {
+        fetchUsers('first', '');
+      } else {
+        setIsLoading(false);
         setPermissionDeniedError(true);
       }
-      setIsLoading(false);
-    });
+    }
+  }, [currentUserProfile, fetchUsers]);
 
-    return () => unsubscribe();
-  }, [toast, currentUserProfile]);
+  const handleSearch = () => {
+    setPage(1);
+    setFirstVisible(null);
+    setLastVisible(null);
+    setActiveSearchTerm(searchTerm);
+    fetchUsers('first', searchTerm);
+  };
+  
+  const handleClearSearch = () => {
+    setSearchTerm('');
+    setActiveSearchTerm('');
+    setPage(1);
+    setFirstVisible(null);
+    setLastVisible(null);
+    fetchUsers('first', '');
+  };
 
-  const filteredUsers = userProfiles.filter(user =>
-    user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (user.associatedHospitalName && user.associatedHospitalName.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const handleNextPage = () => { if (!isLastPage) { setPage(p => p + 1); fetchUsers('next', activeSearchTerm); } };
+  const handlePrevPage = () => { if (page > 1) { setPage(p => p - 1); fetchUsers('prev', activeSearchTerm); } };
 
   const handleEdit = (id: string) => {
     router.push(`/users/${id}/edit`);
@@ -94,15 +177,12 @@ export default function UsersPage() {
       await deleteDoc(userProfileDocRef);
       toast({
         title: "Perfil de Usuário Excluído",
-        description: `O perfil de ${userName} foi removido do banco de dados. A conta de autenticação do Firebase permanece.`,
+        description: `O perfil de ${userName} foi removido do banco de dados.`,
       });
+      handleSearch();
     } catch (error) {
       console.error("Erro ao excluir perfil de usuário: ", error);
-      toast({
-        title: "Erro ao Excluir Perfil",
-        description: "Não foi possível excluir o perfil do usuário. Tente novamente.",
-        variant: "destructive",
-      });
+      toast({ title: "Erro ao Excluir Perfil", variant: "destructive" });
     }
   };
 
@@ -120,11 +200,9 @@ export default function UsersPage() {
   const getStatusVariant = (status: User['status']): 'default' | 'secondary' => {
     return status === 'active' ? 'default' : 'secondary';
   }
-   const getStatusText = (status: User['status']): string => {
+  const getStatusText = (status: User['status']): string => {
     return status === 'active' ? 'Ativo' : 'Inativo';
   }
-
-  const canAddUsers = currentUserProfile?.role === 'admin';
 
   return (
     <div>
@@ -133,7 +211,7 @@ export default function UsersPage() {
         description="Adicione, edite e gerencie usuários do sistema."
         icon={UsersIcon}
         actions={
-          canAddUsers ? (
+          currentUserProfile?.role === 'admin' ? (
             <Button asChild>
               <Link href="/users/add">
                 <PlusCircle className="mr-2 h-4 w-4" /> Adicionar Novo Usuário
@@ -142,40 +220,63 @@ export default function UsersPage() {
           ) : null
         }
       />
+
+      {showMigrationWarning && (
+        <Alert className="mb-6 border-orange-200 bg-orange-50 text-orange-800">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Sincronização Necessária</AlertTitle>
+          <AlertDescription className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            Para habilitar a busca flexível nos usuários antigos, é necessário atualizar os registros.
+            <Button size="sm" onClick={handleMigrateSearchData} disabled={isMigrating} variant="outline" className="border-orange-300 text-orange-800 hover:bg-orange-100">
+              {isMigrating ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <RefreshCw className="mr-2 h-4 w-4"/>}
+              Sincronizar Usuários
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card className="shadow-lg">
         <CardHeader>
           <CardTitle className="font-headline">Todos os Usuários</CardTitle>
-          <div className="relative mt-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Buscar por nome, email, perfil ou hospital..."
-              className="pl-10 w-full md:w-1/2"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              disabled={permissionDeniedError || isLoading} // Disable search if permission denied or loading
-            />
+          <div className="flex flex-col md:flex-row gap-2 mt-4">
+            <div className="relative flex-grow">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Buscar por NOME do usuário (inicia com)..."
+                className="pl-10 w-full"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                disabled={permissionDeniedError || isLoading}
+              />
+            </div>
+            <div className="flex gap-2">
+                <Button onClick={handleSearch} disabled={isLoading || permissionDeniedError}>
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Search className="mr-2 h-4 w-4"/>}
+                    Buscar
+                </Button>
+                <Button onClick={handleClearSearch} variant="outline" disabled={isLoading || permissionDeniedError}>
+                    <X className="mr-2 h-4 w-4"/>
+                    Limpar
+                </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
              <div className="flex items-center justify-center h-24">
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                <p className="ml-2 text-muted-foreground">Carregando usuários...</p>
+                <p className="ml-2 text-muted-foreground">Buscando usuários...</p>
             </div>
           ) : permissionDeniedError ? (
             <div className="flex flex-col items-center justify-center h-auto text-center p-4 rounded-md bg-destructive/10 border border-destructive/50 my-6">
               <ShieldAlert className="h-12 w-12 text-destructive mb-3" />
-              <h3 className="text-lg font-semibold text-destructive">Acesso Negado à Lista de Usuários</h3>
-              <p className="text-muted-foreground mt-1">
-                Apenas administradores podem visualizar esta lista.
-              </p>
-              <p className="text-sm text-muted-foreground mt-2">
-                Se você é um administrador e está vendo esta mensagem, verifique suas Regras de Segurança do Firestore.
-                A regra para listar a coleção <code className="bg-muted px-1 py-0.5 rounded text-xs">user_profiles</code> deve permitir acesso ao seu UID de administrador.
-              </p>
+              <h3 className="text-lg font-semibold text-destructive">Acesso Negado</h3>
+              <p className="text-muted-foreground mt-1">Apenas administradores podem visualizar esta lista.</p>
             </div>
           ) : (
+          <>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
@@ -189,8 +290,8 @@ export default function UsersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredUsers.length > 0 ? (
-                  filteredUsers.map((user) => (
+                {userProfiles.length > 0 ? (
+                  userProfiles.map((user) => (
                     <TableRow key={user.id}>
                       <TableCell className="font-medium">{user.name}</TableCell>
                       <TableCell>{user.email}</TableCell>
@@ -207,47 +308,47 @@ export default function UsersPage() {
                         <Badge variant={getStatusVariant(user.status)}>{getStatusText(user.status)}</Badge>
                       </TableCell>
                       <TableCell className="text-center">
-                        {currentUserProfile?.role === 'admin' && (
-                          <>
-                            <Button variant="ghost" size="icon" onClick={() => handleEdit(user.id)} className="hover:text-primary mr-2">
-                              <Edit3 className="h-4 w-4" />
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(user.id)} className="hover:text-primary mr-2">
+                          <Edit3 className="h-4 w-4" />
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="hover:text-destructive" disabled={user.id === currentUserProfile?.id}>
+                              <Trash2 className="h-4 w-4" />
                             </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="icon" className="hover:text-destructive" disabled={user.id === currentUserProfile.id}>
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Confirmar Exclusão</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Tem certeza que deseja excluir o perfil de {user.name}? Esta ação removerá o perfil do banco de dados, mas não a conta de autenticação do Firebase.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => handleDelete(user.id, user.name)} className={buttonVariants({variant: "destructive"})}>
-                                    Excluir Perfil
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </>
-                        )}
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Confirmar Exclusão</AlertDialogTitle>
+                              <AlertDialogDescription>Tem certeza que deseja excluir o perfil de {user.name}?</AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => handleDelete(user.id, user.name)} className={buttonVariants({variant: "destructive"})}>Excluir</AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </TableCell>
                     </TableRow>
                   ))
                 ) : (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center h-24">
-                      Nenhum usuário encontrado.
-                    </TableCell>
-                  </TableRow>
+                  <TableRow><TableCell colSpan={6} className="text-center h-24">Nenhum usuário encontrado.</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
           </div>
+          {userProfiles.length > 0 && (
+            <div className="flex justify-between items-center mt-4 border-t pt-4">
+              <Button onClick={handlePrevPage} disabled={page === 1 || isLoading} variant="outline" size="sm">
+                <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
+              </Button>
+              <span className="text-sm font-medium">Página {page}</span>
+              <Button onClick={handleNextPage} disabled={isLastPage || isLoading} variant="outline" size="sm">
+                Próxima <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          )}
+          </>
           )}
         </CardContent>
       </Card>
