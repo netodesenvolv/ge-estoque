@@ -37,7 +37,7 @@ export default function UsersPage() {
 
   const { toast } = useToast();
   const router = useRouter();
-  const { currentUserProfile } = useAuth(); 
+  const { currentUserProfile, user: authUser } = useAuth(); 
 
   const isAdmin = currentUserProfile?.role === 'admin';
 
@@ -313,7 +313,7 @@ export default function UsersPage() {
                         </Button>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="hover:text-destructive" disabled={user.id === currentUserProfile?.id}>
+                            <Button variant="ghost" size="icon" className="hover:text-destructive" disabled={user.id === authUser?.uid}>
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </AlertDialogTrigger>

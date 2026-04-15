@@ -146,7 +146,7 @@ const BatchImportForm = () => {
               minQuantity,
               currentQuantityCentral,
               supplier: supplier || '',
-              expirationDate: expirationDate || null,
+              expirationDate: expirationDate || undefined,
             };
             
             const newDocRef = doc(itemsCollectionRef); // Cria referência com ID automático
@@ -192,7 +192,7 @@ const BatchImportForm = () => {
           const fileInput = document.getElementById('batch-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
         },
-        error: (error) => {
+        error: (error: any) => {
           console.error("Erro de parsing PapaParse:", error);
           toast({ title: "Erro de Leitura", description: "Não foi possível processar o arquivo CSV.", variant: "destructive" });
           setIsProcessing(false);

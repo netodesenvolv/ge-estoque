@@ -171,7 +171,7 @@ const BatchImportServedUnitForm = () => {
           const fileInput = document.getElementById('batch-served-unit-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
         },
-        error: (error) => {
+        error: (error: any) => {
           console.error("Erro de parsing PapaParse:", error);
           toast({ title: "Erro de Leitura", description: "Não foi possível processar o arquivo CSV.", variant: "destructive" });
           setIsProcessing(false);

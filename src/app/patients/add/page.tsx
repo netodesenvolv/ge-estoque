@@ -294,7 +294,7 @@ const BatchImportPatientForm = () => {
           const fileInput = document.getElementById('batch-patient-file-input') as HTMLInputElement | null;
           if (fileInput) fileInput.value = "";
         },
-        error: (error: Papa.ParseError) => {
+        error: (error: any) => {
           console.error("BATCH IMPORT: Erro de parsing PapaParse:", error);
           toast({ title: "Erro de Leitura", description: `Não foi possível processar o arquivo CSV: ${error.message}`, variant: "destructive" });
           setIsProcessing(false);

@@ -19,7 +19,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { firestore } from '@/lib/firebase';
 import { collection, query, orderBy, onSnapshot, doc, runTransaction, getDoc } from 'firebase/firestore';
-import { processMovementRowTransaction } from '@/app/stock/movements/page.tsx'; // Import the transaction function
+import { processMovementRowTransaction } from '@/lib/stock-utils'; // Import the transaction function
 
 const consumptionSchema = z.object({
   itemId: z.string().min(1, "A seleção do item é obrigatória."),

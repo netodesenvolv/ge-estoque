@@ -141,7 +141,14 @@ export default function LowStockLevelsReportPage() {
       ]);
 
       const configs = configsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig));
-      const levels = levelsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      interface StockLevel {
+        id: string;
+        itemId: string;
+        unitId?: string;
+        hospitalId?: string;
+        currentQuantity: number;
+      }
+      const levels = levelsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockLevel));
 
       // 2. Process Data
       const processed: LowStockReportItem[] = firestoreItems.map(item => {

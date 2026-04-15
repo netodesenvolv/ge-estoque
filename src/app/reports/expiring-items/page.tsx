@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { CalendarClock, Filter, Printer, AlertTriangle, Download } from 'lucide-react';
+import { CalendarClock, Filter, Printer, AlertTriangle, Download, Loader2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import type { Item } from '@/types';
 import { mockItems } from '@/data/mockData';
 import { format, parseISO, differenceInDays, isValid } from 'date-fns';
