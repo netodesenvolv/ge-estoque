@@ -14,13 +14,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { firestore } from '@/lib/firebase';
 import { collection, query, orderBy, onSnapshot, doc, writeBatch, getDocs } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'next/navigation';
 import { Alert } from '@/components/ui/alert';
 
 
 interface FirestoreStockConfig {
   id?: string; 
   itemId: string;
-  unitId?: string;
+  unitId?: string | null;
   hospitalId?: string;
   strategicStockLevel: number;
   minQuantity: number;
@@ -43,9 +44,21 @@ export default function StockLevelsConfigPage() {
   const [hospitalFilter, setHospitalFilter] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
+  const router = useRouter();
 
   const userCanSeeAll = currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator';
   const canEditConfigs = currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'central_operator';
+
+  useEffect(() => {
+    if (!isLoading && !canEditConfigs && currentUserProfile) {
+      toast({
+        title: "Acesso Restrito",
+        description: "Você não tem permissão para acessar as configurações de níveis estratégicos.",
+        variant: "destructive",
+      });
+      router.push("/");
+    }
+  }, [canEditConfigs, isLoading, currentUserProfile, router, toast]);
 
   useEffect(() => {
     if (!currentUserProfile) return;

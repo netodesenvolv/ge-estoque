@@ -15,8 +15,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { firestore } from '@/lib/firebase';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 // Interface para configurações de estoque do Firestore
 interface FirestoreStockConfig {
@@ -87,12 +88,19 @@ const downloadCSV = (csvString: string, filename: string) => {
 };
 
 export default function LowStockLevelsReportPage() {
+  const { currentUserProfile } = useAuth();
   const [firestoreItems, setFirestoreItems] = useState<Item[]>([]);
   const [firestoreStockConfigs, setFirestoreStockConfigs] = useState<FirestoreStockConfig[]>([]);
+  const [firestoreStockLevels, setFirestoreStockLevels] = useState<any[]>([]);
   const [processedReportItems, setProcessedReportItems] = useState<LowStockReportItem[]>([]);
   const [reportData, setReportData] = useState<LowStockReportItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const { toast } = useToast();
+
+  const isRestricted = currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator';
+  const isUbsOnly = currentUserProfile?.role === 'ubs_operator';
 
   const form = useForm<ReportFiltersFormData>({
     resolver: zodResolver(reportFiltersSchema),
@@ -103,67 +111,69 @@ export default function LowStockLevelsReportPage() {
   });
 
   useEffect(() => {
-    setIsLoading(true);
-    let itemsLoaded = false;
-    let configsLoaded = false;
-
-    const checkDoneLoading = () => {
-      if (itemsLoaded && configsLoaded) {
-        // setIsLoading(false) será chamado no useEffect que processa os dados
+    const fetchItems = async () => {
+      setIsLoading(true);
+      try {
+        const itemsQuery = query(collection(firestore, "items"), orderBy("name", "asc"));
+        const snapshot = await getDocs(itemsQuery);
+        setFirestoreItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item)));
+      } catch (error) {
+        console.error("Erro ao buscar itens:", error);
+        toast({ title: "Erro ao carregar itens", variant: "destructive" });
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    const itemsQuery = query(collection(firestore, "items"), orderBy("name", "asc"));
-    const unsubscribeItems = onSnapshot(itemsQuery, (snapshot) => {
-      setFirestoreItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item)));
-      itemsLoaded = true;
-      checkDoneLoading();
-    }, (error) => {
-      console.error("Erro ao buscar itens:", error);
-      toast({ title: "Erro ao carregar itens", variant: "destructive" });
-      itemsLoaded = true;
-      checkDoneLoading();
-    });
-
-    const configsQuery = query(collection(firestore, "stockConfigs"));
-    const unsubscribeConfigs = onSnapshot(configsQuery, (snapshot) => {
-      setFirestoreStockConfigs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig)));
-      configsLoaded = true;
-      checkDoneLoading();
-    }, (error) => {
-      console.error("Erro ao buscar configs de estoque:", error);
-      toast({ title: "Erro ao carregar configs de estoque", variant: "destructive" });
-      configsLoaded = true;
-      checkDoneLoading();
-    });
-
-    return () => {
-      unsubscribeItems();
-      unsubscribeConfigs();
-    };
+    fetchItems();
   }, [toast]);
 
-  useEffect(() => {
-    if (firestoreItems.length > 0 || (!isLoading && firestoreItems.length === 0 && firestoreStockConfigs.length >=0 )) {
-      setIsLoading(true);
+
+
+
+  const onSubmit = async (filters: ReportFiltersFormData) => {
+    setIsGenerating(true);
+    try {
+      // 1. Fetch Necessary Data
+      const [configsSnap, levelsSnap] = await Promise.all([
+        getDocs(collection(firestore, "stockConfigs")),
+        getDocs(collection(firestore, "stockLevels"))
+      ]);
+
+      const configs = configsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FirestoreStockConfig));
+      const levels = levelsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // 2. Process Data
       const processed: LowStockReportItem[] = firestoreItems.map(item => {
         const centralConfigId = `${item.id}_central`;
-        const config = firestoreStockConfigs.find(sc => sc.id === centralConfigId);
+        const config = configs.find(sc => sc.id === centralConfigId);
 
         let statusLabel: LowStockReportItem['statusLabel'] = 'Não Configurado';
         let statusVariant: LowStockReportItem['statusVariant'] = 'outline';
-        const currentQuantity = item.currentQuantityCentral;
+        
+        let currentQuantity = item.currentQuantityCentral;
+        if (isRestricted) {
+          const itemLevels = levels.filter(sl => sl.itemId === item.id);
+          if (isUbsOnly) {
+            currentQuantity = itemLevels.find(sl => sl.unitId === currentUserProfile?.associatedUnitId)?.currentQuantity || 0;
+          } else {
+             currentQuantity = itemLevels
+               .filter(sl => sl.hospitalId === currentUserProfile?.associatedHospitalId)
+               .reduce((acc, curr) => acc + curr.currentQuantity, 0);
+          }
+        }
+
         const strategicLvl = config?.strategicStockLevel;
         const minQtyConfig = config?.minQuantity;
         const effectiveMinQuantity = minQtyConfig ?? item.minQuantity;
+        const isFullyConfigured = config || item.minQuantity > 0;
 
-
-        if (config) {
+        if (isFullyConfigured) {
           statusLabel = 'Ótimo';
           statusVariant = 'default';
           if (currentQuantity < effectiveMinQuantity) {
             statusLabel = 'Baixo';
-            statusVariant = 'destructive'; // Alterado para 'destructive' para status Baixo
+            statusVariant = 'destructive';
           } else if (strategicLvl !== undefined && currentQuantity < strategicLvl) {
             statusLabel = 'Alerta';
             statusVariant = 'destructive';
@@ -172,41 +182,35 @@ export default function LowStockLevelsReportPage() {
 
         return {
           ...item,
+          currentQuantityScoped: currentQuantity,
           strategicStockLevel: strategicLvl,
           effectiveMinQuantity: effectiveMinQuantity,
           statusLabel,
           statusVariant,
         };
       });
-      setProcessedReportItems(processed.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
-      setIsLoading(false);
-    } else if (!isLoading && firestoreItems.length === 0) {
-        setProcessedReportItems([]);
-        setIsLoading(false);
+
+      // 3. Filter Results
+      const filtered = processed.filter(item => {
+        const itemMatch = filters.itemId === 'all' || !filters.itemId || item.id === filters.itemId;
+        const statusMatch = filters.status === 'all' ||
+                           (filters.status === 'low' && item.statusLabel === 'Baixo') ||
+                           (filters.status === 'alert' && item.statusLabel === 'Alerta') ||
+                           (filters.status === 'not_configured' && item.statusLabel === 'Não Configurado');
+        
+        // Always respect initial user idea: if not 'all' status, only show matching ones.
+        // If 'all' status, show everything that was calculated.
+        return itemMatch && statusMatch;
+      }).sort((a,b) => (a.name || '').localeCompare(b.name || ''));
+
+      setReportData(filtered);
+      setHasSearched(true);
+    } catch (error) {
+      console.error("Erro ao processar relatório:", error);
+      toast({ title: "Erro ao Gerar Relatório", variant: "destructive" });
+    } finally {
+      setIsGenerating(false);
     }
-
-  }, [firestoreItems, firestoreStockConfigs, isLoading]);
-
-  useEffect(() => {
-    if (!isLoading) {
-      onSubmit(form.getValues());
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [processedReportItems, form.watch('status'), form.watch('itemId'), isLoading]);
-
-
-  const onSubmit = (filters: ReportFiltersFormData) => {
-    if (isLoading) return;
-
-    const filtered = processedReportItems.filter(item => {
-      const itemMatch = filters.itemId === 'all' || !filters.itemId || item.id === filters.itemId;
-      const statusMatch = filters.status === 'all' ||
-                         (filters.status === 'low' && item.statusLabel === 'Baixo') ||
-                         (filters.status === 'alert' && item.statusLabel === 'Alerta') ||
-                         (filters.status === 'not_configured' && item.statusLabel === 'Não Configurado');
-      return itemMatch && statusMatch;
-    });
-    setReportData(filtered);
   };
   
   const handlePrint = () => {
@@ -222,8 +226,8 @@ export default function LowStockLevelsReportPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Relatório de Níveis de Estoque (Armazém Central)"
-        description="Identifique itens no Armazém Central que necessitam de atenção devido a níveis de estoque baixos ou em alerta, ou que não estão configurados."
+        title={isRestricted ? "Níveis de Estoque (Seu Local)" : "Níveis de Estoque (Armazém Central)"}
+        description={isRestricted ? "Identifique itens no seu local que necessitam de atenção devido a níveis de estoque baixos ou em alerta." : "Identifique itens no Armazém Central que necessitam de atenção devido a níveis de estoque baixos ou em alerta, ou que não estão configurados."}
         icon={ListChecks}
         actions={
           <div className="flex gap-2">
@@ -264,7 +268,7 @@ export default function LowStockLevelsReportPage() {
                 name="status"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Status do Estoque (Armazém Central)</FormLabel>
+                    <FormLabel>Status do Estoque {isRestricted ? '(Local)' : '(Armazém Central)'}</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value || 'all'}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger></FormControl>
                       <SelectContent>
@@ -279,23 +283,33 @@ export default function LowStockLevelsReportPage() {
               />
             </CardContent>
             <CardFooter>
-              <Button type="submit" disabled={isLoading}>
-                {isLoading ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Carregando...</>) : "Atualizar Relatório"}
+              <Button type="submit" disabled={isLoading || isGenerating}>
+                {isGenerating ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Gerando...</>) : "Atualizar Relatório"}
               </Button>
             </CardFooter>
           </form>
         </Form>
       </Card>
       
-      {isLoading && reportData.length === 0 ? (
-         <div className="flex items-center justify-center h-64">
+      {!hasSearched && !isGenerating ? (
+        <Card className="mt-6 shadow-lg border-dashed">
+          <CardContent className="pt-10 pb-10 flex flex-col items-center justify-center text-center">
+            <Filter className="h-12 w-12 text-muted-foreground/30 mb-4" />
+            <p className="text-lg font-medium text-muted-foreground">Relatório pronto para carregar</p>
+            <p className="text-sm text-muted-foreground max-w-xs">
+              Para economizar recursos, o relatório não carrega automaticamente. Selecione um filtro ou clique em <strong>Atualizar Relatório</strong>.
+            </p>
+          </CardContent>
+        </Card>
+      ) : isGenerating ? (
+         <div className="flex flex-col items-center justify-center h-64">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="ml-3 text-muted-foreground">Carregando dados do relatório...</p>
+            <p className="ml-3 mt-4 text-muted-foreground">Processando níveis de estoque...</p>
         </div>
       ) : reportData.length > 0 ? (
         <Card className="shadow-lg mt-6 printable-content">
           <CardHeader>
-            <CardTitle className="font-headline">Itens com Nível de Estoque Baixo, em Alerta ou Não Configurado (Armazém Central)</CardTitle>
+            <CardTitle className="font-headline">Níveis de Estoque {isRestricted ? `em ${currentUserProfile?.associatedHospitalName}` : '(Armazém Central)'}</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
@@ -314,7 +328,7 @@ export default function LowStockLevelsReportPage() {
                   <TableRow key={item.id} className={item.statusVariant === 'destructive' ? 'bg-red-500/5' : ''}>
                     <TableCell className="font-medium">{item.name}</TableCell>
                     <TableCell>{item.code}</TableCell>
-                    <TableCell className="text-right">{item.currentQuantityCentral}</TableCell>
+                    <TableCell className="text-right">{(item as any).currentQuantityScoped}</TableCell>
                     <TableCell className="text-right">{item.effectiveMinQuantity ?? 'N/A'}</TableCell>
                     <TableCell className="text-right">{item.strategicStockLevel ?? 'N/A'}</TableCell>
                     <TableCell className="text-center">
@@ -331,7 +345,7 @@ export default function LowStockLevelsReportPage() {
           <CardContent className="pt-6 flex flex-col items-center justify-center text-center">
             <CheckCircle className="h-12 w-12 text-green-500 mb-3" />
             <p className="text-lg font-semibold">Nenhum item em alerta, baixo ou não configurado encontrado.</p>
-            <p className="text-sm text-muted-foreground">Todos os níveis de estoque no Armazém Central estão adequados para os filtros selecionados, ou não há itens para exibir.</p>
+            <p className="text-sm text-muted-foreground">{isRestricted ? 'Todos os níveis de estoque no seu local estão adequados.' : 'Todos os níveis de estoque no Armazém Central estão adequados para os filtros selecionados, ou não há itens para exibir.'}</p>
           </CardContent>
         </Card>
       )}

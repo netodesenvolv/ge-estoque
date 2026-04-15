@@ -86,6 +86,7 @@ export default function StockPage() {
   const [hospitalFilter, setHospitalFilter] = useState('all');
   const [unitFilter, setUnitFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<'all' | DisplayStockItem['status']>('all'); 
+  const [balanceFilter, setBalanceFilter] = useState<'all' | 'positive' | 'zero'>('all');
   
   // Pagination State
   const [page, setPage] = useState(1);
@@ -257,6 +258,13 @@ export default function StockPage() {
         combinedResults = combinedResults.filter(r => r.status === statusFilter);
       }
 
+      // Apply UI balance filter
+      if (balanceFilter === 'positive') {
+        combinedResults = combinedResults.filter(r => (r.currentQuantity || 0) > 0);
+      } else if (balanceFilter === 'zero') {
+        combinedResults = combinedResults.filter(r => (r.currentQuantity || 0) === 0);
+      }
+
       setDisplayData(combinedResults);
     } catch (error) {
       console.error("Erro ao buscar estoque: ", error);
@@ -264,7 +272,7 @@ export default function StockPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [hospitalFilter, unitFilter, searchTerm, statusFilter, allHospitalsData, allServedUnitsData, currentUserProfile, isInitialLoading, userCanSeeAll, firstVisible, lastVisible, toast]);
+  }, [hospitalFilter, unitFilter, searchTerm, statusFilter, balanceFilter, allHospitalsData, allServedUnitsData, currentUserProfile, isInitialLoading, userCanSeeAll, firstVisible, lastVisible, toast]);
 
   useEffect(() => {
     if (!isInitialLoading) {
@@ -273,7 +281,7 @@ export default function StockPage() {
         setLastVisible(null);
         fetchStock('first');
     }
-  }, [hospitalFilter, unitFilter, searchTerm, statusFilter, isInitialLoading]);
+  }, [hospitalFilter, unitFilter, searchTerm, statusFilter, balanceFilter, isInitialLoading]);
 
   const handleNextPage = () => { if (!isLastPage) { setPage(p => p + 1); fetchStock('next'); } };
   const handlePrevPage = () => { if (page > 1) { setPage(p => p - 1); fetchStock('prev'); } };
@@ -316,18 +324,63 @@ export default function StockPage() {
         description="Visualize os níveis de estoque atuais. Carregado sob demanda para otimização." 
         icon={Warehouse}
         actions={
-          <Button onClick={handlePrint} variant="outline" className="no-print">
-            <Printer className="mr-2 h-4 w-4" /> Imprimir
+          <Button onClick={handlePrint} variant="outline" className="no-print bg-primary text-primary-foreground hover:bg-primary/90">
+            <Printer className="mr-2 h-4 w-4" /> Gerar Relatório Impresso
           </Button>
         }
         className="no-print"
       />
+
+      {/* --- PRINT ONLY HEADER --- */}
+      <div className="hidden show-on-print mb-4 border-b-2 border-primary pb-3">
+        <div className="flex justify-between items-end">
+          <div>
+            <h1 className="text-xl font-bold uppercase tracking-tight text-primary">Relatório de Inventário</h1>
+            <p className="text-[10px] font-bold text-black uppercase">
+              Filtro: {hospitalFilter === 'all' ? 'Consolidado Geral' : allHospitalsData.find(h => h.id === hospitalFilter)?.name} 
+              {unitFilter !== 'all' ? ` | Unidade: ${allServedUnitsData.find(u => u.id === unitFilter)?.name}` : ''}
+            </p>
+            <p className="text-[9px] text-muted-foreground">
+              Status do Saldo: {balanceFilter === 'all' ? 'Exibir Todos' : balanceFilter === 'positive' ? 'Apenas com Saldo' : 'Apenas Zerados'}
+            </p>
+          </div>
+          <div className="text-right flex flex-col items-end">
+            <span className="bg-primary text-white text-[10px] px-2 py-0.5 font-bold mb-1">
+              DATA DE GERAÇÃO: {new Date().toLocaleDateString('pt-BR')} {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            <div className="text-[9px] text-black font-medium">
+              Emitido por: {currentUserProfile?.name}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <style jsx global>{`
+        @media print {
+          @page { size: A4 portrait; margin: 12mm 10mm; }
+          body { font-family: 'Segoe UI', system-ui, sans-serif; color: #000; background: #fff; }
+          .no-print { display: none !important; }
+          .show-on-print { display: block !important; }
+          .printable-content { border: none !important; box-shadow: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
+          
+          table { width: 100% !important; border-collapse: collapse !important; border: 1.5px solid #000 !important; margin-top: 10px !important; }
+          th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; font-size: 8px !important; text-transform: uppercase !important; border: 1px solid #000 !important; padding: 6px 4px !important; font-weight: bold !important; color: #000 !important; }
+          td { font-size: 9px !important; border: 1px solid #000 !important; padding: 4px 6px !important; line-height: 1.2 !important; }
+          tr:nth-child(even) { background-color: #fafafa !important; -webkit-print-color-adjust: exact; }
+          
+          .badge-print { border: 1px solid #000 !important; padding: 2px 4px !important; border-radius: 2px !important; font-size: 7px !important; font-weight: bold !important; }
+          
+          /* Force page titles and headers */
+          h1 { font-size: 18px !important; margin-bottom: 5px !important; }
+        }
+        .show-on-print { display: none; }
+      `}</style>
       <Card className="shadow-lg printable-content">
         <CardHeader>
           <CardTitle className="font-headline flex items-center gap-2">
             <PackageIcon className="h-6 w-6 text-primary" /> Visão Geral do Estoque
           </CardTitle>
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 no-print">
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 no-print">
             <div className="relative lg:col-span-2">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
               <Input
@@ -355,6 +408,16 @@ export default function StockPage() {
               <SelectContent>
                 <SelectItem value="all">Todas as Unidades</SelectItem>
                 {availableUnitsForFilter.map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={balanceFilter} onValueChange={(val: any) => setBalanceFilter(val)} disabled={isLoading}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Filtrar por Saldo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os Saldo</SelectItem>
+                <SelectItem value="positive">Apenas com Saldo (+)</SelectItem>
+                <SelectItem value="zero">Apenas Zerados (0)</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -392,7 +455,8 @@ export default function StockPage() {
                       <TableCell className="text-right">{item.minQuantity}</TableCell>
                       <TableCell className="text-right">{item.strategicStockLevel}</TableCell>
                       <TableCell className="text-center">
-                        <Badge variant={getStatusBadgeVariant(item.status)}>{getStatusBadgeText(item.status)}</Badge>
+                        <Badge variant={getStatusBadgeVariant(item.status)} className="no-print">{getStatusBadgeText(item.status)}</Badge>
+                        <span className="hidden show-on-print badge-print">{getStatusBadgeText(item.status)}</span>
                       </TableCell>
                     </TableRow>
                   ))

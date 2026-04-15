@@ -16,8 +16,11 @@ import { format, parseISO, differenceInDays, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { firestore } from '@/lib/firebase';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 
 const reportFiltersSchema = z.object({
   daysThreshold: z.coerce.number().int().min(0).optional().default(30),
@@ -82,9 +85,16 @@ const downloadCSV = (csvString: string, filename: string) => {
 };
 
 export default function ExpiringItemsReportPage() {
-  const [allItems, setAllItems] = useState<Item[]>([]);
+  const { currentUserProfile } = useAuth();
+  const { toast } = useToast();
+  const [dbItems, setDbItems] = useState<Item[]>([]);
+  const [dbStockLevels, setDbStockLevels] = useState<any[]>([]); // simplified for scoping
   const [reportData, setReportData] = useState<ExpiringItemReportData[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const isRestricted = currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator';
+  const isUbsOnly = currentUserProfile?.role === 'ubs_operator';
 
   const form = useForm<ReportFiltersFormData>({
     resolver: zodResolver(reportFiltersSchema),
@@ -96,27 +106,58 @@ export default function ExpiringItemsReportPage() {
   });
 
   useEffect(() => {
-    setAllItems(mockItems);
-    // Auto-generate report on initial load with default filters
-    onSubmit(form.getValues());
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // form.getValues is stable
+    setIsLoading(true);
+    const unsubItems = onSnapshot(query(collection(firestore, "items"), orderBy("name")), (snap) => {
+      setDbItems(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item)));
+    });
+
+    const unsubStock = onSnapshot(collection(firestore, "stockLevels"), (snap) => {
+      setDbStockLevels(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const timer = setTimeout(() => setIsLoading(false), 2000);
+
+    return () => {
+      unsubItems();
+      unsubStock();
+      clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isLoading && dbItems.length > 0) {
+      onSubmit(form.getValues());
+    }
+  }, [isLoading, dbItems, dbStockLevels]); // Refilter if data changes
 
   const onSubmit = (filters: ReportFiltersFormData) => {
     setIsGenerating(true);
-    console.log("Gerando relatório de itens a vencer com filtros:", filters);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const processedItems = allItems
+    const processedItems = dbItems
       .map(item => {
+        let quantity = item.currentQuantityCentral;
+        
+        if (isRestricted) {
+           const levels = dbStockLevels.filter(sl => sl.itemId === item.id);
+           if (isUbsOnly) {
+             quantity = levels.find(sl => sl.unitId === currentUserProfile?.associatedUnitId)?.currentQuantity || 0;
+           } else {
+             // Sum of all units in hospital
+             quantity = levels
+               .filter(sl => sl.hospitalId === currentUserProfile?.associatedHospitalId)
+               .reduce((acc, curr) => acc + curr.currentQuantity, 0);
+           }
+        }
+
         if (!item.expirationDate) {
-          return { ...item, daysToExpire: null, status: 'Válido' as const };
+          return { ...item, quantityAtLocation: quantity, daysToExpire: null, status: 'Válido' as const };
         }
         const expDate = parseISO(item.expirationDate);
         if (!isValid(expDate)) {
-            return { ...item, daysToExpire: null, status: 'Válido' as const }; // Treat invalid dates as non-expiring for this report
+            return { ...item, quantityAtLocation: quantity, daysToExpire: null, status: 'Válido' as const };
         }
         const diff = differenceInDays(expDate, today);
         let status: ExpiringItemReportData['status'] = 'Válido';
@@ -125,17 +166,18 @@ export default function ExpiringItemsReportPage() {
         } else if (diff <= (filters.daysThreshold || 30)) {
           status = 'Próximo do Vencimento';
         }
-        return { ...item, daysToExpire: diff, status };
+        return { ...item, quantityAtLocation: quantity, daysToExpire: diff, status };
       })
       .filter(item => {
-        if (!item.expirationDate) return false; // Only show items with expiration dates
+        if (!item.expirationDate) return false;
+        if (item.quantityAtLocation <= 0) return false; // Don't show expiring items if we don't have stock
         if (item.status === 'Vencido' && filters.showExpired) return true;
         if (item.status === 'Próximo do Vencimento' && filters.showNearExpiration) return true;
-        return false; // Default to not showing 'Válido' items unless explicitly requested by other filters
+        return false;
       })
       .sort((a, b) => (a.daysToExpire ?? Infinity) - (b.daysToExpire ?? Infinity));
     
-    setReportData(processedItems);
+    setReportData(processedItems as any);
     setIsGenerating(false);
   };
   
@@ -158,8 +200,8 @@ export default function ExpiringItemsReportPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Relatório de Itens a Vencer (Estoque Central)"
-        description="Identifique itens no estoque central próximos da validade ou já vencidos."
+        title={isRestricted ? "Itens a Vencer (Estoque Local)" : "Relatório de Itens a Vencer (Geral)"}
+        description={isRestricted ? "Identifique itens no seu estoque próximos da validade ou já vencidos." : "Identifique itens no estoque central ou global próximos da validade ou já vencidos."}
         icon={CalendarClock}
         actions={
           <div className="flex gap-2">
@@ -203,8 +245,8 @@ export default function ExpiringItemsReportPage() {
                   Para simplificar, a lógica atual já filtra por 'Vencido' e 'Próximo do Vencimento'. */}
             </CardContent>
             <CardFooter>
-              <Button type="submit" disabled={isGenerating}>
-                {isGenerating ? "Gerando..." : "Atualizar Relatório"}
+              <Button type="submit" disabled={isGenerating || isLoading}>
+                {isLoading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/> Carregando...</> : isGenerating ? "Gerando..." : "Atualizar Relatório"}
               </Button>
             </CardFooter>
           </form>
@@ -213,10 +255,11 @@ export default function ExpiringItemsReportPage() {
 
        <Alert variant="default" className="mt-4 no-print bg-blue-500/10 border-blue-500/50 text-blue-700">
         <AlertTriangle className="h-4 w-4 !text-blue-700" />
-        <AlertTitle>Nota sobre o Relatório</AlertTitle>
+        <AlertTitle>Escopo do Relatório</AlertTitle>
         <AlertDescription>
-          Este relatório exibe itens do catálogo e suas respectivas datas de validade e quantidades no <strong>Armazém Central</strong>.
-          A rastreabilidade de lotes e validades específicas em unidades servidas individuais não está detalhada neste relatório.
+          {isRestricted 
+            ? `Exibindo itens com validade crítica presentes no estoque de: ${currentUserProfile?.associatedHospitalName}${currentUserProfile?.associatedUnitId ? ' - Setor Local' : ''}.`
+            : "Este relatório exibe itens do catálogo com validades críticas em todo o sistema, com foco nas quantidades centrais."}
         </AlertDescription>
       </Alert>
 
@@ -245,7 +288,7 @@ export default function ExpiringItemsReportPage() {
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">{item.name}</TableCell>
                     <TableCell>{item.code}</TableCell>
-                    <TableCell className="text-right">{item.currentQuantityCentral}</TableCell>
+                    <TableCell className="text-right">{(item as any).quantityAtLocation}</TableCell>
                     <TableCell>{item.expirationDate ? format(parseISO(item.expirationDate), 'dd/MM/yyyy', {locale: ptBR}) : 'N/A'}</TableCell>
                     <TableCell className="text-right">
                       {item.daysToExpire !== null ? (item.daysToExpire < 0 ? `Vencido há ${Math.abs(item.daysToExpire)}d` : `${item.daysToExpire +1}d`) : 'N/A'}

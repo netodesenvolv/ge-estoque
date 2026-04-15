@@ -15,15 +15,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { firestore } from '@/lib/firebase';
 import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 
 export default function ServedUnitsPage() {
+  const { currentUserProfile } = useAuth();
   const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [hospitalFilter, setHospitalFilter] = useState('all');
   const router = useRouter();
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (currentUserProfile && currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator') {
+      router.push('/');
+    }
+  }, [currentUserProfile, router]);
 
 
   useEffect(() => {

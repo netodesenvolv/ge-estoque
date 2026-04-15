@@ -19,6 +19,7 @@ import * as z from 'zod';
 import { firestore } from '@/lib/firebase';
 import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 const reportFiltersSchema = z.object({
   startDate: z.date().optional(),
@@ -78,7 +79,11 @@ const downloadCSV = (csvString: string, filename: string) => {
 };
 
 export default function PatientConsumptionReportPage() {
+  const { currentUserProfile } = useAuth();
   const { toast } = useToast();
+
+  const isRestricted = currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator';
+  const isUbsOnly = currentUserProfile?.role === 'ubs_operator';
   
   // Master data state
   const [items, setItems] = useState<Item[]>([]);
@@ -216,6 +221,13 @@ export default function PatientConsumptionReportPage() {
         collection(firestore, "stockMovements"),
         where("patientId", "==", selectedPatient.id)
       );
+
+      // Apply scoping if restricted
+      if (isUbsOnly && currentUserProfile?.associatedUnitId) {
+        movementsQuery = query(movementsQuery, where("unitId", "==", currentUserProfile.associatedUnitId));
+      } else if (isRestricted && currentUserProfile?.associatedHospitalId) {
+        movementsQuery = query(movementsQuery, where("hospitalId", "==", currentUserProfile.associatedHospitalId));
+      }
       
       const docsSnap = await getDocs(movementsQuery);
       let movements = docsSnap.docs.map(doc => doc.data() as StockMovement);

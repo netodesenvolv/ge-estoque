@@ -11,6 +11,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Building, Upload, Download, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Papa from 'papaparse';
 import { firestore } from '@/lib/firebase';
@@ -250,6 +253,15 @@ const BatchImportHospitalForm = () => {
 };
 
 export default function AddHospitalPage() {
+  const { currentUserProfile } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (currentUserProfile && currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator') {
+      router.push('/');
+    }
+  }, [currentUserProfile, router]);
+
   return (
     <div>
       <PageHeader

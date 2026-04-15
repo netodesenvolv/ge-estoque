@@ -26,13 +26,18 @@ import {
   ListChecks,
   PlusCircle,
   Users2, 
-  LogIn, // Ícone para Entradas/Saídas
+  LogIn,
+  PackageCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useSidebar } from '@/components/ui/sidebar';
-import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
+import { useAuth } from '@/contexts/AuthContext';
+import { Badge } from '@/components/ui/badge';
+import { useEffect, useState } from 'react';
+import { firestore } from '@/lib/firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
 const navItemsBase = [
   { href: '/', label: 'Painel', icon: Home, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator', 'user'] },
@@ -53,6 +58,7 @@ const navItemsBase = [
       { href: '/stock', label: 'Estoque Atual', icon: ClipboardList, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator', 'user'] },
       { href: '/stock/movements', label: 'Entradas/Saídas (Central)', icon: LogIn, roles: ['admin', 'central_operator'] },
       { href: '/stock/consumption', label: 'Registrar Consumo', icon: ShoppingCart, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/stock/pending-receipts', label: 'Recebimentos Pendentes', icon: PackageCheck, roles: ['admin', 'hospital_operator', 'ubs_operator'] },
     ],
   },
   {
@@ -67,18 +73,18 @@ const navItemsBase = [
   {
     label: 'Hospitais e UBS',
     icon: Building,
-    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'],
+    roles: ['admin', 'central_operator'],
     subItems: [
-      { href: '/hospitals', label: 'Ver Hospitais/UBS', icon: Building, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/hospitals', label: 'Ver Hospitais/UBS', icon: Building, roles: ['admin', 'central_operator'] },
       { href: '/hospitals/add', label: 'Adicionar Hospital/UBS', icon: PlusCircle, roles: ['admin', 'central_operator'] },
     ],
   },
   {
     label: 'Unidades Servidas',
     icon: Users, 
-    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'],
+    roles: ['admin', 'central_operator'],
     subItems: [
-      { href: '/served-units', label: 'Ver Unidades', icon: Users, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/served-units', label: 'Ver Unidades', icon: Users, roles: ['admin', 'central_operator'] },
       { href: '/served-units/add', label: 'Adicionar Unidade', icon: PlusCircle, roles: ['admin', 'central_operator'] },
     ],
   },
@@ -107,9 +113,9 @@ const navItemsBase = [
   {
     label: 'Configuração',
     icon: Settings2,
-    roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'],
+    roles: ['admin', 'central_operator'],
     subItems: [
-      { href: '/config/stock-levels', label: 'Níveis Estratégicos', icon: ShoppingCart, roles: ['admin', 'central_operator', 'hospital_operator', 'ubs_operator'] },
+      { href: '/config/stock-levels', label: 'Níveis Estratégicos', icon: ShoppingCart, roles: ['admin', 'central_operator'] },
     ],
   },
 ];
@@ -119,6 +125,29 @@ export default function AppNavigation() {
   const { state: sidebarState, isMobile } = useSidebar();
   const { currentUserProfile } = useAuth();
   const userRole = currentUserProfile?.role;
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    if (!currentUserProfile) return;
+    const role = currentUserProfile.role;
+    const hospitalId = currentUserProfile.associatedHospitalId;
+    if (role !== 'admin' && role !== 'hospital_operator' && role !== 'ubs_operator') return;
+
+    let q;
+    if (role === 'admin') {
+      q = query(collection(firestore, 'pendingTransfers'), where('status', '==', 'pending_receipt'));
+    } else if (hospitalId) {
+      q = query(
+        collection(firestore, 'pendingTransfers'),
+        where('status', '==', 'pending_receipt'),
+        where('destinationHospitalId', '==', hospitalId)
+      );
+    } else {
+      return;
+    }
+    const unsub = onSnapshot(q, (snap) => setPendingCount(snap.size));
+    return () => unsub();
+  }, [currentUserProfile]);
 
   const filteredNavItems = navItemsBase.filter(item => 
     item.roles.includes(userRole || 'user') 
@@ -203,10 +232,15 @@ export default function AppNavigation() {
                           )}
                           data-active={currentSubItemIsActive}
                         >
-                          <span className="flex items-center gap-2 truncate">
-                            <subItem.icon className="h-4 w-4" />
+                          <span className="flex items-center gap-2 truncate flex-1">
+                            <subItem.icon className="h-4 w-4 shrink-0" />
                             <span className="truncate">{subItem.label}</span>
                           </span>
+                          {subItem.href === '/stock/pending-receipts' && pendingCount > 0 && (
+                            <Badge variant="destructive" className="ml-auto text-[10px] h-4 min-w-4 px-1">
+                              {pendingCount}
+                            </Badge>
+                          )}
                         </Link>
                       </li>
                     );
@@ -222,7 +256,7 @@ export default function AppNavigation() {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Link
-                    href={item.href}
+                    href={item.href || '#'}
                     className={cn(
                       baseLinkStyles,
                       "w-full justify-start",

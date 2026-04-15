@@ -14,12 +14,20 @@ import { Input } from '@/components/ui/input';
 import { firestore } from '@/lib/firebase';
 import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function HospitalsPage() {
+  const { currentUserProfile } = useAuth();
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const router = useRouter();
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (currentUserProfile && currentUserProfile.role !== 'admin' && currentUserProfile.role !== 'central_operator') {
+      router.push('/');
+    }
+  }, [currentUserProfile, router]);
 
   useEffect(() => {
     const hospitalsCollectionRef = collection(firestore, "hospitals");

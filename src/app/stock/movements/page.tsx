@@ -15,7 +15,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowRightLeft, Loader2, Upload, Download, ShieldAlert } from 'lucide-react';
-import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockMovementType, FirestoreStockConfig } from '@/types';
+import type { Item, ServedUnit, Hospital, Patient, StockMovement, UserProfile, StockMovementType, FirestoreStockConfig, PendingTransfer } from '@/types';
 import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -135,36 +135,92 @@ export async function processMovementRowTransaction(
             transaction.update(itemDocRef, { currentQuantityCentral: newQuantityCentral });
         }
         // Case 2: Transfer to a specific unit or to a UBS's general stock
-        else if (movementData.hospitalId && unitConfigDocRef) { // unitConfigDocRef implies unitConfigDocId is set
+        // APPROVAL REQUIRED: Central stock is deducted immediately but destination
+        // is NOT credited until the receiving operator confirms receipt.
+        else if (movementData.hospitalId && unitConfigDocRef) {
             let currentCentralQty = currentItemData.currentQuantityCentral || 0;
             if (currentCentralQty < movementData.quantity) {
                 throw new Error(`Estoque insuficiente (${currentCentralQty}) no Armazém Central para ${currentItemData.name}. Necessário: ${movementData.quantity}`);
             }
+            // Deduct from Central immediately
             const newCentralQuantityAfterTransfer = currentCentralQty - movementData.quantity;
             transaction.update(itemDocRef, { currentQuantityCentral: newCentralQuantityAfterTransfer });
 
-            let currentTargetQty = 0;
-            if (unitConfigSnap && unitConfigSnap.exists()) {
-                currentTargetQty = unitConfigSnap.data().currentQuantity || 0;
-            }
-            const newTargetQuantity = currentTargetQty + movementData.quantity;
+            // Resolve destination names
+            const destHospital = allMasterHospitals.find(h => h.id === movementData.hospitalId);
+            const destUnit = movementData.unitId ? allMasterServedUnits.find(u => u.id === movementData.unitId) : null;
+            const destUnitName = destUnit?.name
+                ?? unitNameForLog
+                ?? (isUbsGeneralStockMovement ? `Estoque Geral (${destHospital?.name ?? hospitalNameForLog ?? ''})` : 'Destino Desconhecido');
 
-            const targetConfigData: Partial<FirestoreStockConfig> & { itemId: string; hospitalId: string; currentQuantity: number; unitId?: string | null } = {
-                itemId: movementData.itemId,
-                hospitalId: movementData.hospitalId!, // Should be valid at this point
-                currentQuantity: newTargetQuantity,
-                unitId: movementData.unitId ?? null,
-            };
+            // --- SHIPMENT GROUPING LOGIC ---
+            // Create a deterministic ID for the shipment: hospital_unit_date_user
+            const userId = (currentUserProfile as any).id || "unknown";
+            const shipmentIdSlug = `shipment_${movementData.hospitalId}_${movementData.unitId || 'general'}_${movementData.date}_${userId}`.replace(/[^a-z0-9_]/gi, '_');
+            const shipmentRef = doc(firestore, 'pendingTransfers', shipmentIdSlug);
+            const shipmentSnap = await transaction.get(shipmentRef);
 
-            if (unitConfigSnap && unitConfigSnap.exists()) {
-                const existingConfig = unitConfigSnap.data();
-                targetConfigData.minQuantity = existingConfig.minQuantity ?? 0;
-                targetConfigData.strategicStockLevel = existingConfig.strategicStockLevel ?? 0;
+            if (!shipmentSnap.exists()) {
+                // Initialize new shipment with sequential number
+                const counterRef = doc(firestore, 'counters', 'shipments');
+                const counterSnap = await transaction.get(counterRef);
+                const currentYear = new Date().getFullYear();
+                let nextValue = 1;
+                
+                if (counterSnap.exists()) {
+                    const data = counterSnap.data();
+                    if (data.year === currentYear) {
+                        nextValue = (data.lastValue || 0) + 1;
+                    }
+                }
+                
+                transaction.set(counterRef, { year: currentYear, lastValue: nextValue }, { merge: true });
+                const shipmentNumber = `RM-${currentYear}-${String(nextValue).padStart(4, '0')}`;
+
+                const initialItems: any[] = [{
+                    itemId: movementData.itemId,
+                    itemName: currentItemData.name,
+                    quantitySent: movementData.quantity,
+                    notes: movementData.notes ?? notesForLog ?? null
+                }];
+
+                const newShipmentData: Omit<PendingTransfer, 'id'> = {
+                    items: initialItems,
+                    shipmentNumber,
+                    sourceType: 'central_warehouse',
+                    destinationHospitalId: movementData.hospitalId!,
+                    destinationHospitalName: destHospital?.name ?? hospitalNameForLog ?? 'Desconhecido',
+                    destinationUnitId: movementData.unitId ?? null,
+                    destinationUnitName: destUnitName,
+                    status: 'pending_receipt',
+                    transferDate: movementData.date,
+                    transferredByUserId: userId,
+                    transferredByUserName: currentUserProfile.name ?? 'Desconhecido',
+                    notes: null, // Global notes for shipment if needed
+                    createdAt: new Date().toISOString(),
+                };
+                transaction.set(shipmentRef, newShipmentData);
             } else {
-                targetConfigData.minQuantity = 0;
-                targetConfigData.strategicStockLevel = 0;
+                // Update existing shipment's items array
+                const shipmentData = shipmentSnap.data() as PendingTransfer;
+                const items = [...(shipmentData.items || [])];
+                const existingItemIndex = items.findIndex(i => i.itemId === movementData.itemId);
+
+                if (existingItemIndex > -1) {
+                    items[existingItemIndex].quantitySent += movementData.quantity;
+                } else {
+                    items.push({
+                        itemId: movementData.itemId,
+                        itemName: currentItemData.name,
+                        quantitySent: movementData.quantity,
+                        notes: movementData.notes ?? notesForLog ?? null
+                    });
+                }
+                transaction.update(shipmentRef, { items });
             }
-            transaction.set(unitConfigDocRef, targetConfigData, { merge: true });
+
+            // Override the movement type to 'transfer' for logging
+            movementData = { ...movementData, type: 'transfer' as StockMovementType };
         } else {
             throw new Error("Destino (Hospital e Unidade/Estoque Geral UBS, ou Baixa Direta) é obrigatório e deve ser válido para saída/transferência.");
         }
@@ -384,27 +440,22 @@ const ManualMovementForm = ({ items, servedUnits, hospitals, stockConfigs }: { i
       );
 
       const itemDetails = items.find(i => i.id === data.itemId);
-      let description = `Movimentação de ${data.quantity} unidade(s) de ${itemDetails?.name || data.itemId} registrada como ${data.type}.`;
 
       if (data.type === 'exit' && processedHospitalId) {
           const hospitalDesc = hospitals.find(h => h.id === processedHospitalId);
           const unitDesc = processedUnitId ? servedUnits.find(u => u.id === processedUnitId) : null;
-          const isUbsGeneralStockExit = hospitalDesc?.name.toLowerCase().includes('ubs') && !processedUnitId;
+          const destName = unitDesc ? `${unitDesc.name} (${hospitalDesc?.name})` : `Estoque Geral (${hospitalDesc?.name})`;
 
-          if (unitDesc && hospitalDesc) {
-              description += ` para ${unitDesc.name} (${hospitalDesc.name}).`;
-          } else if (hospitalDesc && isUbsGeneralStockExit) {
-              description += ` para Estoque Geral (${hospitalDesc.name}).`;
-          }
-      } else if (data.type === 'exit' && !processedHospitalId) {
-          description += ` (Baixa direta do Armazém Central).`;
+          toast({
+            title: "⏳ Transferência Enviada — Aguardando Aprovação",
+            description: `${data.quantity} unidade(s) de "${itemDetails?.name}" enviadas para ${destName}. O operador do local precisa confirmar o recebimento antes do estoque ser atualizado.`,
+          });
+      } else {
+          toast({
+            title: "Movimentação de Estoque Registrada",
+            description: `${data.quantity} unidade(s) de "${itemDetails?.name || data.itemId}" registrada como ${data.type}.`,
+          });
       }
-
-
-      toast({
-        title: "Movimentação de Estoque Registrada",
-        description: description,
-      });
 
       form.reset({
           type: 'entry',

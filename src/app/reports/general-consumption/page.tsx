@@ -19,6 +19,7 @@ import * as z from 'zod';
 import { firestore } from '@/lib/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 const reportFiltersSchema = z.object({
   startDate: z.date().optional(),
@@ -81,8 +82,8 @@ const downloadCSV = (csvString: string, filename: string) => {
   }
 };
 
-
 export default function GeneralConsumptionReportPage() {
+  const { currentUserProfile } = useAuth();
   const [dbItems, setDbItems] = useState<Item[]>([]);
   const [dbServedUnits, setDbServedUnits] = useState<ServedUnit[]>([]);
   const [dbHospitals, setDbHospitals] = useState<Hospital[]>([]);
@@ -92,6 +93,9 @@ export default function GeneralConsumptionReportPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
+
+  const isRestricted = currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator';
+  const isUbsOnly = currentUserProfile?.role === 'ubs_operator';
 
   const form = useForm<ReportFiltersFormData>({
     resolver: zodResolver(reportFiltersSchema),
@@ -140,8 +144,21 @@ export default function GeneralConsumptionReportPage() {
   }, [toast]);
   
   useEffect(() => {
-    form.setValue('unitId', 'all');
-  }, [selectedHospitalId, form]);
+    if (currentUserProfile) {
+      if (isRestricted) {
+        form.setValue('hospitalId', currentUserProfile.associatedHospitalId || 'all');
+        if (isUbsOnly) {
+          form.setValue('unitId', currentUserProfile.associatedUnitId || 'all');
+        }
+      }
+    }
+  }, [currentUserProfile, isRestricted, isUbsOnly, form]);
+
+  useEffect(() => {
+    if (!isUbsOnly) {
+      form.setValue('unitId', 'all');
+    }
+  }, [selectedHospitalId, form, isUbsOnly]);
 
   const availableUnits = selectedHospitalId && selectedHospitalId !== 'all'
     ? dbServedUnits.filter(unit => unit.hospitalId === selectedHospitalId)
@@ -288,11 +305,13 @@ export default function GeneralConsumptionReportPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Hospital</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value} disabled={isLoading}>
+                    <Select onValueChange={field.onChange} value={field.value} disabled={isLoading || isRestricted}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todos os Hospitais" /></SelectTrigger></FormControl>
                       <SelectContent>
-                        <SelectItem value="all">Todos os Hospitais</SelectItem>
-                        {dbHospitals.map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
+                        {!isRestricted && <SelectItem value="all">Todos os Hospitais</SelectItem>}
+                        {dbHospitals
+                          .filter(h => !isRestricted || h.id === currentUserProfile?.associatedHospitalId)
+                          .map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -304,11 +323,13 @@ export default function GeneralConsumptionReportPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Unidade Servida</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || 'all'} disabled={isLoading || !selectedHospitalId || selectedHospitalId === 'all' && availableUnits.length === dbServedUnits.length && availableUnits.length === 0}>
+                    <Select onValueChange={field.onChange} value={field.value || 'all'} disabled={isLoading || isUbsOnly || (!isRestricted && (selectedHospitalId === 'all'))}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todas as Unidades" /></SelectTrigger></FormControl>
                       <SelectContent>
-                        <SelectItem value="all">Todas as Unidades</SelectItem>
-                        {availableUnits.map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>)}
+                        {!isUbsOnly && <SelectItem value="all">Todas as Unidades</SelectItem>}
+                        {availableUnits
+                          .filter(u => !isUbsOnly || u.id === currentUserProfile?.associatedUnitId)
+                          .map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </FormItem>

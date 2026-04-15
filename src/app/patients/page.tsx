@@ -47,6 +47,8 @@ export default function PatientsPage() {
   const { toast } = useToast();
   const { currentUserProfile } = useAuth();
   const isAdmin = currentUserProfile?.role === 'admin';
+  const isCentralOperator = currentUserProfile?.role === 'central_operator';
+  const canDelete = isAdmin || isCentralOperator;
 
   const buildQuery = (direction: 'first' | 'next' | 'prev', term: string): Query => {
     const patientsCollectionRef = collection(firestore, "patients");
@@ -253,6 +255,10 @@ export default function PatientsPage() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!canDelete) {
+      toast({ title: "Acesso Negado", description: "Você não tem permissão para excluir pacientes.", variant: "destructive" });
+      return;
+    }
     const patientDocRef = doc(firestore, "patients", id);
     try {
       await deleteDoc(patientDocRef);
@@ -392,9 +398,11 @@ export default function PatientsPage() {
                         <Button variant="ghost" size="icon" onClick={() => handleEdit(patient.id)} className="hover:text-primary mr-2">
                           <Edit3 className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(patient.id)} className="hover:text-destructive">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {canDelete && (
+                          <Button variant="ghost" size="icon" onClick={() => handleDelete(patient.id)} className="hover:text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))

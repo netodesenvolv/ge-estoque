@@ -38,7 +38,38 @@ export interface StockItemConfig {
   currentQuantity?: number; // Adicionado para rastrear estoque atual na unidade/UBS geral
 }
 
-export type StockMovementType = 'entry' | 'exit' | 'consumption';
+export type StockMovementType = 'entry' | 'exit' | 'consumption' | 'transfer' | 'receipt_confirmed' | 'receipt_rejected';
+
+export type PendingTransferStatus = 'pending_receipt' | 'completed' | 'rejected';
+
+export interface ShipmentItem {
+  itemId: string;
+  itemName: string;
+  quantitySent: number;
+  quantityReceived?: number;
+  notes?: string | null;
+}
+
+export interface PendingTransfer {
+  id: string;
+  items: ShipmentItem[];
+  shipmentNumber?: string; // e.g., RM-2024-0001
+  sourceType: 'central_warehouse';
+  destinationHospitalId: string;
+  destinationHospitalName: string;
+  destinationUnitId: string | null;
+  destinationUnitName: string;
+  status: 'pending_receipt' | 'completed' | 'rejected' | 'partially_received';
+  transferDate: string; // ISO date string
+  transferredByUserId: string;
+  transferredByUserName: string;
+  notes?: string | null;
+  createdAt: string; // ISO timestamp
+  resolvedAt?: string; // ISO timestamp when confirmed/rejected
+  resolvedByUserId?: string;
+  resolvedByUserName?: string;
+}
+
 
 export interface StockMovement {
   id: string;

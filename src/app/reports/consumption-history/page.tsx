@@ -11,12 +11,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { History, CalendarIcon, Filter, Printer, Download } from 'lucide-react';
+import { History, CalendarIcon, Filter, Printer, Download, Loader2 } from 'lucide-react';
 import type { Item, ServedUnit, Hospital, Patient, StockMovement } from '@/types';
-import { mockItems, mockServedUnits, mockHospitals, mockPatients, mockStockMovements } from '@/data/mockData';
 import { format, parseISO } from 'date-fns';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import { firestore } from '@/lib/firebase';
+import { collection, onSnapshot, query, orderBy, getDocs, where } from 'firebase/firestore';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 
 const reportFiltersSchema = z.object({
   startDate: z.date().optional(),
@@ -87,12 +90,18 @@ const downloadCSV = (csvString: string, filename: string) => {
 };
 
 export default function ConsumptionHistoryReportPage() {
+  const { currentUserProfile } = useAuth();
+  const { toast } = useToast();
   const [items, setItems] = useState<Item[]>([]);
   const [servedUnits, setServedUnits] = useState<ServedUnit[]>([]);
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [reportData, setReportData] = useState<ConsumptionHistoryData[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const isRestricted = currentUserProfile?.role === 'hospital_operator' || currentUserProfile?.role === 'ubs_operator';
+  const isUbsOnly = currentUserProfile?.role === 'ubs_operator';
 
   const form = useForm<ReportFiltersFormData>({
     resolver: zodResolver(reportFiltersSchema),
@@ -107,50 +116,106 @@ export default function ConsumptionHistoryReportPage() {
   const selectedHospitalId = form.watch('hospitalId');
 
   useEffect(() => {
-    setItems(mockItems);
-    setServedUnits(mockServedUnits);
-    setHospitals(mockHospitals);
-    setPatients(mockPatients);
+    setIsLoading(true);
+
+    const createListener = (collectionName: string, setter: React.Dispatch<React.SetStateAction<any[]>>, orderField: string = "name") => {
+        const q = query(collection(firestore, collectionName), orderBy(orderField, "asc"));
+        return onSnapshot(q, (snapshot) => {
+            setter(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+        });
+    };
+
+    const unsubscribers = [
+        createListener("items", setItems),
+        createListener("hospitals", setHospitals),
+        createListener("servedUnits", setServedUnits),
+        createListener("patients", setPatients),
+    ];
+
+    const timer = setTimeout(() => setIsLoading(false), 2000);
+
+    return () => {
+        unsubscribers.forEach(unsub => unsub());
+        clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
-    form.setValue('unitId', 'all');
-  }, [selectedHospitalId, form]);
+    if (currentUserProfile) {
+      if (isRestricted) {
+        form.setValue('hospitalId', currentUserProfile.associatedHospitalId || 'all');
+        if (isUbsOnly) {
+          form.setValue('unitId', currentUserProfile.associatedUnitId || 'all');
+        }
+      }
+    }
+  }, [currentUserProfile, isRestricted, isUbsOnly, form]);
+
+  useEffect(() => {
+    if (!isUbsOnly) {
+      form.setValue('unitId', 'all');
+    }
+  }, [selectedHospitalId, form, isUbsOnly]);
 
   const availableUnits = selectedHospitalId && selectedHospitalId !== 'all'
     ? servedUnits.filter(unit => unit.hospitalId === selectedHospitalId)
     : servedUnits;
   
-  const onSubmit = (filters: ReportFiltersFormData) => {
+  const onSubmit = async (filters: ReportFiltersFormData) => {
     setIsGenerating(true);
-    console.log("Gerando histórico de consumo com filtros:", filters);
-
-    const filteredMovements = mockStockMovements.filter(m => {
-      if (m.type !== 'consumption') return false;
-      if (filters.startDate && parseISO(m.date) < filters.startDate) return false;
-      if (filters.endDate) {
-        const endDate = new Date(filters.endDate);
-        endDate.setHours(23, 59, 59, 999);
-        if (parseISO(m.date) > endDate) return false;
-      }
-      if (filters.itemId && filters.itemId !== 'all' && m.itemId !== filters.itemId) return false;
-      if (filters.hospitalId && filters.hospitalId !== 'all' && m.hospitalId !== filters.hospitalId) return false;
-      if (filters.unitId && filters.unitId !== 'all' && m.unitId !== filters.unitId) return false;
-      if (filters.patientId && filters.patientId !== 'all' && m.patientId !== filters.patientId) return false;
-      return true;
-    }).map(m => {
-      const itemDetail = items.find(i => i.id === m.itemId);
-      const patientDetail = patients.find(p => p.id === m.patientId);
-      return {
-        ...m,
-        itemName: itemDetail?.name || 'Desconhecido',
-        itemCode: itemDetail?.code || 'N/A',
-        patientName: patientDetail?.name,
-      };
-    }).sort((a,b) => parseISO(b.date).getTime() - parseISO(a.date).getTime());
     
-    setReportData(filteredMovements);
-    setIsGenerating(false);
+    try {
+      let q = query(collection(firestore, "stockMovements"), where("type", "==", "consumption"));
+      
+      // If restricted, force the Firestore query to be scoped for security
+      if (isUbsOnly && currentUserProfile?.associatedUnitId) {
+        q = query(q, where("unitId", "==", currentUserProfile.associatedUnitId));
+      } else if (isRestricted && currentUserProfile?.associatedHospitalId) {
+        q = query(q, where("hospitalId", "==", currentUserProfile.associatedHospitalId));
+      } else if (filters.hospitalId && filters.hospitalId !== 'all') {
+        q = query(q, where("hospitalId", "==", filters.hospitalId));
+        if (filters.unitId && filters.unitId !== 'all') {
+          q = query(q, where("unitId", "==", filters.unitId));
+        }
+      }
+
+      if (filters.itemId && filters.itemId !== 'all') {
+        q = query(q, where("itemId", "==", filters.itemId));
+      }
+      
+      if (filters.patientId && filters.patientId !== 'all') {
+        q = query(q, where("patientId", "==", filters.patientId));
+      }
+
+      const querySnapshot = await getDocs(q);
+      const movements = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockMovement));
+
+      const filteredMovements = movements.filter(m => {
+        if (filters.startDate && parseISO(m.date) < filters.startDate) return false;
+        if (filters.endDate) {
+          const endDate = new Date(filters.endDate);
+          endDate.setHours(23, 59, 59, 999);
+          if (parseISO(m.date) > endDate) return false;
+        }
+        return true;
+      }).map(m => {
+        const itemDetail = items.find(i => i.id === m.itemId);
+        const patientDetail = patients.find(p => p.id === m.patientId);
+        return {
+          ...m,
+          itemName: itemDetail?.name || 'Desconhecido',
+          itemCode: itemDetail?.code || 'N/A',
+          patientName: patientDetail?.name,
+        };
+      }).sort((a,b) => parseISO(b.date).getTime() - parseISO(a.date).getTime());
+      
+      setReportData(filteredMovements);
+    } catch (error) {
+      console.error("Erro ao gerar histórico:", error);
+      toast({ title: "Erro ao Gerar Relatório", variant: "destructive" });
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handlePrint = () => {
@@ -255,11 +320,13 @@ export default function ConsumptionHistoryReportPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Hospital</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select onValueChange={field.onChange} value={field.value} disabled={isLoading || isRestricted}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger></FormControl>
                       <SelectContent>
-                        <SelectItem value="all">Todos os Hospitais</SelectItem>
-                        {hospitals.map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
+                        {!isRestricted && <SelectItem value="all">Todos os Hospitais</SelectItem>}
+                        {hospitals
+                          .filter(h => !isRestricted || h.id === currentUserProfile?.associatedHospitalId)
+                          .map(hospital => <SelectItem key={hospital.id} value={hospital.id}>{hospital.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -271,11 +338,13 @@ export default function ConsumptionHistoryReportPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Unidade Servida</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || 'all'} disabled={!selectedHospitalId || selectedHospitalId === 'all' && availableUnits.length === mockServedUnits.length && availableUnits.length === 0}>
+                    <Select onValueChange={field.onChange} value={field.value || 'all'} disabled={isLoading || isUbsOnly || (!isRestricted && (selectedHospitalId === 'all'))}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger></FormControl>
                       <SelectContent>
-                        <SelectItem value="all">Todas as Unidades</SelectItem>
-                        {availableUnits.map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>)}
+                        {!isUbsOnly && <SelectItem value="all">Todas as Unidades</SelectItem>}
+                        {availableUnits
+                          .filter(u => !isUbsOnly || u.id === currentUserProfile?.associatedUnitId)
+                          .map(unit => <SelectItem key={unit.id} value={unit.id}>{unit.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -299,8 +368,8 @@ export default function ConsumptionHistoryReportPage() {
               />
             </CardContent>
             <CardFooter>
-              <Button type="submit" disabled={isGenerating}>
-                {isGenerating ? "Gerando..." : "Gerar Relatório"}
+              <Button type="submit" disabled={isGenerating || isLoading}>
+                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : isGenerating ? "Gerando..." : "Gerar Relatório"}
               </Button>
             </CardFooter>
           </form>
